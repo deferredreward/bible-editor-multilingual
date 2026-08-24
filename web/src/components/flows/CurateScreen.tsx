@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // l3-templates: curate note templates, ported from
 // docs/flows/ui/l3-templates.html onto the app's real template data + save
 // machinery (194 real units per docs/flows/05-functional-preview-findings.md
@@ -31,6 +29,7 @@ import {
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
+import { useTranslation } from "react-i18next";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SearchIcon from "@mui/icons-material/Search";
 
@@ -54,6 +53,7 @@ export interface CurateScreenProps extends FlowScreenContext {
 type MobileView = "rail" | "editor";
 
 export default function CurateScreen({ role, templateId }: CurateScreenProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   // System band only (web/src/lib/layoutBands.ts: desktop=900) — the mockup's
   // rail+editor split collapses to card-at-a-time below it.
@@ -64,7 +64,7 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
   const isAdmin = role === "admin";
   const eyebrow = cfg
     ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}`
-    : "Workspace";
+    : t("moreTools.common.workspace");
   const { units, loading, error, refetch } = useTemplates(isTranslation);
 
   const [search, setSearch] = useState("");
@@ -82,7 +82,7 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
 
   const total = units.length;
   const validatedCount = units.filter((u) => u.translation_state === "validated").length;
-  const approvedTally = `${validatedCount} of ${total}`;
+  const approvedTally = t("moreTools.curate.approvedTally", { validated: validatedCount, total });
 
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -158,17 +158,17 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
   const bulkMessage = useMemo(() => {
     if (!bulkResult) return null;
     const { drafted, failed, reason, lastErrorCode } = bulkResult;
-    if (reason === "disabled") return "AI not configured for this workspace.";
+    if (reason === "disabled") return t("moreTools.curate.aiNotConfigured");
     if (reason === "aborted_failures")
-      return `Stopped after ${drafted} drafted — repeated failures (${lastErrorCode ?? "unknown"}).`;
-    if (reason === "cancelled") return `Cancelled after ${drafted} drafted.`;
-    return failed > 0 ? `${drafted} drafted, ${failed} failed.` : `${drafted} drafted.`;
-  }, [bulkResult]);
+      return t("moreTools.curate.bulkStopped", { drafted, code: lastErrorCode ?? t("moreTools.curate.unknown") });
+    if (reason === "cancelled") return t("moreTools.curate.bulkCancelled", { drafted });
+    return failed > 0 ? t("moreTools.curate.bulkDoneWithFailures", { drafted, failed }) : t("moreTools.curate.bulkDone", { drafted });
+  }, [bulkResult, t]);
 
   if (!isAdmin) {
     return (
       <AdminDesk current="templates">
-        <Alert severity="info">Templates is admin-only. Your current role is {role}.</Alert>
+        <Alert severity="info">{t("moreTools.curate.adminOnlyAlert", { role })}</Alert>
       </AdminDesk>
     );
   }
@@ -177,11 +177,11 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
     return (
       <AdminDesk current="templates">
         <Stack sx={{ height: "100%", minHeight: 0 }}>
-          <AdminPageHeader eyebrow={eyebrow} title="Templates" />
+          <AdminPageHeader eyebrow={eyebrow} title={t("moreTools.curate.title")} />
           <Stack alignItems="center" justifyContent="center" sx={{ flex: 1, px: 4 }} spacing={1}>
-            <Typography variant="h6">Curate note templates</Typography>
+            <Typography variant="h6">{t("moreTools.curate.curateHeading")}</Typography>
             <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 420 }}>
-              Note templates are only editable on gateway-language projects.
+              {t("moreTools.curate.glOnly")}
             </Typography>
           </Stack>
         </Stack>
@@ -197,8 +197,8 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
     <Stack sx={{ height: "100%", minHeight: 0 }}>
       <AdminPageHeader
         eyebrow={eyebrow}
-        title="Templates"
-        subtitle="Curate note templates and the AI-drafted target text behind them."
+        title={t("moreTools.curate.title")}
+        subtitle={t("moreTools.curate.subtitle")}
       />
 
       <Box sx={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden", mt: 1.5, gap: 2, px: { xs: 0, md: 2 } }}>
@@ -222,7 +222,7 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
                 fullWidth
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search templates…"
+                placeholder={t("moreTools.curate.searchPlaceholder")}
                 InputProps={{
                   startAdornment: (
                     <InputAdornment position="start">
@@ -238,14 +238,14 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
                 <Stack direction="row" alignItems="center" spacing={1}>
                   <CircularProgress size={14} />
                   <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
-                    {bulkProgress?.done ?? 0} / {bulkProgress?.total ?? 0} drafted
+                    {t("moreTools.curate.bulkProgress", { done: bulkProgress?.done ?? 0, total: bulkProgress?.total ?? 0 })}
                   </Typography>
                   <Button size="small" onClick={cancelBulk} sx={{ minHeight: 44 }}>
-                    Cancel
+                    {t("common.cancel")}
                   </Button>
                 </Stack>
               ) : (
-                <Tooltip title={aiDisabled ? "AI not configured for this workspace — an admin needs to set BT_API_TOKEN." : ""}>
+                <Tooltip title={aiDisabled ? t("moreTools.curate.aiNotConfiguredAdmin") : ""}>
                   <span>
                     <Button
                       fullWidth
@@ -256,7 +256,7 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
                       onClick={handleDraftAll}
                       sx={{ minHeight: 44 }}
                     >
-                      Draft all with AI ({draftableUnits.length})
+                      {t("moreTools.curate.draftAllWithAi", { count: draftableUnits.length })}
                     </Button>
                   </span>
                 </Tooltip>
@@ -271,11 +271,11 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
                 </Alert>
               )}
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-                {approvedTally} approved
+                {approvedTally}
               </Typography>
             </Box>
 
-            <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }} role="list" aria-label="Template list">
+            <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }} role="list" aria-label={t("moreTools.curate.templateList")}>
               {loading && units.length === 0 ? (
                 <Stack alignItems="center" sx={{ p: 3 }}>
                   <CircularProgress size={20} />
@@ -283,13 +283,13 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
               ) : error ? (
                 <Box sx={{ p: 2 }}>
                   <Typography variant="body2" color="error">
-                    Couldn&rsquo;t load templates — {error.message}
+                    {t("moreTools.curate.loadFailed", { error: error.message })}
                   </Typography>
                 </Box>
               ) : groups.length === 0 ? (
                 <Box sx={{ p: 2 }}>
                   <Typography variant="body2" color="text.secondary">
-                    {units.length === 0 ? "No templates found for this workspace." : "No templates match your search."}
+                    {units.length === 0 ? t("moreTools.curate.noTemplates") : t("moreTools.curate.noMatches")}
                   </Typography>
                 </Box>
               ) : (
@@ -333,7 +333,7 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
                           }}
                         >
                           {u.stale_source === 1 && (
-                            <Tooltip title="Stale source — English sheet changed since this draft">
+                            <Tooltip title={t("moreTools.curate.staleSource")}>
                               <Box
                                 component="span"
                                 sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: theme.palette.flows.warn.main, flexShrink: 0 }}
@@ -349,15 +349,15 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
                             </Typography>
                           </Box>
                           {dirtyIds.has(u.template_id) && (
-                            <Tooltip title="Unsaved edit">
+                            <Tooltip title={t("moreTools.curate.unsavedEdit")}>
                               <Box
                                 component="span"
-                                aria-label="Unsaved edit"
+                                aria-label={t("moreTools.curate.unsavedEdit")}
                                 sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: theme.palette.flows.warn.main, flexShrink: 0 }}
                               />
                             </Tooltip>
                           )}
-                          <FlowStatusChip kind={curateStateChipKind(u.translation_state)} label={curateStateLabel(u.translation_state)} />
+                          <FlowStatusChip kind={curateStateChipKind(u.translation_state)} label={curateStateLabel(u.translation_state, t)} />
                         </Box>
                       );
                     })}
@@ -384,7 +384,7 @@ export default function CurateScreen({ role, templateId }: CurateScreenProps) {
             ) : (
               <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", px: 4 }}>
                 <Typography variant="body2" color="text.secondary">
-                  {loading ? "Loading templates…" : total === 0 ? "No templates found for this workspace." : "Select a template from the list."}
+                  {loading ? t("moreTools.curate.loadingTemplates") : total === 0 ? t("moreTools.curate.noTemplates") : t("moreTools.curate.selectTemplate")}
                 </Typography>
               </Stack>
             )}

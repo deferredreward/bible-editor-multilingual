@@ -6,6 +6,7 @@
 // which resolves it to an OL quote + occurrence (twlResolve) and creates the row.
 
 import { memo, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Box,
   Stack,
@@ -70,6 +71,7 @@ interface Props {
 }
 
 function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExcluded, onSuggestions, blockedArticleIds, filtersReady = true, locked = false, paused = false }: Props) {
+  const { t } = useTranslation();
   const [peeked, setPeeked] = useState(false);
   // Re-collapse when the verse changes or the lane is re-checked.
   useEffect(() => {
@@ -202,14 +204,14 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
         >
           <AutoAwesomeIcon sx={{ fontSize: 16, color: "primary.main" }} />
           <Typography variant="caption" sx={{ flex: 1, color: "text.secondary" }}>
-            Suggestions paused — Words checked here
+            {t("dialogs.twlSuggestions.paused")}
           </Typography>
           <Typography
             variant="caption"
             sx={{ color: "primary.main", cursor: "pointer", whiteSpace: "nowrap" }}
             onClick={() => setPeeked(true)}
           >
-            reopen
+            {t("dialogs.twlSuggestions.reopen")}
           </Typography>
         </Stack>
       </Box>
@@ -224,7 +226,7 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
           variant="caption"
           sx={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "text.secondary" }}
         >
-          Suggestions
+          {t("dialogs.twlSuggestions.heading")}
         </Typography>
         <Chip
           label={showBlank ? "…" : visible.length}
@@ -233,7 +235,7 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
           sx={{ height: 16, fontFamily: "monospace", fontSize: 10 }}
         />
         <Box sx={{ flex: 1 }} />
-        <Tooltip title="re-scan this verse">
+        <Tooltip title={t("dialogs.twlSuggestions.rescan")}>
           <span>
             <IconButton size="small" onClick={() => setReloadNonce((n) => n + 1)} disabled={loading} sx={{ p: 0.25 }}>
               {loading ? <CircularProgress size={14} /> : <RefreshIcon sx={{ fontSize: 16 }} />}
@@ -244,11 +246,11 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
 
       {error ? (
         <Typography variant="caption" color="error" sx={{ pl: 1 }}>
-          couldn&rsquo;t load suggestions
+          {t("dialogs.twlSuggestions.loadFailed")}
         </Typography>
       ) : showBlank ? null : visible.length === 0 ? (
         <Typography variant="caption" color="text.disabled" sx={{ pl: 1, fontStyle: "italic" }}>
-          no new links suggested for this verse
+          {t("dialogs.twlSuggestions.empty")}
         </Typography>
       ) : (
         <Stack spacing={0.5}>
@@ -318,7 +320,7 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
                 ) : (
                   <Chip label={twShort(selected)} size="small" variant="outlined" sx={{ height: 20, fontSize: 11 }} />
                 )}
-                <Tooltip title={locked ? "" : "add this link"}>
+                <Tooltip title={locked ? "" : t("dialogs.twlSuggestions.add")}>
                   <span>
                     <IconButton
                       size="small"
@@ -331,7 +333,13 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
                     </IconButton>
                   </span>
                 </Tooltip>
-                <Tooltip title={isRejected ? "undo rejection" : "reject suggestion"}>
+                <Tooltip
+                  title={
+                    isRejected
+                      ? t("dialogs.twlSuggestions.undoReject")
+                      : t("dialogs.twlSuggestions.reject")
+                  }
+                >
                   <IconButton
                     size="small"
                     color={isRejected ? "default" : "error"}
@@ -341,7 +349,7 @@ function TwlSuggestionsInner({ book, chapter, verse, refreshKey, onAdd, isExclud
                     {isRejected ? <ReplayIcon fontSize="small" /> : <BlockIcon fontSize="small" />}
                   </IconButton>
                 </Tooltip>
-                <Tooltip title="read article">
+                <Tooltip title={t("words.readArticle")}>
                   <IconButton
                     size="small"
                     onClick={() => setArticleId(selected)}

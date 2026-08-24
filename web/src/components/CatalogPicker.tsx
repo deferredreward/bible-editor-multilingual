@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Autocomplete, Chip, TextField, Popper, type PopperProps } from "@mui/material";
 
 interface Props {
@@ -35,6 +36,7 @@ export function CatalogPicker({
   freeSolo = true,
   onChange,
 }: Props) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const shown = display ? display(value) : (value ?? "—");
   // With freeSolo off, MUI requires the current value to be one of the options
@@ -123,7 +125,7 @@ export function CatalogPicker({
           {...params}
           inputRef={inputRef}
           autoFocus
-          placeholder={placeholder ?? "type to filter…"}
+          placeholder={placeholder ?? t("dialogs.catalogPicker.typeToFilter")}
           variant="outlined"
           size="small"
         />

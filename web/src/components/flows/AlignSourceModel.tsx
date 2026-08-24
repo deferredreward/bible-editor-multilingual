@@ -1,5 +1,5 @@
-// TODO(i18n): no user-facing literals in this file — it is pure model code —
-// but it stays in the flow-screen i18n sweep alongside the screens using it.
+// i18n: nothing user-facing lives here — it is pure model code. Every string
+// below is an id/key, never rendered.
 //
 // Source-position bookkeeping shared by the t4 Align screen's tap-to-pair view.
 //

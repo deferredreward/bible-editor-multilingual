@@ -7,6 +7,12 @@
 // - Book is normalized to uppercase.
 // - Single-chapter input ("PSA 130") → endChapter equals startChapter.
 // - Cross-book ranges ("GEN 50-EXO 2") are out of scope.
+//
+// `error` is DISPLAY ONLY — ImportFromDoor43Dialog and PipelineMenu render it
+// as helperText and branch on `ok`, never on the text. Translated per call
+// (never at module load) so a UI-language switch repaints it.
+
+import i18n from "../i18n";
 
 export interface ChapterRange {
   book: string;
@@ -22,17 +28,17 @@ const PATTERN = /^([A-Za-z0-9]{3})?\s*(\d+)(?:\s*-\s*(\d+))?$/;
 
 export function parseChapterRange(input: string, currentBook: string): ParseResult {
   const trimmed = input.trim();
-  if (!trimmed) return { ok: false, error: "enter a chapter (e.g. 130 or 130-135)" };
+  if (!trimmed) return { ok: false, error: i18n.t("messages.chapterRef.enterChapter") };
   const m = PATTERN.exec(trimmed);
-  if (!m) return { ok: false, error: "format: CH or CH-CH (e.g. 130-135)" };
+  if (!m) return { ok: false, error: i18n.t("messages.chapterRef.format") };
   const book = (m[1] ?? currentBook).toUpperCase();
   const startChapter = Number.parseInt(m[2], 10);
   const endChapter = m[3] !== undefined ? Number.parseInt(m[3], 10) : startChapter;
   if (!Number.isFinite(startChapter) || startChapter < 1) {
-    return { ok: false, error: "chapter must be a positive number" };
+    return { ok: false, error: i18n.t("messages.chapterRef.mustBePositive") };
   }
   if (!Number.isFinite(endChapter) || endChapter < startChapter) {
-    return { ok: false, error: "end chapter must be ≥ start chapter" };
+    return { ok: false, error: i18n.t("messages.chapterRef.endBeforeStart") };
   }
   return { ok: true, range: { book, startChapter, endChapter } };
 }

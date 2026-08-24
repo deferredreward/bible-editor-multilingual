@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // TranslateNotesScreen — the translation-notes queue, rebuilt faithfully to the
 // approved "Translation Notes — Titus 1" mockup (the design-direction reset).
 //
@@ -91,6 +88,7 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
+import { useTranslation } from "react-i18next";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
@@ -187,6 +185,7 @@ interface LaneProps {
 // props instead of closed-over values, following the QaPair hoist pattern in
 // TranslateQuestionsScreen.tsx.
 function Lane({ label, text, selection, labelFontFamily, mark }: LaneProps) {
+  const { t } = useTranslation();
   return (
     <Box
       sx={{
@@ -215,11 +214,15 @@ function Lane({ label, text, selection, labelFontFamily, mark }: LaneProps) {
         {label}
       </Box>
       {text ? (
-        mark(text, selection)
+        // dir="auto" follows the *content*: Arabic lane text lays out RTL with
+        // trailing punctuation on the correct side, English stays LTR. The
+        // label above keeps the container's direction.
+        <Box component="span" dir="auto" sx={{ display: "block", textAlign: "start" }}>
+          {mark(text, selection)}
+        </Box>
       ) : (
         <Box component="em" sx={{ color: "text.secondary", fontSize: "0.875rem" }}>
-          No {label} text exists for this verse in this workspace. That is normal in a
-          translation-mode workspace whose target lanes have not been drafted yet.
+          {t("flowTranslate.laneNoText", { label })}
         </Box>
       )}
     </Box>
@@ -227,6 +230,7 @@ function Lane({ label, text, selection, labelFontFamily, mark }: LaneProps) {
 }
 
 export default function TranslateNotesScreen({ book, chapter, verse }: TranslateNotesScreenProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
   // --hl from docs/flows/ui/_tokens.css: the quote highlight in scripture, and
@@ -247,7 +251,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
-  const targetLabel = projectConfig?.languageName || "Target";
+  const targetLabel = projectConfig?.languageName || t("flowTranslate.targetFallback");
   const litLabel = projectConfig?.litLabel || "ULT";
   const simLabel = projectConfig?.simLabel || "UST";
 
@@ -619,12 +623,10 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
         // Only a settled conflict is a question for the user: the outbox
         // auto-heals the healable ones and still notifies listeners.
         if (result.kind === "conflict" && op.status === "conflict") {
-          setConflictNotice(
-            "Another editor changed this note while you were working on it. Your version was not saved.",
-          );
+          setConflictNotice(t("flowTranslate.conflictNotice"));
         }
       }),
-    [book],
+    [book, t],
   );
 
   // ── scripture context ────────────────────────────────────────────────────
@@ -634,7 +636,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   const ustIndex = useMemo(() => buildVerseIndex(data?.verses?.UST), [data?.verses]);
 
   const hebrew = isHebrewBook(book);
-  const sourceLabel = hebrew ? "Hebrew" : "Greek";
+  const sourceLabel = hebrew ? t("flowTranslate.hebrew") : t("flowTranslate.greek");
   const sourceDir: "ltr" | "rtl" = hebrew ? "rtl" : "ltr";
 
   const sourceVo = row ? verseObjectsOf(sourceIndex[row.verse]) : null;
@@ -790,19 +792,17 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     const op = await outbox.enqueueRow("tn", target.id, target.version, patch, { book, baseline });
     const result = await waitForOp(op.id);
     if (result === null) {
-      say("Your edit is queued but the server hasn't confirmed it yet — it was not approved.");
+      say(t("flowTranslate.queuedNotConfirmed"));
       return false;
     }
     if (result.kind !== "ok") {
       if (result.kind === "conflict") {
-        setConflictNotice(
-          "Another editor changed this note while you were working on it. Your version was not saved.",
-        );
+        setConflictNotice(t("flowTranslate.conflictNotice"));
       } else if (result.kind === "locked") {
         setChapterLock(result.lockBody);
-        say("An AI run is rewriting this chapter — your edit was dropped rather than overwritten.");
+        say(t("flowTranslate.lockedEditDropped"));
       } else {
-        say(`Saving this note failed (${result.reason}). It was not approved.`);
+        say(t("flowTranslate.saveFailed", { reason: result.reason }));
       }
       return false;
     }
@@ -821,13 +821,17 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       applyLocalRowReplacement("tn", updated);
       setStatuses((prev) => ({ ...prev, [row.id]: "approved" }));
       setEditing(false);
-      setToast("Approved");
+      setToast(t("flowTranslate.toastApproved"));
       advanceAfter(row.id, "approved");
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
-        say("Approve needs a draft first — this note hasn't been through the AI pipeline yet.");
+        say(t("flowTranslate.approveNeedsDraft"));
       } else {
-        say(`Approve failed (${err instanceof ApiError ? err.status : "error"}).`);
+        say(
+          t("flowTranslate.approveFailed", {
+            status: err instanceof ApiError ? err.status : t("flowTranslate.genericError"),
+          }),
+        );
       }
     } finally {
       setBusy(false);
@@ -846,10 +850,14 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       applyLocalRowReplacement("tn", updated);
       setStatuses((prev) => ({ ...prev, [row.id]: "skipped" }));
       setEditing(false);
-      setToast("Marked not needed");
+      setToast(t("flowTranslate.toastNotNeeded"));
       advanceAfter(row.id, "skipped");
     } catch (err) {
-      say(`Could not set this aside (${err instanceof ApiError ? err.status : "error"}).`);
+      say(
+        t("flowTranslate.notNeededFailed", {
+          status: err instanceof ApiError ? err.status : t("flowTranslate.genericError"),
+        }),
+      );
     } finally {
       setBusy(false);
     }
@@ -857,11 +865,11 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
 
   const redoBlockedReason = (() => {
     if (aiUnavailable) return aiUnavailable;
-    if (!row) return "No note selected.";
+    if (!row) return t("flowTranslate.noNoteSelected");
     if (!row.support_reference) {
-      return "Redo needs a support reference on this note — the AI request is keyed by it.";
+      return t("flowTranslate.redoNeedsSupportRef");
     }
-    if (!row.quote) return "Redo needs a quote on this note — the AI needs the phrase to explain.";
+    if (!row.quote) return t("flowTranslate.redoNeedsQuote");
     return null;
   })();
 
@@ -874,19 +882,19 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       if (!built.ok) {
         say(
           built.error.reason === "missing_ult_verse"
-            ? `No ${litLabel} text for this verse — the AI has nothing to work from.`
+            ? t("flowTranslate.noLaneTextForAi", { label: litLabel })
             : built.error.reason === "missing_ust_verse"
-              ? `No ${simLabel} text for this verse — the AI has nothing to work from.`
+              ? t("flowTranslate.noLaneTextForAi", { label: simLabel })
               : built.error.reason === "hebrew_not_found"
-                ? `Couldn't match this note's quote to the ${litLabel} alignment.`
-                : "This note is missing something the AI needs.",
+                ? t("flowTranslate.quoteMatchFailed", { label: litLabel })
+                : t("flowTranslate.redoMissingData"),
         );
         return;
       }
       const res = await api.tnQuick(built.request);
       setDraftValue(res.note);
       setEditing(false);
-      setToast("New draft ready");
+      setToast(t("flowTranslate.toastNewDraft"));
       if (res.warnings.length > 0) say(res.warnings.join(" "), "info");
     } catch (err) {
       const code =
@@ -900,9 +908,13 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       ) {
         // Calm and specific: this workspace simply has no AI drafting yet.
         // Nothing else on the screen is affected.
-        setAiUnavailable("AI drafting isn't set up for this workspace yet.");
+        setAiUnavailable(t("flowTranslate.aiUnavailable"));
       } else {
-        say(`Couldn't get a new draft (${err instanceof ApiError ? err.status : "error"}).`);
+        say(
+          t("flowTranslate.redoFailed", {
+            status: err instanceof ApiError ? err.status : t("flowTranslate.genericError"),
+          }),
+        );
       }
     } finally {
       setRedoing(false);
@@ -918,9 +930,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   if (status === "error") {
     return (
       <Box sx={{ p: 3, maxWidth: COLUMN_PX, mx: "auto" }}>
-        <Alert severity="error">
-          Could not load {book} {chapter}.
-        </Alert>
+        <Alert severity="error">{t("flowTranslate.loadFailed", { book, chapter })}</Alert>
       </Box>
     );
   }
@@ -944,36 +954,43 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   const cardStatus = row ? statuses[row.id] : undefined;
   const chip: { kind: FlowStatusKind; label: string } =
     cardStatus === "approved"
-      ? { kind: "approved", label: "Approved" }
+      ? { kind: "approved", label: t("flowTranslate.status.approved") }
       : cardStatus === "skipped"
-        ? { kind: "skip", label: "Not needed" }
+        ? { kind: "skip", label: t("flowTranslate.notNeeded") }
         : hasDiff || row?.translation_state === "edited"
-          ? { kind: "edited", label: "Edited" }
-          : { kind: "draft", label: "Draft" };
+          ? { kind: "edited", label: t("flowTranslate.status.edited") }
+          : { kind: "draft", label: t("flowTranslate.status.draft") };
 
   const aiDrafted = row?.translation_state === "ai_draft" || row?.latest_source === "ai_pipeline";
   const nextChapter = chapter + 1;
   const hasNextChapter = chapterCount === null ? true : nextChapter <= chapterCount;
 
   const sub = translationMode
-    ? `${book} ${chapter} · ${(projectConfig?.translationSource?.languageCode ?? "en").toUpperCase()} to ${targetLabel}`
-    : `${book} ${chapter} · ${targetLabel}`;
+    ? t("flowTranslate.subtitleTranslation", {
+        book,
+        chapter,
+        source: (projectConfig?.translationSource?.languageCode ?? "en").toUpperCase(),
+        target: targetLabel,
+      })
+    : t("flowTranslate.subtitle", { book, chapter, target: targetLabel });
 
   // "N of M" — while a type filter is active, position and count are within
   // the filtered set and the type label is appended ("3 of 12 · metaphor");
   // with no filter this is character-for-character the original string.
   const filteredPos = typeFilter ? visibleIdx.indexOf(cursor) : -1;
   const headerCount = typeFilter
-    ? `${
-        done
+    ? t("flowTranslate.pagerOfType", {
+        index: done
           ? visibleIdx.length
           : visibleIdx.length === 0
             ? 0
-            : Math.max(1, filteredPos + 1)
-      } of ${visibleIdx.length} · ${typeLabelOf(typeFilter)}`
+            : Math.max(1, filteredPos + 1),
+        total: visibleIdx.length,
+        type: typeLabelOf(typeFilter),
+      })
     : done
-      ? `${total} of ${total}`
-      : `${Math.min(cursor + 1, total)} of ${total}`;
+      ? t("flowTranslate.pagerOf", { index: total, total })
+      : t("flowTranslate.pagerOf", { index: Math.min(cursor + 1, total), total });
 
   // The current card's article type (detail header pill).
   const rowTypeSlug = row ? typeSlugOf(row.support_reference) : null;
@@ -1049,10 +1066,10 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
             const v = e.target.value as string;
             setTypeFilter(v === "" ? null : v);
           }}
-          aria-label="Filter notes by type"
+          aria-label={t("flowTranslate.filterAria")}
           sx={{ borderRadius: "10px", fontSize: "0.875rem", bgcolor: "background.paper" }}
         >
-          <MenuItem value="">All types</MenuItem>
+          <MenuItem value="">{t("flowTranslate.allTypes")}</MenuItem>
           {typeOptions.map((o) => (
             <MenuItem key={o.slug} value={o.slug} title={o.slug}>
               {o.label} ({o.count})
@@ -1080,7 +1097,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
             severity="warning"
             action={
               <Button color="inherit" size="small" onClick={reloadRow}>
-                Reload note
+                {t("flowTranslate.reloadNote")}
               </Button>
             }
           >
@@ -1095,7 +1112,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
         )}
 
         {total === 0 ? (
-          <Alert severity="info">No translation notes in {`${book} ${chapter}`}.</Alert>
+          <Alert severity="info">{t("flowTranslate.noNotesInChapter", { book, chapter })}</Alert>
         ) : done ? (
           <Box sx={{ ...cardSx, textAlign: "center", paddingBlock: 4.5 }}>
             <Box
@@ -1118,10 +1135,14 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
               />
             </Box>
             <Typography component="h2" sx={{ fontSize: "1.375rem", fontWeight: 700, mt: 1.5 }}>
-              {book} {chapter} notes complete
+              {t("flowTranslate.chapterComplete", { book, chapter })}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              {approvedCount} approved · {editedCount} edited · {skippedCount} not needed
+              {t("flowTranslate.doneSummary", {
+                approved: approvedCount,
+                edited: editedCount,
+                skipped: skippedCount,
+              })}
             </Typography>
             <Stack spacing={1}>
               <Button
@@ -1140,8 +1161,8 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 }}
               >
                 {hasNextChapter
-                  ? `Continue to chapter ${nextChapter}`
-                  : `${book} is complete — no chapter ${nextChapter}`}
+                  ? t("flowTranslate.continueToChapter", { chapter: nextChapter })
+                  : t("flowTranslate.bookComplete", { book, chapter: nextChapter })}
               </Button>
               <Button
                 onClick={() => {
@@ -1151,26 +1172,30 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 }}
                 sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
               >
-                Review again
+                {t("flowTranslate.reviewAgain")}
               </Button>
             </Stack>
           </Box>
         ) : typeFilter && visibleIdx.length === 0 ? (
           <Alert severity="info">
-            No “{typeLabelOf(typeFilter)}” notes in {book} {chapter}. Choose “All types” to keep
-            going.
+            {t("flowTranslate.noTypeNotesKeepGoing", {
+              type: typeLabelOf(typeFilter),
+              book,
+              chapter,
+              allTypes: t("flowTranslate.allTypes"),
+            })}
           </Alert>
         ) : !row ? (
           <Box sx={cardSx}>
             <Typography variant="body2" color="text.secondary">
-              This note is no longer in the chapter — another editor may have removed it.
+              {t("flowTranslate.rowGone")}
             </Typography>
             <Button
               sx={{ mt: 1 }}
               onClick={() => setCursor((c) => Math.min(c + 1, total - 1))}
               disabled={cursor >= total - 1}
             >
-              Next note
+              {t("flowTranslate.nextNote")}
             </Button>
           </Box>
         ) : (
@@ -1214,7 +1239,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 sx={{ fontSize: "0.875rem", fontWeight: 700, color: REF_COLOR, mb: 0.75 }}
               >
                 {row.verse === 0
-                  ? `${book} ${row.chapter} intro`
+                  ? t("flowTranslate.introRefLong", { book, chapter: row.chapter })
                   : `${book} ${row.chapter}:${row.verse}`}
               </Typography>
               <Lane
@@ -1240,7 +1265,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                   component="span"
                   sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: INSPIRE }}
                 />
-                English note
+                {t("flowTranslate.englishNote")}
               </Typography>
               {englishNote ? (
                 <Typography
@@ -1252,9 +1277,9 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 <Typography variant="body2" color="text.secondary">
                   {translationMode
                     ? sourceProjection
-                      ? "The English source for this note isn't available — it may have been added here rather than translated from the published notes."
-                      : "No English source repository is configured for notes, so there is nothing to compare against."
-                    : "This workspace authors notes in English rather than translating them, so there is no separate source."}
+                      ? t("flowTranslate.noSourceForNote")
+                      : t("flowTranslate.noSourceRepo")
+                    : t("flowTranslate.authoringWorkspace")}
                 </Typography>
               )}
             </Box>
@@ -1266,7 +1291,9 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                   component="span"
                   sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: INSPIRE }}
                 />
-                {targetLabel} draft{aiDrafted ? " · AI" : ""}
+                {aiDrafted
+                  ? t("flowTranslate.targetDraftAi", { target: targetLabel })
+                  : t("flowTranslate.targetDraft", { target: targetLabel })}
                 <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 0.75 }}>
                   {/* read-only article type — classification, not a verb */}
                   {rowTypeSlug && typePill(rowTypeSlug)}
@@ -1306,11 +1333,11 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                     <Button
                       onClick={() => {
                         setEditing(false);
-                        if (hasDiff) setToast("Draft updated");
+                        if (hasDiff) setToast(t("flowTranslate.toastDraftUpdated"));
                       }}
                       sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                     >
-                      Done
+                      {t("flowTranslate.done")}
                     </Button>
                   </Stack>
                 </>
@@ -1348,12 +1375,12 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                       draftValue
                     ) : (
                       <Box component="em" sx={{ color: "text.secondary" }}>
-                        Nothing drafted yet — tap to write this note in {targetLabel}.
+                        {t("flowTranslate.emptyDraftTap", { target: targetLabel })}
                       </Box>
                     )}
                   </Box>
                   <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1 }}>
-                    Tap the text to edit
+                    {t("flowTranslate.tapToEdit")}
                   </Typography>
                 </>
               )}
@@ -1375,7 +1402,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                   onClick={goPrev}
                   sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                 >
-                  Previous
+                  {t("flowTranslate.previous")}
                 </Button>
                 <Button
                   endIcon={<ChevronRightIcon />}
@@ -1383,7 +1410,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                   onClick={goNext}
                   sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                 >
-                  Next
+                  {t("flowTranslate.next")}
                 </Button>
               </Stack>
             )}
@@ -1408,7 +1435,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       return (
         <Box key={id} sx={{ ...cardSx, opacity: 0.72, paddingBlock: 1.25 }}>
           <Typography variant="body2" color="text.secondary">
-            This note is no longer in the chapter.
+            {t("flowTranslate.rowGoneShort")}
           </Typography>
         </Box>
       );
@@ -1417,12 +1444,12 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     const typeSlug = typeSlugOf(r.support_reference);
     const rowChip: { kind: FlowStatusKind; label: string } =
       st === "approved"
-        ? { kind: "approved", label: "Approved" }
+        ? { kind: "approved", label: t("flowTranslate.status.approved") }
         : st === "skipped"
-          ? { kind: "skip", label: "Not needed" }
+          ? { kind: "skip", label: t("flowTranslate.notNeeded") }
           : (id === currentId && hasDiff) || r.translation_state === "edited"
-            ? { kind: "edited", label: "Edited" }
-            : { kind: "draft", label: "Draft" };
+            ? { kind: "edited", label: t("flowTranslate.status.edited") }
+            : { kind: "draft", label: t("flowTranslate.status.draft") };
     const isSelected = !done && idx === cursor;
     // Preview the TARGET text — what the translator wrote (their live draft
     // for the open card, else the row's saved note), falling back to the
@@ -1460,7 +1487,9 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography sx={{ fontWeight: 600, fontSize: "0.97rem" }}>
-            {r.verse === 0 ? `${r.chapter} intro` : `${r.chapter}:${r.verse}`}
+            {r.verse === 0
+              ? t("flowTranslate.introRef", { chapter: r.chapter })
+              : `${r.chapter}:${r.verse}`}
           </Typography>
           <Typography
             variant="body2"
@@ -1468,7 +1497,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
             dir="auto"
             sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
           >
-            {preview || "Nothing drafted yet"}
+            {preview || t("flowTranslate.nothingDrafted")}
           </Typography>
         </Box>
         {typeSlug && typePill(typeSlug)}
@@ -1525,7 +1554,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
             <Button
               variant="outlined"
               disabled={redoBlockedReason !== null || redoing || busy}
-              title={redoBlockedReason ?? "Ask the AI for a fresh draft"}
+              title={redoBlockedReason ?? t("flowTranslate.redoTooltip")}
               onClick={() => void handleRedo()}
               startIcon={
                 <AutoAwesomeIcon
@@ -1546,7 +1575,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 borderWidth: "1.5px",
               }}
             >
-              Redo
+              {t("flowTranslate.redo")}
             </Button>
             <Button
               disabled={busy || redoing}
@@ -1561,7 +1590,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 "&:hover": { bgcolor: skip.soft },
               }}
             >
-              Not needed
+              {t("flowTranslate.notNeeded")}
             </Button>
             <Button
               disabled={busy || redoing}
@@ -1577,7 +1606,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 "&:hover": { bgcolor: ok.main, filter: "brightness(0.95)" },
               }}
             >
-              Approve
+              {t("common.approve")}
             </Button>
           </Stack>
         </Box>
@@ -1612,7 +1641,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
         <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
-              aria-label={`Back to the ${book} package`}
+              aria-label={t("flowTranslate.backToPackage", { book })}
               onClick={() => {
                 location.hash = `#/package/${book}`;
               }}
@@ -1622,7 +1651,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
             </IconButton>
             <Box sx={{ minWidth: 0 }}>
               <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
-                Translation Notes
+                {t("flowTranslate.title")}
               </Typography>
               <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
                 {sub}
@@ -1645,7 +1674,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 screen's scaleX pattern). 2026-08-10 markup round. */}
             <IconButton
               size="small"
-              aria-label="Previous note"
+              aria-label={t("flowTranslate.previousNote")}
               disabled={done || !canPrev}
               onClick={goPrev}
               sx={{ flex: "none" }}
@@ -1654,7 +1683,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
             </IconButton>
             <IconButton
               size="small"
-              aria-label="Next note"
+              aria-label={t("flowTranslate.nextNote")}
               disabled={done || !canNext}
               onClick={goNext}
               sx={{ flex: "none" }}
@@ -1720,11 +1749,15 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
             {typeFilterControl}
             {total === 0 ? (
               <Typography variant="body2" color="text.secondary" sx={{ mx: 0.25 }}>
-                No translation notes in {book} {chapter}.
+                {t("flowTranslate.noNotesInChapter", { book, chapter })}
               </Typography>
             ) : typeFilter && visibleIdx.length === 0 ? (
               <Typography variant="body2" color="text.secondary" sx={{ mx: 0.25 }}>
-                No “{typeLabelOf(typeFilter)}” notes in {book} {chapter}.
+                {t("flowTranslate.noTypeNotes", {
+                  type: typeLabelOf(typeFilter),
+                  book,
+                  chapter,
+                })}
               </Typography>
             ) : typeFilter ? (
               visibleIdx.map((i) => listRow(queueIds[i], i))

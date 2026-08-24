@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // a4-observe: admin trust & observe dashboard. Port of
 // docs/flows/ui/a4-observe.html. Every card reads a real endpoint or renders
 // an honest absence — nothing here is fabricated:
@@ -51,6 +49,8 @@ import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import { AdminDesk } from "./AdminDesk";
 import { AdminPageHeader } from "./AdminPageHeader";
 import { FlowStatusChip } from "./FlowStatusChip";
@@ -64,6 +64,7 @@ import {
   type PipelineJobRow,
 } from "../../sync/api";
 import { getWorkspaceSlug } from "../../sync/workspace";
+import { formatTime } from "../../lib/formatDate";
 
 export interface ObserveScreenProps extends FlowScreenContext {}
 
@@ -149,20 +150,19 @@ function fmtTime(unixSeconds: number | null | undefined): string {
   return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
 }
 
-const CONTEXT_PACK_LABELS: Record<string, string> = {
-  success: "Ready",
-  never: "Never generated",
-  failed: "Last run failed",
-  shrink_refused: "Refused (shrink guard)",
+const CONTEXT_PACK_LABEL_KEYS: Record<string, string> = {
+  success: "moreTools.observe.contextPackStatus.success",
+  never: "moreTools.observe.contextPackStatus.never",
+  failed: "moreTools.observe.contextPackStatus.failed",
+  shrink_refused: "moreTools.observe.contextPackStatus.shrinkRefused",
 };
 
 // A nightly-export snapshot under book "CONTEXT" is the translation-context pack
 // (exportWorkflow.ts), not a published book; show a human label instead of the
 // raw "CONTEXT · ctx".
 const CONTEXT_SNAPSHOT_BOOK = "CONTEXT";
-const CONTEXT_SNAPSHOT_LABEL = "Context pack";
-function snapshotTargetLabel(book: string, resource: string, sep = " · "): string {
-  return book === CONTEXT_SNAPSHOT_BOOK ? CONTEXT_SNAPSHOT_LABEL : `${book}${sep}${resource}`;
+function snapshotTargetLabel(book: string, resource: string, contextLabel: string, sep = " · "): string {
+  return book === CONTEXT_SNAPSHOT_BOOK ? contextLabel : `${book}${sep}${resource}`;
 }
 
 // ── Small presentational helpers ────────────────────────────────────────────
@@ -230,6 +230,7 @@ function StatTile({ label, value, sub }: { label: string; value: ReactNode; sub?
 // ── Main screen ──────────────────────────────────────────────────────────────
 
 export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenProps) {
+  const { t } = useTranslation();
   // Health — manual only. Never fetched on mount (see the header comment and
   // 05-functional-preview-findings.md §2.18: firing this from an effect AND
   // the button double-fires the request).
@@ -250,10 +251,13 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
   const [exportsError, setExportsError] = useState<string | null>(null);
 
   const [pool, setPool] = useState<PoolStatus | null>(null);
-  const [poolError, setPoolError] = useState<{ status: number; message: string } | null>(null);
+  // Stored as i18n key + params, translated at render — keeps the message
+  // live on language switch without `loadPool` depending on `t` (whose
+  // identity changes per language and must not refire the fetch).
+  const [poolError, setPoolError] = useState<{ status: number; key: string; params?: Record<string, unknown> } | null>(null);
   const [poolDialog, setPoolDialog] = useState<null | "register" | "claim">(null);
   const [poolBusy, setPoolBusy] = useState(false);
-  const [poolBusyMessage, setPoolBusyMessage] = useState<string | null>(null);
+  const [poolBusyMessage, setPoolBusyMessage] = useState<{ severity: "success" | "error"; text: string } | null>(null);
 
   const isAdmin = role === "admin";
   // Pool routes (/api/workspaces/pool*) are super-admin only — a plain workspace
@@ -264,7 +268,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
   const cfg = useProjectConfig();
   const eyebrow = cfg
     ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}`
-    : "Workspace";
+    : t("moreTools.common.workspace");
 
   const loadContextPack = useCallback(() => {
     if (!isAdmin) {
@@ -279,7 +283,9 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         if (err instanceof ApiError && err.status === 403) {
           setContextPackUnavailable(true);
         } else {
-          setContextPackError(err instanceof Error ? err.message : "load failed");
+          // i18n.t (singleton), not the hook's t: t's identity changes per
+          // language and must not refire this fetch via the dep array.
+          setContextPackError(err instanceof Error ? err.message : i18n.t("moreTools.observe.loadFailedShort"));
         }
       });
   }, [isAdmin]);
@@ -292,7 +298,9 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
       .then((res) => {
         setJobs(res.jobs);
       })
-      .catch((err) => setJobsError(err instanceof Error ? err.message : "load failed"));
+      // i18n.t (singleton), not the hook's t: t's identity changes per
+      // language and must not refire this fetch via the dep array.
+      .catch((err) => setJobsError(err instanceof Error ? err.message : i18n.t("moreTools.observe.loadFailedShort")));
   }, [isAdmin]);
 
   const loadExports = useCallback(() => {
@@ -302,8 +310,10 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
       .exportsList()
       .then((res) => setSnapshots(res.snapshots))
       .catch((err) => {
+        // i18n.t (singleton), not the hook's t: t's identity changes per
+        // language and must not refire this fetch via the dep array.
         setExportsError(
-          err instanceof ApiError ? `${err.status} ${(err.body as { error?: string } | null)?.error ?? err.message}` : "load failed",
+          err instanceof ApiError ? `${err.status} ${(err.body as { error?: string } | null)?.error ?? err.message}` : i18n.t("moreTools.observe.loadFailedShort"),
         );
       });
   }, [isAdmin]);
@@ -317,12 +327,13 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
       .then((res) => setPool(res))
       .catch((err) => {
         if (err instanceof ApiError) {
-          setPoolError({
-            status: err.status,
-            message: err.status === 403 ? "Your account isn't a super-admin — this data isn't visible to you." : `Failed to load (HTTP ${err.status}).`,
-          });
+          setPoolError(
+            err.status === 403
+              ? { status: err.status, key: "moreTools.observe.poolNotSuperAdmin" }
+              : { status: err.status, key: "moreTools.observe.poolLoadFailedHttp", params: { status: err.status } },
+          );
         } else {
-          setPoolError({ status: 0, message: "Failed to load." });
+          setPoolError({ status: 0, key: "moreTools.observe.poolLoadFailed" });
         }
       });
   }, [isSuperAdmin]);
@@ -344,12 +355,12 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
     setHealth((h) => ({ ...h, state: "checking" }));
     observeFetch<HealthResponse>("/api/health")
       .then((res) => {
-        setHealth({ state: res.ok ? "ok" : "down", time: new Date().toLocaleTimeString(), body: res });
+        setHealth({ state: res.ok ? "ok" : "down", time: formatTime(new Date()), body: res });
       })
       .catch((err) => {
         setHealth({
           state: "down",
-          time: new Date().toLocaleTimeString(),
+          time: formatTime(new Date()),
           body: err instanceof ApiError ? err.body ?? { error: err.message } : { error: "network error" },
         });
       });
@@ -360,13 +371,15 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
     setPoolBusyMessage(null);
     try {
       await observeFetch("/api/workspaces/pool", { method: "POST", body: JSON.stringify({ binding }) });
-      setPoolBusyMessage(`Registered slot for binding "${binding}".`);
+      setPoolBusyMessage({ severity: "success", text: t("moreTools.observe.registeredSlot", { binding }) });
       setPoolDialog(null);
       loadPool();
     } catch (err) {
-      setPoolBusyMessage(
-        err instanceof ApiError ? `${err.status} ${(err.body as { error?: string } | null)?.error ?? err.message}` : "Register failed.",
-      );
+      setPoolBusyMessage({
+        severity: "error",
+        text:
+          err instanceof ApiError ? `${err.status} ${(err.body as { error?: string } | null)?.error ?? err.message}` : t("moreTools.observe.registerFailed"),
+      });
     } finally {
       setPoolBusy(false);
     }
@@ -377,13 +390,15 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
     setPoolBusyMessage(null);
     try {
       await observeFetch("/api/workspaces/pool/claim", { method: "POST", body: JSON.stringify({ org, label }) });
-      setPoolBusyMessage(`Claimed a slot for "${org}".`);
+      setPoolBusyMessage({ severity: "success", text: t("moreTools.observe.claimedSlot", { org }) });
       setPoolDialog(null);
       loadPool();
     } catch (err) {
-      setPoolBusyMessage(
-        err instanceof ApiError ? `${err.status} ${(err.body as { error?: string } | null)?.error ?? err.message}` : "Claim failed.",
-      );
+      setPoolBusyMessage({
+        severity: "error",
+        text:
+          err instanceof ApiError ? `${err.status} ${(err.body as { error?: string } | null)?.error ?? err.message}` : t("moreTools.observe.claimFailed"),
+      });
     } finally {
       setPoolBusy(false);
     }
@@ -397,19 +412,18 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
           <Paper variant="outlined" sx={{ p: 3, mt: 3 }}>
             <Typography variant="subtitle1" gutterBottom>
-              Admin only
+              {t("moreTools.common.adminOnly")}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              This dashboard shows export runs, AI pipeline jobs, service health, and
-              the context-pack that steers every AI draft — only an admin can see it.
-              Your role is <strong>{role}</strong>.
+              {t("moreTools.observe.adminOnlyDesc")} {t("moreTools.common.yourRoleIs")}{" "}
+              <strong>{role}</strong>.
             </Typography>
             <Button
               variant="outlined"
               sx={{ mt: 2 }}
               onClick={() => onNavigate(me?.lastBook || "OBA", me?.lastChapter || 1, me?.lastVerse || 1)}
             >
-              Back to home
+              {t("moreTools.common.backToHome")}
             </Button>
           </Paper>
         </Box>
@@ -423,11 +437,13 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
   const latestSnapshot = snapshots && snapshots.length > 0 ? snapshots[0] : null;
 
   const contextPackLabel = contextPackUnavailable
-    ? "Not available for your role"
+    ? t("moreTools.observe.notAvailableForRole")
     : contextPack
-      ? CONTEXT_PACK_LABELS[contextPack.status] ?? contextPack.status
+      ? CONTEXT_PACK_LABEL_KEYS[contextPack.status]
+        ? t(CONTEXT_PACK_LABEL_KEYS[contextPack.status])
+        : contextPack.status
       : contextPackError
-        ? "Load failed"
+        ? t("moreTools.observe.loadFailedCap")
         : "—";
 
   return (
@@ -435,8 +451,8 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
     <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
       <AdminPageHeader
         eyebrow={eyebrow}
-        title="Observe"
-        subtitle="Export runs, AI pipeline jobs, service health, and the context-pack that steers every AI draft."
+        title={t("moreTools.observe.title")}
+        subtitle={t("moreTools.observe.subtitle")}
       />
 
       {/* Stat row */}
@@ -449,46 +465,46 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         }}
       >
         <StatTile
-          label="Health"
-          value={health.state === "checking" ? <CircularProgress size={18} /> : health.state === "ok" ? "OK" : health.state === "down" ? "DOWN" : "—"}
-          sub={health.state === "idle" ? "not checked yet" : health.time ? `checked ${health.time}` : "checking…"}
+          label={t("moreTools.observe.healthTile")}
+          value={health.state === "checking" ? <CircularProgress size={18} /> : health.state === "ok" ? t("moreTools.observe.healthOk") : health.state === "down" ? t("moreTools.observe.healthDown") : "—"}
+          sub={health.state === "idle" ? t("moreTools.observe.notCheckedYet") : health.time ? t("moreTools.observe.checkedAt", { time: health.time }) : t("moreTools.observe.checkingSub")}
         />
-        <StatTile label="Context pack" value={contextPackLabel} sub={contextPack?.sha ? `sha ${contextPack.sha}` : contextPack?.failureReason ?? "—"} />
+        <StatTile label={t("moreTools.observe.contextPackTile")} value={contextPackLabel} sub={contextPack?.sha ? t("moreTools.observe.shaSub", { sha: contextPack.sha }) : contextPack?.failureReason ?? "—"} />
         <StatTile
-          label="Pipeline jobs"
+          label={t("moreTools.observe.pipelineJobsTile")}
           value={jobs ? `${running} / ${queued} / ${failed}` : jobsError ? "—" : <Skeleton width={40} />}
           sub={
             <>
-              running / queued / failed —{" "}
+              {t("moreTools.observe.jobsSub")}{" "}
               <Link component="button" type="button" variant="caption" onClick={() => { location.hash = "#/ai"; }}>
-                Open AI studio
+                {t("moreTools.observe.openAiStudio")}
               </Link>
             </>
           }
         />
         <StatTile
-          label="Last nightly export"
-          value={latestSnapshot ? fmtTime(latestSnapshot.committed_at) : snapshots ? "none" : exportsError ? "—" : <Skeleton width={80} />}
-          sub={latestSnapshot ? `${snapshotTargetLabel(latestSnapshot.book, latestSnapshot.resource, "·")}${latestSnapshot.error ? ` — ${latestSnapshot.error}` : ` — ${latestSnapshot.rows_exported} rows`}` : "—"}
+          label={t("moreTools.observe.lastNightlyExportTile")}
+          value={latestSnapshot ? fmtTime(latestSnapshot.committed_at) : snapshots ? t("moreTools.observe.none") : exportsError ? "—" : <Skeleton width={80} />}
+          sub={latestSnapshot ? `${snapshotTargetLabel(latestSnapshot.book, latestSnapshot.resource, t("moreTools.observe.contextPackTile"), "·")}${latestSnapshot.error ? ` — ${latestSnapshot.error}` : ` — ${t("moreTools.observe.rowsShort", { count: latestSnapshot.rows_exported })}`}` : "—"}
         />
       </Box>
 
       <Stack spacing={2.25}>
         {/* Nightly export runs */}
         <Panel
-          title="Nightly export runs"
-          subtitle="The single status-check route covers both the 05:30 UTC nightly cron and any manual/context-only run."
+          title={t("moreTools.observe.nightlyRunsTitle")}
+          subtitle={t("moreTools.observe.nightlyRunsSub")}
           foot={
             <Typography variant="caption" color="text.secondary">
-              Listed via <code>GET /api/exports?limit=&amp;book=</code>
+              {t("moreTools.observe.listedVia")} <code>GET /api/exports?limit=&amp;book=</code>
             </Typography>
           }
         >
-          {exportsError && <Alert severity="error">Failed to load export runs: {exportsError}</Alert>}
+          {exportsError && <Alert severity="error">{t("moreTools.observe.exportsLoadFailed", { error: exportsError })}</Alert>}
           {!exportsError && snapshots === null && <Skeleton variant="rounded" height={80} />}
           {!exportsError && snapshots !== null && snapshots.length === 0 && (
             <Typography variant="body2" color="text.secondary">
-              No export runs recorded yet.
+              {t("moreTools.observe.noRunsYet")}
             </Typography>
           )}
           {!exportsError && snapshots && snapshots.length > 0 && (
@@ -499,15 +515,15 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
                   <Box key={r.id} sx={{ py: 1.125 }}>
                     <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
                       <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                        {snapshotTargetLabel(r.book, r.resource)} — {fmtTime(r.committed_at)}
+                        {snapshotTargetLabel(r.book, r.resource, t("moreTools.observe.contextPackTile"))} — {fmtTime(r.committed_at)}
                       </Typography>
-                      <FlowStatusChip kind={hasError ? "warn" : "approved"} label={hasError ? "needs attention" : "committed"} />
+                      <FlowStatusChip kind={hasError ? "warn" : "approved"} label={hasError ? t("moreTools.observe.needsAttention") : t("moreTools.observe.committed")} />
                     </Stack>
                     <Typography variant="caption" color="text.secondary">
-                      {r.rows_exported} rows exported · branch {r.branch ?? "—"}
-                      {r.error ? ` · error: ${r.error}` : ""}
-                      {r.pr_number ? ` · PR #${r.pr_number}` : ""}
-                      {r.pr_error ? ` · PR error: ${r.pr_error}` : ""}
+                      {t("moreTools.observe.rowsExportedBranch", { count: r.rows_exported, branch: r.branch ?? "—" })}
+                      {r.error ? ` · ${t("moreTools.observe.errorSuffix", { error: r.error })}` : ""}
+                      {r.pr_number ? ` · ${t("moreTools.observe.prSuffix", { number: r.pr_number })}` : ""}
+                      {r.pr_error ? ` · ${t("moreTools.observe.prErrorSuffix", { error: r.pr_error })}` : ""}
                     </Typography>
                   </Box>
                 );
@@ -526,23 +542,23 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
         {/* Health check + Context pack status */}
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", tablet: "1fr 1fr" }, gap: 2.25 }}>
           <Panel
-            title="Health check"
-            subtitle="No auth, no side effects."
+            title={t("moreTools.observe.healthCheckTitle")}
+            subtitle={t("moreTools.observe.healthCheckSub")}
             foot={
               <Button size="small" variant="outlined" onClick={runHealthCheck} disabled={health.state === "checking"}>
-                {health.state === "checking" ? "Checking…" : "Check now"}
+                {health.state === "checking" ? t("moreTools.observe.checkingBtn") : t("moreTools.observe.checkNow")}
               </Button>
             }
           >
             <Stack spacing={0.75}>
               <Typography variant="body2">
-                <strong>Endpoint:</strong> <code>GET /api/health</code>
+                <strong>{t("moreTools.observe.endpointLabel")}</strong> <code>GET /api/health</code>
               </Typography>
               <Typography variant="body2">
-                <strong>Last check:</strong> {health.time ?? "—"}
+                <strong>{t("moreTools.observe.lastCheckLabel")}</strong> {health.time ?? "—"}
               </Typography>
               <Typography variant="body2" component="div">
-                <strong>Response:</strong>{" "}
+                <strong>{t("moreTools.observe.responseLabel")}</strong>{" "}
                 <Box component="span" sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
                   {health.body ? JSON.stringify(health.body) : "—"}
                 </Box>
@@ -551,11 +567,11 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
           </Panel>
 
           <Panel
-            title="Context pack status"
-            subtitle="The trust indicator every AI draft is pinned against."
+            title={t("moreTools.observe.contextPackStatusTitle")}
+            subtitle={t("moreTools.observe.contextPackStatusSub")}
             foot={
               <Typography variant="caption" color="text.secondary">
-                Loaded via <code>GET /api/translation-memory/export-status</code>
+                {t("moreTools.observe.loadedVia")} <code>GET /api/translation-memory/export-status</code>
               </Typography>
             }
           >
@@ -563,15 +579,15 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
             {!contextPackError && (
               <Stack spacing={0.5}>
                 <Typography variant="body2" component="div">
-                  <strong>Status:</strong>{" "}
+                  <strong>{t("moreTools.observe.statusLabel")}</strong>{" "}
                   {contextPackUnavailable ? (
-                    "not available for your role"
+                    t("moreTools.observe.notAvailableForRoleLower")
                   ) : contextPack ? (
                     <FlowStatusChip
                       kind={contextPack.status === "success" && contextPack.sha ? "approved" : "warn"}
                       label={
                         contextPack.status === "success" && contextPack.sha
-                          ? `ready — sha ${contextPack.sha}`
+                          ? t("moreTools.observe.readySha", { sha: contextPack.sha })
                           : `${contextPack.status}${contextPack.failureReason ? ` — ${contextPack.failureReason}` : ""}`
                       }
                     />
@@ -580,18 +596,18 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
                   )}
                 </Typography>
                 <Typography variant="body2">
-                  <strong>Completed at:</strong> {contextPack ? fmtTime(contextPack.completedAt) : "—"}
+                  <strong>{t("moreTools.observe.completedAtLabel")}</strong> {contextPack ? fmtTime(contextPack.completedAt) : "—"}
                 </Typography>
                 <Typography variant="body2">
-                  <strong>Terms:</strong>{" "}
-                  {contextPack ? `${contextPack.terms} (tN examples ${contextPack.examplesTn}, tQ examples ${contextPack.examplesTq})` : "—"}
+                  <strong>{t("moreTools.observe.termsLabel")}</strong>{" "}
+                  {contextPack ? t("moreTools.observe.termsDetail", { terms: contextPack.terms, tn: contextPack.examplesTn, tq: contextPack.examplesTq }) : "—"}
                 </Typography>
                 <Typography variant="body2">
-                  <strong>Content files:</strong>{" "}
-                  {contextPack ? `${contextPack.contentFiles} (${contextPack.totalBytes} bytes)` : "—"}
+                  <strong>{t("moreTools.observe.contentFilesLabel")}</strong>{" "}
+                  {contextPack ? t("moreTools.observe.contentFilesDetail", { files: contextPack.contentFiles, bytes: contextPack.totalBytes }) : "—"}
                 </Typography>
                 <Typography variant="body2">
-                  <strong>Owner:</strong> {contextPack?.owner ?? "—"}
+                  <strong>{t("moreTools.observe.ownerLabel")}</strong> {contextPack?.owner ?? "—"}
                 </Typography>
               </Stack>
             )}
@@ -600,40 +616,40 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
 
         {/* Cron schedule — static configuration, not live data */}
         <Panel
-          title="Cron schedule"
-          subtitle="Not user-triggerable — shown here for observability only. Values are api/wrangler.toml's registered [env.production.triggers], not a live read (there's no list-crons endpoint)."
+          title={t("moreTools.observe.cronScheduleTitle")}
+          subtitle={t("moreTools.observe.cronScheduleSub")}
         >
           {!me?.nightlyExportsEnabled && (
             <Alert severity="info" sx={{ mb: 1.5 }}>
-              Automatic nightly exports are <strong>not enabled on this deployment</strong> — use{" "}
-              <strong>Run export now</strong> to publish. The schedule below is the production
-              configuration.
+              {t("moreTools.observe.nightlyDisabled1")} <strong>{t("moreTools.observe.nightlyDisabledStrong")}</strong>{" "}
+              {t("moreTools.observe.nightlyDisabled2")} <strong>{t("moreTools.observe.runExportNowStrong")}</strong>{" "}
+              {t("moreTools.observe.nightlyDisabled3")}
             </Alert>
           )}
           <Stack divider={<Box sx={{ borderBlockEnd: 1, borderColor: "divider" }} />}>
             <Stack direction="row" gap={1.5} alignItems="baseline" sx={{ py: 1 }}>
               <Typography sx={{ fontFamily: "monospace", fontWeight: 700, minWidth: 74 }}>05:30 UTC</Typography>
               <Typography variant="body2" component="div">
-                <strong>Export</strong> — DCS→D1 sync, render, commit to <code>live-snapshot</code>.{" "}
+                <strong>{t("moreTools.observe.cronExport")}</strong> — {t("moreTools.observe.cronExportDesc")} <code>live-snapshot</code>.{" "}
                 {me?.nightlyExportsEnabled ? (
-                  <FlowStatusChip kind="approved" label="live" />
+                  <FlowStatusChip kind="approved" label={t("moreTools.observe.liveChip")} />
                 ) : (
-                  <FlowStatusChip kind="warn" label="not enabled on this deployment" />
+                  <FlowStatusChip kind="warn" label={t("moreTools.observe.notEnabledChip")} />
                 )}
               </Typography>
             </Stack>
             <Stack direction="row" gap={1.5} alignItems="baseline" sx={{ py: 1 }}>
               <Typography sx={{ fontFamily: "monospace", fontWeight: 700, minWidth: 74 }}>*/5 min</Typography>
               <Typography variant="body2" component="div">
-                <strong>Pipeline poll</strong> — advances AI jobs even with no tab open; sweeps stale import locks.{" "}
-                <FlowStatusChip kind="approved" label="live" />
+                <strong>{t("moreTools.observe.cronPoll")}</strong> — {t("moreTools.observe.cronPollDesc")}{" "}
+                <FlowStatusChip kind="approved" label={t("moreTools.observe.liveChip")} />
               </Typography>
             </Stack>
             <Stack direction="row" gap={1.5} alignItems="baseline" sx={{ py: 1 }}>
               <Typography sx={{ fontFamily: "monospace", fontWeight: 700, minWidth: 74 }}>08:00 UTC</Typography>
               <Typography variant="body2" component="div">
-                <strong>Reimport</strong> — chunked self-heal reimport for books with no recent render.{" "}
-                <FlowStatusChip kind="warn" label="dormant — not registered in wrangler.toml" />
+                <strong>{t("moreTools.observe.cronReimport")}</strong> — {t("moreTools.observe.cronReimportDesc")}{" "}
+                <FlowStatusChip kind="warn" label={t("moreTools.observe.dormantChip")} />
               </Typography>
             </Stack>
           </Stack>
@@ -643,63 +659,63 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
             explanatory note instead of a doomed fetch and dead action buttons. */}
         {!isSuperAdmin ? (
           <Panel
-            title="Spare workspace pool"
-            subtitle="Pre-provisioned D1 bindings, claimed on demand when a new org needs a database."
-            action={<Chip size="small" label="Super-admin" color="primary" variant="outlined" />}
+            title={t("moreTools.observe.poolTitle")}
+            subtitle={t("moreTools.observe.poolSub")}
+            action={<Chip size="small" label={t("moreTools.observe.superAdminChip")} color="primary" variant="outlined" />}
           >
             <Typography variant="body2" color="text.secondary">
-              Managing the spare workspace pool needs super-admin access, so it isn't shown here.
+              {t("moreTools.observe.poolNeedsSuperAdmin")}
             </Typography>
           </Panel>
         ) : (
         <Panel
-          title="Spare workspace pool"
-          subtitle="Pre-provisioned D1 bindings, claimed on demand when a new org needs a database."
-          action={<Chip size="small" label="Super-admin" color="primary" variant="outlined" />}
+          title={t("moreTools.observe.poolTitle")}
+          subtitle={t("moreTools.observe.poolSub")}
+          action={<Chip size="small" label={t("moreTools.observe.superAdminChip")} color="primary" variant="outlined" />}
           foot={
             <Stack direction="row" flexWrap="wrap" gap={1}>
               <Button size="small" variant="outlined" onClick={loadPool}>
-                Refresh pool
+                {t("moreTools.observe.refreshPool")}
               </Button>
               <Button size="small" variant="outlined" onClick={() => setPoolDialog("register")} disabled={!!poolError}>
-                Register a slot…
+                {t("moreTools.observe.registerSlotBtn")}
               </Button>
               <Button size="small" variant="contained" onClick={() => setPoolDialog("claim")} disabled={!!poolError}>
-                Claim for an org…
+                {t("moreTools.observe.claimForOrgBtn")}
               </Button>
             </Stack>
           }
         >
           {poolBusyMessage && (
-            <Alert severity={poolBusyMessage.startsWith("Registered") || poolBusyMessage.startsWith("Claimed") ? "success" : "error"} sx={{ mb: 1.5 }} onClose={() => setPoolBusyMessage(null)}>
-              {poolBusyMessage}
+            <Alert severity={poolBusyMessage.severity} sx={{ mb: 1.5 }} onClose={() => setPoolBusyMessage(null)}>
+              {poolBusyMessage.text}
             </Alert>
           )}
-          {poolError && <Alert severity={poolError.status === 403 ? "info" : "error"}>{poolError.message}</Alert>}
+          {poolError && <Alert severity={poolError.status === 403 ? "info" : "error"}>{t(poolError.key, poolError.params)}</Alert>}
           {!poolError && pool === null && <Skeleton variant="rounded" height={100} />}
           {!poolError && pool && (
             <>
               <Stack direction="row" gap={3} sx={{ mb: 1.5 }}>
                 <Typography variant="body2">
-                  <strong>Claimed slots:</strong> {pool.counts.claimed ?? 0}
+                  <strong>{t("moreTools.observe.claimedSlotsLabel")}</strong> {pool.counts.claimed ?? 0}
                 </Typography>
                 <Typography variant="body2">
-                  <strong>Total slots seen:</strong> {pool.slots.length}
+                  <strong>{t("moreTools.observe.totalSlotsLabel")}</strong> {pool.slots.length}
                 </Typography>
               </Stack>
               {pool.slots.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">
-                  No slots registered.
+                  {t("moreTools.observe.noSlots")}
                 </Typography>
               ) : (
                 <Box sx={{ overflowX: "auto" }}>
                   <Table size="small">
                     <TableHead>
                       <TableRow>
-                        <TableCell>Slug</TableCell>
-                        <TableCell>Org</TableCell>
-                        <TableCell>Binding</TableCell>
-                        <TableCell>Status</TableCell>
+                        <TableCell>{t("moreTools.observe.colSlug")}</TableCell>
+                        <TableCell>{t("moreTools.observe.colOrg")}</TableCell>
+                        <TableCell>{t("moreTools.observe.colBinding")}</TableCell>
+                        <TableCell>{t("moreTools.observe.colStatus")}</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -709,7 +725,7 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
                           <TableCell>{s.org ?? "—"}</TableCell>
                           <TableCell>{s.binding}</TableCell>
                           <TableCell>
-                            <FlowStatusChip kind={s.status === "claimed" ? "approved" : "draft"} label={`${s.status}${s.bindingLive === false ? " (binding not live)" : ""}`} />
+                            <FlowStatusChip kind={s.status === "claimed" ? "approved" : "draft"} label={`${s.status}${s.bindingLive === false ? ` ${t("moreTools.observe.bindingNotLive")}` : ""}`} />
                           </TableCell>
                         </TableRow>
                       ))}
@@ -751,6 +767,7 @@ function PoolActionDialog({
   onRegister: (binding: string) => void;
   onClaim: (org: string, label: string) => void;
 }) {
+  const { t } = useTranslation();
   const [binding, setBinding] = useState("");
   const [org, setOrg] = useState("");
   const [label, setLabel] = useState("");
@@ -767,13 +784,13 @@ function PoolActionDialog({
 
   return (
     <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{kind === "register" ? "Register a spare-pool slot" : "Claim a slot for an org"}</DialogTitle>
+      <DialogTitle>{kind === "register" ? t("moreTools.observe.dialogRegisterTitle") : t("moreTools.observe.dialogClaimTitle")}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 0.5 }}>
           {kind === "register" ? (
             <TextField
-              label="D1 binding name"
-              placeholder="e.g. DB_SPARE1"
+              label={t("moreTools.observe.bindingName")}
+              placeholder={t("moreTools.observe.bindingPlaceholder")}
               value={binding}
               onChange={(e) => setBinding(e.target.value)}
               autoFocus
@@ -781,26 +798,26 @@ function PoolActionDialog({
             />
           ) : (
             <>
-              <TextField label="Org to claim a slot for" value={org} onChange={(e) => setOrg(e.target.value)} autoFocus fullWidth />
-              <TextField label="Label for this workspace" value={label} onChange={(e) => setLabel(e.target.value || org)} fullWidth />
+              <TextField label={t("moreTools.observe.orgToClaim")} value={org} onChange={(e) => setOrg(e.target.value)} autoFocus fullWidth />
+              <TextField label={t("moreTools.observe.labelForWorkspace")} value={label} onChange={(e) => setLabel(e.target.value || org)} fullWidth />
             </>
           )}
           <Typography variant="caption" color="text.secondary">
-            This mutates the local workspace registry.
+            {t("moreTools.observe.mutatesRegistry")}
           </Typography>
         </Stack>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={busy}>
-          Cancel
+          {t("common.cancel")}
         </Button>
         {kind === "register" ? (
           <Button variant="contained" disabled={busy || !binding.trim()} onClick={() => onRegister(binding.trim())}>
-            {busy ? "Registering…" : "Register"}
+            {busy ? t("moreTools.observe.registering") : t("moreTools.observe.register")}
           </Button>
         ) : (
           <Button variant="contained" disabled={busy || !org.trim() || !label.trim()} onClick={() => onClaim(org.trim(), label.trim())}>
-            {busy ? "Claiming…" : "Claim"}
+            {busy ? t("moreTools.observe.claiming") : t("moreTools.observe.claim")}
           </Button>
         )}
       </DialogActions>

@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // t1-home: queue dispatcher. Port of docs/flows/ui/t1-home.html — see that
 // file for the design this mirrors (queue cards + recent activity + banners).
 // Every number here comes from a real endpoint; where the mockup's own JS
@@ -7,6 +5,7 @@
 // renders the same honest-absent state rather than inventing a count.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Skeleton from "@mui/material/Skeleton";
@@ -36,19 +35,21 @@ const DEFAULT_BOOK = "OBA";
 const DEFAULT_CHAPTER = 1;
 const DEFAULT_VERSE = 1;
 
-function timeGreeting(): string {
+// Returns a translation key; the caller translates at render time.
+function timeGreetingKey(): string {
   const h = new Date().getHours();
-  if (h < 5) return "Good night";
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
-  return "Good evening";
+  if (h < 5) return "flowHome.greetingNight";
+  if (h < 12) return "flowHome.greetingMorning";
+  if (h < 18) return "flowHome.greetingAfternoon";
+  return "flowHome.greetingEvening";
 }
 
-const CONTEXT_PACK_LABELS: Record<string, string> = {
-  success: "ready",
-  never: "never generated",
-  failed: "last run failed",
-  shrink_refused: "refused (shrink guard)",
+// Translation keys per context-pack status; translated at render time.
+const CONTEXT_PACK_LABEL_KEYS: Record<string, string> = {
+  success: "flowHome.contextPackReady",
+  never: "flowHome.contextPackNever",
+  failed: "flowHome.contextPackFailed",
+  shrink_refused: "flowHome.contextPackShrinkRefused",
 };
 
 interface QueueCardProps {
@@ -65,6 +66,7 @@ interface QueueCardProps {
 
 function QueueCard({ eyebrow, title, count, description, footer, href, progress, progressTone }: QueueCardProps) {
   const theme = useTheme();
+  const { t } = useTranslation();
   const barColor = progressTone === "ok" ? theme.palette.flows.ok.main : theme.palette.primary.main;
   return (
     <Box
@@ -110,7 +112,7 @@ function QueueCard({ eyebrow, title, count, description, footer, href, progress,
           {footer ?? ""}
         </Typography>
         <Typography variant="caption" sx={{ fontWeight: 700, color: "primary.main" }}>
-          Open →
+          {t("flowHome.open")}
         </Typography>
       </Stack>
     </Box>
@@ -118,6 +120,7 @@ function QueueCard({ eyebrow, title, count, description, footer, href, progress,
 }
 
 export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
+  const { t } = useTranslation();
   // The workspace's imported books (GET /api/books is scoped to the current
   // workspace). Needed to validate the stored last-location below.
   const [importedBooks, setImportedBooks] = useState<BookListEntry[] | null>(null);
@@ -293,7 +296,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
   // Row totals stay computed over the full array — intro notes are real notes
   // (see bookSummary.ts) — so tN/tQ counts are unchanged.
   const realChapterCount = realChapters(bookSummary).length;
-  const chapterLabel = `${realChapterCount} ${realChapterCount === 1 ? "chapter" : "chapters"}`;
+  const chapterLabel = t("flowHome.chapterCount", { count: realChapterCount });
   const totalVerses = chapters.reduce((s, c) => s + (c.verses || 0), 0);
   const totalTn = chapters.reduce((s, c) => s + (c.tn || 0), 0);
   const totalTq = chapters.reduce((s, c) => s + (c.tq || 0), 0);
@@ -305,10 +308,12 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
   const tqApproved = tqRows.filter((r) => r.translation_state === "validated").length;
 
   const contextPackLabel = contextPackUnavailable
-    ? "not available for your role"
+    ? t("flowHome.contextPackUnavailableRole")
     : contextPack
-      ? CONTEXT_PACK_LABELS[contextPack.status] ?? contextPack.status
-      : "unknown";
+      ? CONTEXT_PACK_LABEL_KEYS[contextPack.status]
+        ? t(CONTEXT_PACK_LABEL_KEYS[contextPack.status])
+        : contextPack.status
+      : t("flowHome.contextPackUnknown");
 
   return (
     <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
@@ -330,7 +335,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
                   rel="noopener"
                   sx={{ color: "inherit", fontWeight: 700 }}
                 >
-                  View
+                  {t("flowHome.view")}
                 </Box>
               </>
             )}
@@ -347,7 +352,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
         )}
         {pipelinesUnavailable && (
           <Typography variant="caption" color="text.secondary">
-            AI run status isn't visible for your role.
+            {t("flowHome.aiStatusHidden")}
           </Typography>
         )}
       </Stack>
@@ -361,14 +366,15 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
       >
         <Box sx={{ flex: "1 1 220px", minWidth: 0 }}>
           <Typography variant="h5" sx={{ fontSize: "1.25rem", letterSpacing: "-0.01em" }}>
-            {timeGreeting()}
-            {me?.username ? `, ${me.username}` : ""}
+            {me?.username
+              ? t("flowHome.greetingWithName", { greeting: t(timeGreetingKey()), name: me.username })
+              : t(timeGreetingKey())}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
             {queueStatus === "loading" ? (
               <Skeleton variant="text" width={160} />
             ) : (
-              `${bookSummary?.book ?? book} · ${me?.workspace ? `${me.workspace} workspace` : "workspace unknown"}`
+              `${bookSummary?.book ?? book} · ${me?.workspace ? t("flowHome.workspaceNamed", { workspace: me.workspace }) : t("flowHome.workspaceUnknown")}`
             )}
           </Typography>
         </Box>
@@ -387,12 +393,12 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
             px: 1.5,
             py: 0.625,
           }}
-          title="Feeds AI drafting for this workspace"
+          title={t("flowHome.contextPackTooltip")}
         >
           <Box component="span" aria-hidden="true">
             🧠
           </Box>
-          Context pack: {contextPackLabel}
+          {t("flowHome.contextPackLine", { status: contextPackLabel })}
         </Box>
       </Stack>
 
@@ -406,7 +412,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
       >
         <Box
           role="list"
-          aria-label="Work queues"
+          aria-label={t("flowHome.workQueues")}
           sx={{
             display: "grid",
             gap: 1.75,
@@ -422,54 +428,54 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
           ) : queueStatus === "error" ? (
             <Box sx={{ gridColumn: "1 / -1" }}>
               <Alert severity="error">
-                Could not load {book} data.
+                {t("flowHome.loadError", { book })}
               </Alert>
             </Box>
           ) : (
             <>
               <QueueCard
-                eyebrow="Scripture text"
+                eyebrow={t("flowHome.eyebrowScripture")}
                 title={bookSummary?.book ?? book}
-                count={`${doneInChapter} of ${versesInChapter} verses done in chapter ${chapter}`}
-                description="ULT → GLT (literal) and UST → GST (simplified), verse by verse."
-                footer={`${chapterLabel}, ${totalVerses} verses total`}
+                count={t("flowHome.versesDoneLine", { done: doneInChapter, total: versesInChapter, chapter })}
+                description={t("flowHome.descScripture")}
+                footer={t("flowHome.footerScripture", { chapters: chapterLabel, verses: totalVerses })}
                 href={`#/scripture/${book}/${chapter}/${verse}`}
                 progress={versesInChapter ? (doneInChapter / versesInChapter) * 100 : 0}
               />
               <QueueCard
-                eyebrow="Notes & questions"
-                title="Translation notes"
-                count={`${tnApproved} of ${tnRows.length} approved in chapter ${chapter}`}
-                description="AI-drafted translation notes, one card at a time."
-                footer={`${totalTn} notes across ${chapterLabel}`}
+                eyebrow={t("flowHome.eyebrowNotes")}
+                title={t("pipeline.translationNotes")}
+                count={t("flowHome.approvedInChapter", { approved: tnApproved, total: tnRows.length, chapter })}
+                description={t("flowHome.descNotes")}
+                footer={t("flowHome.footerNotes", { count: totalTn, chapters: chapterLabel })}
                 href={`#/review/${book}/${chapter}`}
                 progress={tnRows.length ? (tnApproved / tnRows.length) * 100 : 0}
                 progressTone="ok"
               />
               <QueueCard
-                eyebrow="Notes & questions"
-                title="Questions"
-                count={`${tqApproved} of ${tqRows.length} approved in chapter ${chapter}`}
-                description="AI-drafted translation questions, one card at a time."
-                footer={`${totalTq} questions across ${chapterLabel}`}
+                eyebrow={t("flowHome.eyebrowNotes")}
+                title={t("lanes.tq")}
+                count={t("flowHome.approvedInChapter", { approved: tqApproved, total: tqRows.length, chapter })}
+                description={t("flowHome.descQuestions")}
+                footer={t("flowHome.footerQuestions", { count: totalTq, chapters: chapterLabel })}
                 href={`#/review/${book}/${chapter}`}
                 progress={tqRows.length ? (tqApproved / tqRows.length) * 100 : 0}
                 progressTone="ok"
               />
               <QueueCard
-                eyebrow="Word alignment"
-                title="Alignment"
-                count="Open to align — progress tracking coming soon"
-                description="Link target words to the Hebrew/Greek source, verse by verse."
+                eyebrow={t("flowHome.eyebrowAlignment")}
+                title={t("panelTitle.alignment")}
+                count={t("flowHome.alignOpenCount")}
+                description={t("flowHome.descAlignment")}
                 footer={null}
                 href={`#/align/${book}/${chapter}/${verse}`}
                 progress={null}
               />
               <QueueCard
-                eyebrow="tW / tA articles"
-                title="Articles"
-                count="Open articles — progress tracking coming soon"
-                description="Key-term and translation-academy articles referenced from this book."
+                eyebrow={t("flowHome.eyebrowArticles")}
+                title={t("articles.title")}
+                count={t("flowHome.articlesOpenCount")}
+                description={t("flowHome.descArticles")}
                 footer={null}
                 href="#/articles"
                 progress={null}
@@ -480,7 +486,7 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
 
         <Box
           component="aside"
-          aria-label="Recent activity"
+          aria-label={t("flowHome.recentActivity")}
           sx={{
             bgcolor: "background.paper",
             border: 1,
@@ -494,12 +500,12 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
             variant="caption"
             sx={{ display: "block", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "text.secondary", mb: 1.25 }}
           >
-            Recent activity
+            {t("flowHome.recentActivity")}
           </Typography>
           {/* No activity/audit-log endpoint exists yet (see docs/flows/00b-api-inventory.md) —
               honest empty state rather than fabricated entries. */}
           <Typography variant="body2" color="text.secondary">
-            No activity feed yet — recent activity will appear here once it's available.
+            {t("flowHome.noActivityFeed")}
           </Typography>
         </Box>
       </Box>

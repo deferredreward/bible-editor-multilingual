@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // a2-import's "Scripture source replacement" panel. Port of the
 // #laneReplacementPanel block in docs/flows/ui/a2-import.html, wired to the
 // literal ("lit") lane only, exactly as the mockup was.
@@ -21,6 +19,8 @@
 // describeBookError) instead.
 
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   Alert,
   Box,
@@ -57,11 +57,18 @@ const LANE = "lit" as const;
 // terminal off-path states and are rendered as their raw label instead.
 const LC_STEPS = ["reserved", "staging", "ready", "completed"] as const;
 
-const LC_NOTE: Record<string, string> = {
-  reserved: "A replacement slot is reserved but staging hasn't started.",
-  staging: "Books are staging into the replacement source now.",
-  ready: "Ready to activate — the literal lane will switch to the new source.",
-  completed: "This replacement is complete. The literal lane now reads from the new source.",
+const LC_STEP_KEY: Record<(typeof LC_STEPS)[number], string> = {
+  reserved: "flowBooks.lane.step.reserved",
+  staging: "flowBooks.lane.step.staging",
+  ready: "flowBooks.lane.step.ready",
+  completed: "flowBooks.lane.step.completed",
+};
+
+const LC_NOTE_KEY: Record<string, string> = {
+  reserved: "flowBooks.lane.note.reserved",
+  staging: "flowBooks.lane.note.staging",
+  ready: "flowBooks.lane.note.ready",
+  completed: "flowBooks.lane.note.completed",
 };
 
 function errorText(e: unknown): string {
@@ -72,21 +79,22 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-function bookChip(status: string) {
-  if (status === "artifact_ok") return { kind: "ok" as const, label: "Staged OK" };
+function bookChip(status: string, t: TFunction) {
+  if (status === "artifact_ok") return { kind: "ok" as const, label: t("flowBooks.lane.chip.stagedOk") };
   if (status === "retryable_error" || status === "failed")
-    return { kind: "warn" as const, label: "Failed — retryable" };
-  if (status === "absent_authorized") return { kind: "skip" as const, label: "Waived" };
-  return { kind: "draft" as const, label: status || "Waiting" };
+    return { kind: "warn" as const, label: t("flowBooks.lane.chip.failedRetryable") };
+  if (status === "absent_authorized") return { kind: "skip" as const, label: t("flowBooks.lane.chip.waived") };
+  return { kind: "draft" as const, label: status || t("flowBooks.lane.chip.waiting") };
 }
 
 function LifecycleStrip({ current }: { current: string | null }) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const idx = current ? LC_STEPS.indexOf(current as (typeof LC_STEPS)[number]) : -1;
   return (
     <Box
       sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", marginBlock: "4px 10px" }}
-      aria-label="Replacement lifecycle"
+      aria-label={t("flowBooks.lane.lifecycleAria")}
     >
       {LC_STEPS.map((step, i) => {
         const state = idx < 0 ? "pending" : i < idx ? "done" : i === idx ? "current" : "pending";
@@ -138,7 +146,7 @@ function LifecycleStrip({ current }: { current: string | null }) {
                   flex: "none",
                 }}
               />
-              {step.charAt(0).toUpperCase() + step.slice(1)}
+              {t(LC_STEP_KEY[step])}
             </Box>
           </Box>
         );
@@ -148,6 +156,7 @@ function LifecycleStrip({ current }: { current: string | null }) {
 }
 
 export function BooksLanePanel() {
+  const { t } = useTranslation();
   const cfg = useProjectConfig();
   const laneState = cfg?.laneState?.[LANE] ?? null;
   const jobId = laneState?.replacementJobId ?? null;
@@ -180,9 +189,9 @@ export function BooksLanePanel() {
       setJob(res);
       setJobError(null);
     } catch (e) {
-      setJobError(`Failed to load job ${jobId}: ${errorText(e)}`);
+      setJobError(t("flowBooks.lane.jobLoadFailed", { jobId, error: errorText(e) }));
     }
-  }, [jobId]);
+  }, [jobId, t]);
 
   // Poll while a job is live so per-book staging and readiness stay current.
   // Stops on a terminal status and refreshes the shared project config (which
@@ -220,18 +229,22 @@ export function BooksLanePanel() {
   const runValidate = async () => {
     const trimmed = url.trim();
     if (!trimmed) {
-      setValidateResult("Enter a Door43 URL first.");
+      setValidateResult(t("flowBooks.lane.enterUrlFirst"));
       return;
     }
     setValidating(true);
     try {
       const r = await api.laneValidate(LANE, trimmed);
       setValidateResult(
-        `Validated — ${r.source.owner}/${r.source.repo} would affect ${r.impactBooks} book(s), ` +
-          `${r.impactVerses} verse(s). Current: ${r.currentSource.owner}/${r.currentSource.repo}.`,
+        t("flowBooks.lane.validated", {
+          source: `${r.source.owner}/${r.source.repo}`,
+          books: r.impactBooks,
+          verses: r.impactVerses,
+          current: `${r.currentSource.owner}/${r.currentSource.repo}`,
+        }),
       );
     } catch (e) {
-      setValidateResult(`Validate failed: ${errorText(e)}`);
+      setValidateResult(t("flowBooks.lane.validateFailed", { error: errorText(e) }));
     } finally {
       setValidating(false);
     }
@@ -242,11 +255,11 @@ export function BooksLanePanel() {
       const r = await api.laneAffectedBooks(LANE);
       setValidateResult(
         r.books.length
-          ? `${r.books.length} book(s) would be affected: ${r.books.join(", ")}`
-          : "No books currently populate this lane.",
+          ? t("flowBooks.lane.affectedList", { count: r.books.length, books: r.books.join(", ") })
+          : t("flowBooks.lane.noBooksInLane"),
       );
     } catch (e) {
-      setValidateResult(`Failed to load affected books: ${errorText(e)}`);
+      setValidateResult(t("flowBooks.lane.affectedLoadFailed", { error: errorText(e) }));
     }
   };
 
@@ -314,7 +327,7 @@ export function BooksLanePanel() {
 
   const backOut = async () => {
     if (!jobId) return;
-    if (!window.confirm("Back out this replacement entirely? This reverts to the prior source.")) return;
+    if (!window.confirm(t("flowBooks.lane.confirmBackOut"))) return;
     setBusy("backout");
     setError(null);
     try {
@@ -330,7 +343,7 @@ export function BooksLanePanel() {
 
   const cancelJob = async () => {
     if (!jobId) return;
-    if (!window.confirm("Cancel this replacement job?")) return;
+    if (!window.confirm(t("flowBooks.lane.confirmCancel"))) return;
     setBusy("cancel");
     setError(null);
     try {
@@ -360,12 +373,7 @@ export function BooksLanePanel() {
 
   const waiveBook = async (book: string) => {
     if (!jobId) return;
-    if (
-      !window.confirm(
-        `Waive ${book}? It will keep its predecessor-generation content instead of the new source.`,
-      )
-    )
-      return;
+    if (!window.confirm(t("flowBooks.lane.confirmWaive", { book }))) return;
     setBusyBook(book);
     setError(null);
     try {
@@ -391,7 +399,7 @@ export function BooksLanePanel() {
   const bookTooltip = (b: LaneReplacementBook): string => {
     if (b.status === "retryable_error" || b.status === "failed") {
       const info = describeBookError(b.error_json, source);
-      if (info?.kind === "not_found") return `Not found in ${info.location}`;
+      if (info?.kind === "not_found") return t("flowBooks.lane.notFoundIn", { location: info.location });
       if (info?.kind === "other") return `${b.book}: ${info.detail}`;
     }
     return `${b.book}: ${b.status}`;
@@ -399,30 +407,29 @@ export function BooksLanePanel() {
 
   const nextAction =
     status === "ready"
-      ? "Activate to switch the source"
+      ? t("flowBooks.lane.nextActivate")
       : status === "completed"
-        ? "No pending replacement"
+        ? t("flowBooks.lane.nextNone")
         : status === "reserved" || status === "staging"
-          ? "Resolve remaining books to reach Ready"
+          ? t("flowBooks.lane.nextResolve")
           : "";
 
   return (
     <Panel>
       <PanelTop
-        title="Scripture source replacement"
-        aside={<FlowStatusChip kind="edited" label="Literal lane" />}
-        sub="Swap the literal lane's upstream source across the whole canon — validate the URL, review which books are affected, work the per-book job to completion, then activate."
+        title={t("flowBooks.lane.title")}
+        aside={<FlowStatusChip kind="edited" label={t("flowBooks.lane.literalLane")} />}
+        sub={t("flowBooks.lane.sub")}
       />
       <PanelBody>
         {!cfg ? (
           <Stack direction="row" spacing={1} alignItems="center">
             <CircularProgress size={16} />
-            <Typography variant="body2">Loading project configuration…</Typography>
+            <Typography variant="body2">{t("flowBooks.lane.loadingConfig")}</Typography>
           </Stack>
         ) : !laneState ? (
           <Typography variant="body2" color="text.secondary">
-            This project's configuration reports no scripture lane state, so there is no literal lane
-            to replace here.
+            {t("flowBooks.lane.noLaneState")}
           </Typography>
         ) : (
           <>
@@ -446,18 +453,18 @@ export function BooksLanePanel() {
                   }}
                 >
                   <Box component="dt" sx={{ color: "text.secondary" }}>
-                    Current source
+                    {t("flowBooks.lane.currentSource")}
                   </Box>
                   <Box component="dd" sx={{ m: 0 }}>
                     {currentSource ? `${currentSource.owner}/${currentSource.repo}` : "—"}
                   </Box>
                   <Box component="dt" sx={{ color: "text.secondary" }}>
-                    Proposed source
+                    {t("flowBooks.lane.proposedSource")}
                   </Box>
                   <Box component="dd" sx={{ m: 0 }}>
                     {pendingTarget
                       ? `${pendingTarget.source.owner}/${pendingTarget.source.repo} (${pendingTarget.label})`
-                      : "none prepared"}
+                      : t("flowBooks.lane.nonePrepared")}
                   </Box>
                 </Box>
 
@@ -465,7 +472,7 @@ export function BooksLanePanel() {
                   size="small"
                   fullWidth
                   sx={{ mt: 1.5 }}
-                  label="New Door43 URL (for Validate)"
+                  label={t("flowBooks.lane.urlLabel")}
                   placeholder="https://git.door43.org/..."
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
@@ -478,14 +485,14 @@ export function BooksLanePanel() {
                     disabled={validating}
                     sx={{ minHeight: 36 }}
                   >
-                    {validating ? <CircularProgress size={16} /> : "Validate"}
+                    {validating ? <CircularProgress size={16} /> : t("flowBooks.lane.validate")}
                   </Button>
                   <Button size="small" onClick={() => void showAffected()} sx={{ minHeight: 36 }}>
-                    View affected books
+                    {t("flowBooks.lane.viewAffected")}
                   </Button>
                 </Stack>
                 <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75 }}>
-                  {validateResult ?? "Not yet validated this run."}
+                  {validateResult ?? t("flowBooks.lane.notYetValidated")}
                 </Typography>
               </Box>
 
@@ -501,13 +508,15 @@ export function BooksLanePanel() {
                     mb: 0.625,
                   }}
                 >
-                  Lifecycle
+                  {t("flowBooks.lane.lifecycle")}
                 </Typography>
                 <LifecycleStrip current={status && LC_STEPS.includes(status as (typeof LC_STEPS)[number]) ? status : null} />
                 <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
                   {job
-                    ? LC_NOTE[status ?? ""] ?? `Job status: ${status}`
-                    : "No replacement job loaded for this lane."}
+                    ? LC_NOTE_KEY[status ?? ""]
+                      ? t(LC_NOTE_KEY[status ?? ""])
+                      : t("flowBooks.lane.jobStatus", { status })
+                    : t("flowBooks.lane.noJobLoaded")}
                 </Typography>
                 <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1.25, rowGap: 1 }}>
                   <Button
@@ -521,7 +530,7 @@ export function BooksLanePanel() {
                     }
                     onClick={() => void openConfirm()}
                   >
-                    {busy === "start" ? <CircularProgress size={16} /> : "Start replacement"}
+                    {busy === "start" ? <CircularProgress size={16} /> : t("flowBooks.lane.startReplacement")}
                   </Button>
                   <Button
                     size="small"
@@ -530,7 +539,7 @@ export function BooksLanePanel() {
                     disabled={busy !== null || status !== "ready"}
                     onClick={() => void activate()}
                   >
-                    {busy === "activate" ? <CircularProgress size={16} /> : "Activate"}
+                    {busy === "activate" ? <CircularProgress size={16} /> : t("flowBooks.lane.activate")}
                   </Button>
                   <Button
                     size="small"
@@ -538,7 +547,7 @@ export function BooksLanePanel() {
                     disabled={busy !== null || !jobId}
                     onClick={() => void backOut()}
                   >
-                    Back out
+                    {t("flowBooks.lane.backOut")}
                   </Button>
                   <Button
                     size="small"
@@ -546,13 +555,12 @@ export function BooksLanePanel() {
                     disabled={busy !== null || !jobId}
                     onClick={() => void cancelJob()}
                   >
-                    Cancel
+                    {t("common.cancel")}
                   </Button>
                 </Stack>
                 {!pendingTarget && (
                   <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-                    No pending target is prepared for this lane, so there is nothing to start. A target
-                    is prepared on the Setup screen.
+                    {t("flowBooks.lane.noPendingTarget")}
                   </Typography>
                 )}
               </Box>
@@ -570,22 +578,21 @@ export function BooksLanePanel() {
                   mb: 0.625,
                 }}
               >
-                Replacement job — per-book status
+                {t("flowBooks.lane.perBookHeading")}
               </Typography>
               {books.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">
-                  No replacement job in progress.
+                  {t("flowBooks.lane.noJobInProgress")}
                 </Typography>
               ) : (
                 <>
                   {jobActionable(books) && (
                     <Alert severity="warning" variant="outlined" sx={{ mb: 1 }}>
-                      Some books need a decision — retry them, or waive them to keep their current
-                      content.
+                      {t("flowBooks.lane.needsDecision")}
                     </Alert>
                   )}
                   {books.map((b) => {
-                    const chip = bookChip(b.status);
+                    const chip = bookChip(b.status, t);
                     const retryable = b.status === "retryable_error" || b.status === "failed";
                     return (
                       <ListRow key={b.book}>
@@ -606,14 +613,14 @@ export function BooksLanePanel() {
                             disabled={busyBook === b.book}
                             onClick={() => void retryBook(b.book)}
                           >
-                            Retry
+                            {t("common.retry")}
                           </Button>
                         )}
                         {(retryable || b.status === "absent_authorized") && (
                           <Tooltip
                             title={
                               bookMode(b) === "carry_forward"
-                                ? "Carry-forward books can't be waived — the server always rejects it. Retry instead."
+                                ? t("flowBooks.lane.carryForwardNoWaive")
                                 : ""
                             }
                           >
@@ -624,7 +631,7 @@ export function BooksLanePanel() {
                                 disabled={busyBook === b.book || bookMode(b) === "carry_forward"}
                                 onClick={() => void waiveBook(b.book)}
                               >
-                                Waive
+                                {t("flowBooks.lane.waive")}
                               </Button>
                             </span>
                           </Tooltip>
@@ -651,11 +658,13 @@ export function BooksLanePanel() {
       </PanelBody>
       <PanelFoot
         state={
-          job ? `Job ${job.job.job_id} — ${job.job.status}` : "No active replacement job loaded."
+          job
+            ? t("flowBooks.lane.jobState", { jobId: job.job.job_id, status: job.job.status })
+            : t("flowBooks.lane.noActiveJob")
         }
       >
         <Button size="small" sx={{ minHeight: 36 }} disabled={!jobId} onClick={() => void loadJob()}>
-          Refresh status
+          {t("flowBooks.refreshStatus")}
         </Button>
         {nextAction && (
           <Typography variant="caption" color="text.secondary">
@@ -667,44 +676,42 @@ export function BooksLanePanel() {
       {/* Second confirmation before a lane's text is overwritten, listing the
           exact books and defaulting to KEEP any book with translator edits. */}
       <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Replace the literal lane's source?</DialogTitle>
+        <DialogTitle>{t("flowBooks.lane.confirmTitle")}</DialogTitle>
         <DialogContent>
           {source && (
             <Typography variant="body2" sx={{ mb: 1 }}>
-              New source: {source.owner}/{source.repo}
+              {t("flowBooks.lane.newSource", { source: `${source.owner}/${source.repo}` })}
             </Typography>
           )}
           <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>
-            Selected books have their text and alignment re-staged from the new source. Unselected
-            books are carried forward unchanged.
+            {t("flowBooks.lane.restageWarning")}
           </Alert>
           {affectedBooksError ? (
             <>
               <Alert severity="error" variant="outlined" sx={{ mb: 1 }}>
-                Couldn't load the affected book list: {affectedBooksError}. Starting a replacement is
-                disabled until this succeeds — retry rather than assume no books are affected.
+                {t("flowBooks.lane.affectedListError", { error: affectedBooksError })}
               </Alert>
               <Button size="small" onClick={() => void openConfirm()}>
-                Retry
+                {t("common.retry")}
               </Button>
             </>
           ) : affectedBooks == null ? (
             <Stack direction="row" spacing={1} alignItems="center">
               <CircularProgress size={16} />
-              <Typography variant="body2">Loading the affected book list…</Typography>
+              <Typography variant="body2">{t("flowBooks.lane.loadingAffected")}</Typography>
             </Stack>
           ) : affectedBooks.length === 0 ? (
             <Typography variant="body2">
-              No books currently populate this lane, so nothing would be re-staged.
+              {t("flowBooks.lane.noBooksNothingRestaged")}
             </Typography>
           ) : (
             <>
               <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
                 <Button size="small" onClick={() => setSelectedBooks(new Set(affectedBooks))}>
-                  Select all
+                  {t("flowBooks.lane.selectAll")}
                 </Button>
                 <Button size="small" onClick={() => setSelectedBooks(new Set())}>
-                  Select none
+                  {t("flowBooks.lane.selectNone")}
                 </Button>
               </Stack>
               <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
@@ -716,7 +723,7 @@ export function BooksLanePanel() {
                       key={b}
                       title={
                         bookStats[b]
-                          ? `${bookStats[b].verses} verses, ${edited} with translator edits`
+                          ? t("flowBooks.lane.bookStats", { verses: bookStats[b].verses, edited })
                           : ""
                       }
                     >
@@ -740,23 +747,27 @@ export function BooksLanePanel() {
                 })}
               </Box>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-                {affectedBooks.filter((b) => selectedBooks.has(b)).length} to replace,{" "}
-                {affectedBooks.filter((b) => !selectedBooks.has(b)).length} kept.
+                {t("flowBooks.lane.selectionSummary", {
+                  // NOT `replace`: that is i18next's reserved substitution-data
+                  // option, and a truthy value silently blanks every placeholder.
+                  replacing: affectedBooks.filter((b) => selectedBooks.has(b)).length,
+                  kept: affectedBooks.filter((b) => !selectedBooks.has(b)).length,
+                })}
               </Typography>
             </>
           )}
           <FormControlLabel
             sx={{ mt: 1.5 }}
             control={<Checkbox checked={ack} onChange={(e) => setAck(e.target.checked)} />}
-            label="I understand the selected books will be overwritten from the new source."
+            label={t("flowBooks.lane.ackLabel")}
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmOpen(false)}>Cancel</Button>
+          <Button onClick={() => setConfirmOpen(false)}>{t("common.cancel")}</Button>
           <Tooltip
             title={
               affectedBooks != null && affectedBooks.length > 0 && selectedBooks.size === 0
-                ? "Select at least one book to replace."
+                ? t("flowBooks.lane.selectAtLeastOne")
                 : ""
             }
           >
@@ -771,7 +782,7 @@ export function BooksLanePanel() {
                 }
                 onClick={() => void confirmStart()}
               >
-                Start replacement
+                {t("flowBooks.lane.startReplacement")}
               </Button>
             </span>
           </Tooltip>

@@ -24,6 +24,16 @@ export const UW_UPSTREAM_REPOS: Record<ResourceKey, string> = {
   ta: "en_ta",
 };
 
+// The { org, repo } a per-book source override points at when it uses the
+// unfoldingWord upstream preset (issue #289). Kept here — beside the inference
+// table it reads from — so the preset path and any test share one source of
+// truth. The result is byte-identical to what api.verifySource returns for the
+// upstream repo's Door43 URL, so an override created via the preset is
+// indistinguishable from one created by pasting that URL.
+export function upstreamSourceForResource(resource: ResourceKey): { org: string; repo: string } {
+  return { org: UW_UPSTREAM_ORG, repo: UW_UPSTREAM_REPOS[resource] };
+}
+
 // Per-resource upstream selection (owner decision baked into this PR):
 //   upstream → pull from the upstream org at its default/inferred repo,
 //   override → pull from a DIFFERENT repo, optionally in a DIFFERENT org,

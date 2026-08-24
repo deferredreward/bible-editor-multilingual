@@ -208,7 +208,7 @@ function LayoutSwitcher({
         <Divider />
         {/* Entry into the Books landing page (replaces flexible mode at
             merge; classic stays). Books is now the app's default screen for
-            every role. TODO(i18n) with the flows sweep. */}
+            every role. */}
         <MenuItem
           onClick={() => {
             setOpen(false);
@@ -218,7 +218,7 @@ function LayoutSwitcher({
           <ListItemIcon>
             <MenuBookIcon fontSize="small" />
           </ListItemIcon>
-          <ListItemText>Books</ListItemText>
+          <ListItemText>{t("flowBooks.title")}</ListItemText>
         </MenuItem>
         {closedRegions.length > 0 && onRestoreRegion && [
           <Divider key="closed-divider" />,

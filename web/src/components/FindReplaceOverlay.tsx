@@ -8,6 +8,7 @@
 // patterns produce no matches and a red border on the input.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Box,
@@ -195,6 +196,7 @@ export function FindReplaceOverlay({
   onActiveNoteMatchChange,
   textLockedVersions,
 }: Props) {
+  const { t } = useTranslation();
   // Combined read-only version set: hardcoded OL sources + lane-locked versions.
   const readOnlyVersions = useMemo(() => {
     if (!textLockedVersions || textLockedVersions.size === 0) return HARDCODED_READ_ONLY_VERSIONS;
@@ -732,11 +734,11 @@ export function FindReplaceOverlay({
             }
           }}
           size="small"
-          placeholder="find"
+          placeholder={t("dialogs.findReplace.findPlaceholder")}
           error={regexInvalid}
           helperText={
             regexInvalid
-              ? "invalid regex"
+              ? t("dialogs.findReplace.invalidRegex")
               : sourceQuery.kind !== "english"
                 ? describeSourceMode(sourceQuery)
                 : undefined
@@ -744,7 +746,7 @@ export function FindReplaceOverlay({
           sx={{ minWidth: 240, "& .MuiFormHelperText-root": { m: 0, lineHeight: 1.2, fontFamily: "monospace", fontSize: 11 } }}
           inputProps={{ style: { fontFamily: "monospace", fontSize: 13 } }}
         />
-        <Tooltip title="use the input as a JavaScript regex">
+        <Tooltip title={t("dialogs.findReplace.regexTooltip")}>
           <ToggleButton
             value="regex"
             size="small"
@@ -755,7 +757,7 @@ export function FindReplaceOverlay({
             .*
           </ToggleButton>
         </Tooltip>
-        <Tooltip title="case-sensitive">
+        <Tooltip title={t("dialogs.findReplace.caseTooltip")}>
           <ToggleButton
             value="case"
             size="small"
@@ -767,7 +769,7 @@ export function FindReplaceOverlay({
           </ToggleButton>
         </Tooltip>
         {showStrongsToggle && (
-          <Tooltip title="treat this number as a Strong's number — search Hebrew/Greek tokens instead of bible text">
+          <Tooltip title={t("dialogs.findReplace.strongsTooltip")}>
             <ToggleButton
               value="strongs"
               size="small"
@@ -779,7 +781,7 @@ export function FindReplaceOverlay({
             </ToggleButton>
           </Tooltip>
         )}
-        <Tooltip title="search scripture text (ULT / UST / UHB / UGNT)">
+        <Tooltip title={t("dialogs.findReplace.bibleScopeTooltip")}>
           <FormControlLabel
             control={
               <Checkbox
@@ -789,11 +791,11 @@ export function FindReplaceOverlay({
                 sx={{ p: 0.25 }}
               />
             }
-            label="Bible"
+            label={t("dialogs.findReplace.bibleScope")}
             sx={{ m: 0, "& .MuiFormControlLabel-label": { fontSize: 12 } }}
           />
         </Tooltip>
-        <Tooltip title="search translation notes — note text, support reference (SR), and note id">
+        <Tooltip title={t("dialogs.findReplace.tnScopeTooltip")}>
           <FormControlLabel
             control={
               <Checkbox
@@ -803,7 +805,7 @@ export function FindReplaceOverlay({
                 sx={{ p: 0.25 }}
               />
             }
-            label="TN"
+            label={t("dialogs.findReplace.tnScope")}
             sx={{ m: 0, "& .MuiFormControlLabel-label": { fontSize: 12 } }}
           />
         </Tooltip>
@@ -811,7 +813,9 @@ export function FindReplaceOverlay({
           variant="caption"
           sx={{ fontFamily: "monospace", minWidth: 72, textAlign: "center", color: "text.secondary" }}
         >
-          {results.length === 0 ? "no results" : `${activeIdx + 1} / ${results.length}`}
+          {results.length === 0
+            ? t("dialogs.findReplace.noResults")
+            : `${activeIdx + 1} / ${results.length}`}
         </Typography>
         {/* Find/next is the primary control — filled + colored so it draws the
             eye and the Enter/Shift+Enter habit, above replace and replace-all. */}
@@ -825,7 +829,7 @@ export function FindReplaceOverlay({
             opacity: results.length === 0 ? 0.45 : 1,
           }}
         >
-          <Tooltip title="previous match (Shift+Enter)">
+          <Tooltip title={t("dialogs.findReplace.prevMatch")}>
             <span>
               <IconButton
                 size="small"
@@ -846,7 +850,7 @@ export function FindReplaceOverlay({
               </IconButton>
             </span>
           </Tooltip>
-          <Tooltip title="next match (Enter)">
+          <Tooltip title={t("dialogs.findReplace.nextMatch")}>
             <span>
               <IconButton
                 size="small"
@@ -868,19 +872,22 @@ export function FindReplaceOverlay({
         </Box>
         <Box sx={{ flex: 1 }} />
         {chapterList.length === 1 && (
-          <Tooltip title="Find is searching the current chapter only. Switch Scripture to “book” mode to search the whole book.">
+          <Tooltip title={t("dialogs.findReplace.chapterOnlyTooltip")}>
             <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: "monospace", cursor: "help" }}>
-              this chapter only
+              {t("dialogs.findReplace.chapterOnly")}
             </Typography>
           </Tooltip>
         )}
         {chapterList.length > 1 && (
           <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: "monospace" }}>
-            scope: {counts.ready}/{chapterList.length} ch loaded
+            {t("dialogs.findReplace.scopeLoaded", {
+              ready: counts.ready,
+              total: chapterList.length,
+            })}
           </Typography>
         )}
         {chapterList.length > 1 && counts.ready < chapterList.length && (
-          <Tooltip title="fetch every chapter of this book now so search covers the whole book — only useful once per session">
+          <Tooltip title={t("dialogs.findReplace.loadFullBookTooltip")}>
             <Button
               size="small"
               variant="outlined"
@@ -892,11 +899,11 @@ export function FindReplaceOverlay({
               }}
               sx={{ textTransform: "none", fontSize: 11 }}
             >
-              load full book
+              {t("dialogs.findReplace.loadFullBook")}
             </Button>
           </Tooltip>
         )}
-        <Tooltip title="close (Esc)">
+        <Tooltip title={t("dialogs.findReplace.closeTooltip")}>
           <IconButton size="small" onClick={onClose}>
             <CloseIcon fontSize="small" />
           </IconButton>
@@ -918,10 +925,12 @@ export function FindReplaceOverlay({
             }
           }}
           size="small"
-          placeholder="replace"
+          placeholder={t("dialogs.findReplace.replacePlaceholder")}
           disabled={replaceScope === null}
           error={replaceBlockedByChars}
-          helperText={replaceBlockedByChars ? "no tabs or line breaks in notes" : undefined}
+          helperText={
+            replaceBlockedByChars ? t("dialogs.findReplace.noControlChars") : undefined
+          }
           sx={{
             minWidth: 240,
             "& .MuiFormHelperText-root": { m: 0, lineHeight: 1.2, fontFamily: "monospace", fontSize: 11 },
@@ -931,8 +940,8 @@ export function FindReplaceOverlay({
         <Tooltip
           title={
             replaceScope === "tn"
-              ? "replace this match in the note body (id & support reference are never changed)"
-              : "replace the active match (scripture only, this verse, overwrites alignment for it)"
+              ? t("dialogs.findReplace.replaceOneTnTooltip")
+              : t("dialogs.findReplace.replaceOneBibleTooltip")
           }
         >
           <span>
@@ -950,15 +959,15 @@ export function FindReplaceOverlay({
               disabled={!replaceOneEnabled}
               sx={{ textTransform: "none" }}
             >
-              replace
+              {t("dialogs.findReplace.replace")}
             </Button>
           </span>
         </Tooltip>
         <Tooltip
           title={
             replaceScope === "tn"
-              ? "replace across every matching note body in all loaded chapters (id & support reference are never changed)"
-              : "replace every scripture match in every loaded chapter (one PATCH per affected verse; alignment is overwritten where it lands)"
+              ? t("dialogs.findReplace.replaceAllTnTooltip")
+              : t("dialogs.findReplace.replaceAllBibleTooltip")
           }
         >
           <span>
@@ -970,7 +979,7 @@ export function FindReplaceOverlay({
               disabled={!replaceAllEnabled}
               sx={{ textTransform: "none", textDecoration: "underline", textUnderlineOffset: "3px" }}
             >
-              replace all
+              {t("dialogs.findReplace.replaceAll")}
             </Button>
           </span>
         </Tooltip>
@@ -980,12 +989,12 @@ export function FindReplaceOverlay({
             sx={{ display: "flex", alignItems: "center", gap: 0.5, color: "warning.dark", fontSize: 12 }}
           >
             <InfoOutlinedIcon sx={{ fontSize: 15 }} />
-            select a single scope to replace
+            {t("dialogs.findReplace.selectSingleScope")}
           </Typography>
         )}
         {replaceScope === "tn" && !replaceBlockedByChars && (
           <Typography variant="caption" sx={{ color: "text.secondary", fontSize: 12 }}>
-            note text only · id &amp; SR untouched
+            {t("dialogs.findReplace.noteScopeHint")}
           </Typography>
         )}
       </Stack>
@@ -1011,46 +1020,56 @@ export function FindReplaceOverlay({
           >
             {replaceSummary.scope === "bible" ? (
               <>
-                replaced {replaceSummary.versesReplaced} verse
-                {replaceSummary.versesReplaced === 1 ? "" : "s"}
+                {t("dialogs.findReplace.summaryVerses", {
+                  count: replaceSummary.versesReplaced,
+                })}
                 {replaceSummary.alignmentLost > 0 &&
-                  ` — alignment milestones destroyed in ${replaceSummary.alignmentLost}`}
+                  t("dialogs.findReplace.summaryAlignmentLost", {
+                    count: replaceSummary.alignmentLost,
+                  })}
                 {replaceSummary.readOnlySkipped > 0 &&
-                  ` — ${replaceSummary.readOnlySkipped} match${
-                    replaceSummary.readOnlySkipped === 1 ? "" : "es"
-                  } in UHB/UGNT skipped (read-only)`}
+                  t("dialogs.findReplace.summaryReadOnlySkipped", {
+                    count: replaceSummary.readOnlySkipped,
+                  })}
               </>
             ) : (
               <>
-                replaced {replaceSummary.matchesReplaced} match
-                {replaceSummary.matchesReplaced === 1 ? "" : "es"}
-                {replaceSummary.notesReplaced > 1 && ` in ${replaceSummary.notesReplaced} notes`}
+                {t("dialogs.findReplace.summaryMatches", {
+                  count: replaceSummary.matchesReplaced,
+                })}
+                {replaceSummary.notesReplaced > 1 &&
+                  t("dialogs.findReplace.summaryInNotes", {
+                    count: replaceSummary.notesReplaced,
+                  })}
                 {replaceSummary.structuralSkipped > 0 &&
-                  ` — ${replaceSummary.structuralSkipped} match${
-                    replaceSummary.structuralSkipped === 1 ? "" : "es"
-                  } in id / support reference skipped`}
+                  t("dialogs.findReplace.summaryStructuralSkipped", {
+                    count: replaceSummary.structuralSkipped,
+                  })}
                 {replaceSummary.emptySkipped > 0 &&
-                  ` — ${replaceSummary.emptySkipped} skipped (would empty the note)`}
+                  t("dialogs.findReplace.summaryEmptySkipped", {
+                    count: replaceSummary.emptySkipped,
+                  })}
               </>
             )}
           </Alert>
         )}
       <Dialog open={confirmAll !== null} onClose={() => setConfirmAll(null)} maxWidth="xs">
-        <DialogTitle sx={{ fontSize: 16 }}>Replace all?</DialogTitle>
+        <DialogTitle sx={{ fontSize: 16 }}>{t("dialogs.findReplace.confirmTitle")}</DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ fontSize: 14 }}>
             {confirmAll?.scope === "bible"
-              ? `Rewrite ${confirmAll.count} verse${
-                  confirmAll.count === 1 ? "" : "s"
-                } across all loaded chapters. Alignment is overwritten wherever the replacement lands, and there is no bulk undo.`
-              : `Replace ${confirmAll?.count ?? 0} match${confirmAll?.count === 1 ? "" : "es"} across ${
-                  confirmAll?.notes ?? 0
-                } note${confirmAll?.notes === 1 ? "" : "s"} in all loaded chapters. Note ids and support references are left unchanged, and there is no bulk undo.`}
+              ? t("dialogs.findReplace.confirmBible", { count: confirmAll.count })
+              : t("dialogs.findReplace.confirmTn", {
+                  count: confirmAll?.count ?? 0,
+                  notes: t("dialogs.findReplace.confirmTnNotes", {
+                    count: confirmAll?.notes ?? 0,
+                  }),
+                })}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
           <Button size="small" onClick={() => setConfirmAll(null)} sx={{ textTransform: "none" }}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             size="small"
@@ -1059,8 +1078,11 @@ export function FindReplaceOverlay({
             onClick={runReplaceAll}
             sx={{ textTransform: "none" }}
           >
-            Replace {confirmAll?.count} {confirmAll?.scope === "bible" ? "verse" : "match"}
-            {confirmAll?.count === 1 ? "" : confirmAll?.scope === "bible" ? "s" : "es"}
+            {confirmAll?.scope === "bible"
+              ? t("dialogs.findReplace.confirmButtonVerses", { count: confirmAll.count })
+              : t("dialogs.findReplace.confirmButtonMatches", {
+                  count: confirmAll?.count ?? 0,
+                })}
           </Button>
         </DialogActions>
       </Dialog>

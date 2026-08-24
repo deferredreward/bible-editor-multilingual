@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // Verse fidelity overview — "is this verse coherent?" — ported from
 // docs/mockups/book-package/verse.html onto the app's real chapter data.
 //
@@ -30,6 +27,7 @@
 // movement stays on this screen's own hash route, so neither is read here.
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -136,6 +134,7 @@ function activeGroupIds(lane: LaneModel, positions: Set<number>): Set<string> {
 
 export default function VerseScreen({ role, book, chapter, verse }: VerseScreenProps) {
   const theme = useTheme();
+  const { t } = useTranslation();
   // System bands only (web/src/lib/layoutBands.ts): tablet=560, md=900.
   const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
   const isTablet = useMediaQuery(theme.breakpoints.up("tablet"));
@@ -198,7 +197,12 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
     () => spanVerseObjects(sourceIndex, span.start, span.end),
     [sourceIndex, span],
   );
-  const words = useMemo(() => collectOriginalWords(sourceVO), [sourceVO]);
+  // `t` is a dep because collectOriginalWords bakes translated morphology
+  // glosses into each word; without it a language switch leaves them stale in
+  // the previous language until the verse data changes. Safe here — this memo
+  // is pure derivation, no fetch (contrast the loader effects, which must NOT
+  // depend on `t` or they refire on every language change).
+  const words = useMemo(() => collectOriginalWords(sourceVO), [sourceVO, t]);
 
   const lit = useMemo(
     () => buildLane("ULT", spanVerseObjects(litIndex, span.start, span.end), sourceVO, words),
@@ -224,9 +228,11 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
     );
   }, [data, span, sourceVO, words]);
 
+  // Display-only derivation, so `t` belongs in the deps: the flag chips must
+  // re-render in the new language. Nothing here fetches or mutates.
   const flags = useMemo(
-    () => coherence(words, lit, sim, resources),
-    [words, lit, sim, resources],
+    () => coherence(words, lit, sim, resources, t),
+    [words, lit, sim, resources, t],
   );
 
   const strongs = useMemo(
@@ -345,8 +351,8 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
       }}
     >
       <IconButton
-        aria-label="Previous verse"
-        title="Previous verse (←)"
+        aria-label={t("flowScripture.prevVerse")}
+        title={t("flowVerse.verse.prevTitle")}
         size="small"
         onClick={() => go(-1)}
         disabled={verseNums.length === 0 || span.start <= verseNums[0]}
@@ -361,8 +367,8 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
         {refLabel}
       </Typography>
       <IconButton
-        aria-label="Next verse"
-        title="Next verse (→)"
+        aria-label={t("flowScripture.nextVerse")}
+        title={t("flowVerse.verse.nextTitle")}
         size="small"
         onClick={() => go(1)}
         disabled={verseNums.length === 0 || span.end >= verseNums[verseNums.length - 1]}
@@ -378,12 +384,12 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
           if (v) location.hash = `#/verse/${book}/${chapter}/${v}`;
         }}
         displayEmpty
-        inputProps={{ "aria-label": "Go to verse" }}
+        inputProps={{ "aria-label": t("flowVerse.verse.goToVerse") }}
         sx={{ fontSize: "0.82rem", "& .MuiSelect-select": { paddingBlock: 0.5 } }}
       >
         {verseNums.length === 0 && (
           <MenuItem value="">
-            <em>no verses loaded</em>
+            <em>{t("flowVerse.verse.noVersesLoaded")}</em>
           </MenuItem>
         )}
         {verseNums.map((v) => (
@@ -400,13 +406,13 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
         exclusive
         value={mode}
         onChange={(_e, v) => v && setMode(v as Mode)}
-        aria-label="View"
+        aria-label={t("flowVerse.verse.viewAria")}
       >
         <ToggleButton value="read" sx={{ minBlockSize: 32, paddingInline: 1.5, fontSize: "0.78rem" }}>
-          Read
+          {t("flowVerse.verse.modeRead")}
         </ToggleButton>
         <ToggleButton value="audit" sx={{ minBlockSize: 32, paddingInline: 1.5, fontSize: "0.78rem" }}>
-          Audit
+          {t("flowVerse.verse.modeAudit")}
         </ToggleButton>
       </ToggleButtonGroup>
     </Box>
@@ -427,9 +433,7 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
       }}
     >
       <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.78rem" }}>
-        {mode === "read"
-          ? "Read the verse three ways. Click any word to see what the other texts do with it."
-          : "One row per original word: what the literal text made of it, and what the simplified text made of it."}
+        {mode === "read" ? t("flowVerse.verse.readHint") : t("flowVerse.verse.auditHint")}
       </Typography>
       <Box sx={{ flex: 1 }} />
       <FlagRow flags={flags} onPick={(f) => {
@@ -459,11 +463,15 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
           severity="error"
           action={
             <Button color="inherit" size="small" onClick={() => void refetch()}>
-              Retry
+              {t("common.retry")}
             </Button>
           }
         >
-          {book} {chapter} could not be loaded{error ? ` (${error})` : ""}.
+          {t("flowVerse.verse.loadError", {
+            book,
+            chapter,
+            details: error ? ` (${error})` : "",
+          })}
         </Alert>
       </Box>
     );
@@ -480,16 +488,12 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
       >
         {bridged && (
           <Alert severity="info" sx={{ mb: 2 }}>
-            One of these texts bridges verses {span.start}&ndash;{span.end} in a single row, so this
-            screen covers the whole span at once. The original words below are verses {span.start}
-            &ndash;{span.end} joined — the stretch the bridged row is actually aligned to — and the
-            observations compare like with like.
+            {t("flowVerse.verse.bridgedNotice", { start: span.start, end: span.end })}
           </Alert>
         )}
         {words.length === 0 && (
           <Alert severity="info" sx={{ mb: 2 }}>
-            No {originalLabel} text is loaded for {refLabel} in this workspace, so nothing can be
-            anchored to original words. The resources below still list what exists.
+            {t("flowVerse.verse.noOriginalText", { label: originalLabel, ref: refLabel })}
           </Alert>
         )}
         {mode === "read" ? (
@@ -534,7 +538,7 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
     const detailColumn = (
       <Box
         component="aside"
-        aria-label="Detail"
+        aria-label={t("flowVerse.verse.detailAria")}
         sx={{
           minInlineSize: 0,
           overflowY: "auto",
@@ -597,9 +601,7 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
         color="text.secondary"
         sx={{ paddingBlock: 2, paddingInline: { xs: 1.5, tablet: 2.5 }, maxInlineSize: 900 }}
       >
-        Nothing on this screen writes. The observations above are computed from the alignment in
-        this workspace&rsquo;s own verse data — they are not stored statuses and not verdicts: an
-        original word the simplified text does not render is often correct.
+        {t("flowVerse.verse.footerNote")}
       </Typography>
     </Box>
   );
@@ -716,14 +718,15 @@ function ReadMode({
   onSelectGroup: (lane: LaneModel, groupId: string | null) => void;
 }) {
   const theme = useTheme();
+  const { t } = useTranslation();
   const hl = alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.26 : 0.18);
 
   return (
     <Box sx={{ marginBlockEnd: 3 }}>
-      <LaneLabel>Original · {originalLabel}</LaneLabel>
+      <LaneLabel>{t("flowVerse.section.original", { label: originalLabel })}</LaneLabel>
       {words.length === 0 ? (
         <Typography variant="body2" color="text.secondary" sx={{ fontStyle: "italic", mb: 2.5 }}>
-          No original-language words for this verse.
+          {t("flowVerse.verse.noOriginalWords")}
         </Typography>
       ) : (
         <Box
@@ -767,10 +770,10 @@ function ReadMode({
         </Box>
       )}
 
-      <LaneLabel>Literal · {litLabel}</LaneLabel>
+      <LaneLabel>{t("flowVerse.section.literal", { label: litLabel })}</LaneLabel>
       <Prose lane={lit} on={litOn} onSelectGroup={onSelectGroup} laneName={litLabel} />
 
-      <LaneLabel>Simplified · {simLabel}</LaneLabel>
+      <LaneLabel>{t("flowVerse.section.simplified", { label: simLabel })}</LaneLabel>
       <Prose lane={sim} on={simOn} onSelectGroup={onSelectGroup} laneName={simLabel} />
     </Box>
   );
@@ -788,20 +791,20 @@ function Prose({
   onSelectGroup: (lane: LaneModel, groupId: string | null) => void;
 }) {
   const theme = useTheme();
+  const { t } = useTranslation();
   const hl = alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.26 : 0.18);
 
   if (!lane.present) {
     return (
       <Typography variant="body2" color="text.secondary" sx={{ fontStyle: "italic", mb: 2.5 }}>
-        No {laneName} text exists for this verse in this workspace. That is normal in a
-        translation-mode workspace whose target lanes have not been drafted yet.
+        {t("flowScripture.laneNoText", { lane: laneName })}
       </Typography>
     );
   }
   if (lane.prose.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary" sx={{ fontStyle: "italic", mb: 2.5 }}>
-        The {laneName} verse row exists but carries no text.
+        {t("flowVerse.verse.laneRowNoText", { lane: laneName })}
       </Typography>
     );
   }
@@ -878,6 +881,7 @@ function AuditMode({
   onSelectWord: (positions: number[]) => void;
 }) {
   const theme = useTheme();
+  const { t } = useTranslation();
   const hl = alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.26 : 0.18);
 
   const notesAt = useMemo(() => {
@@ -896,8 +900,7 @@ function AuditMode({
   if (words.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary" sx={{ fontStyle: "italic", mb: 2.5 }}>
-        The spine is one row per original word; without the original text there are no rows to
-        show.
+        {t("flowVerse.verse.noSpineRows")}
       </Typography>
     );
   }
@@ -941,7 +944,7 @@ function AuditMode({
             paddingInline: 1,
           }}
         >
-          not rendered
+          {t("flowVerse.notRendered")}
         </Box>
       );
     }
@@ -950,7 +953,7 @@ function AuditMode({
     if (text === prev) {
       return (
         <Box component="span" sx={{ fontSize: "0.7rem", fontStyle: "italic", color: "text.secondary" }}>
-          ↑ same phrase
+          {t("flowVerse.verse.samePhrase")}
         </Box>
       );
     }
@@ -963,15 +966,19 @@ function AuditMode({
         <thead>
           <tr>
             <Box component="th" sx={{ ...th, inlineSize: "24%" }}>
-              Original
+              {t("flowVerse.verse.colOriginal")}
             </Box>
             <Box component="th" sx={{ ...th, inlineSize: "30%" }}>
-              Literal · {litLabel}
+              {t("flowVerse.section.literal", { label: litLabel })}
             </Box>
             <Box component="th" sx={{ ...th, inlineSize: "34%" }}>
-              Simplified · {simLabel}
+              {t("flowVerse.section.simplified", { label: simLabel })}
             </Box>
-            <Box component="th" sx={{ ...th, inlineSize: "12%" }} aria-label="Notes and terms" />
+            <Box
+              component="th"
+              sx={{ ...th, inlineSize: "12%" }}
+              aria-label={t("flowVerse.verse.notesAndTermsAria")}
+            />
           </tr>
         </thead>
         <tbody>
@@ -1065,10 +1072,12 @@ function AuditMode({
 
       {(lit.supplied.length > 0 || sim.supplied.length > 0) && (
         <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.78rem", mt: 1.25 }}>
-          Supplied, with no original word behind it —{" "}
-          {lit.supplied.length > 0 && `literal: ${lit.supplied.join(" · ")}`}
+          {t("flowVerse.verse.suppliedPrefix")}{" "}
+          {lit.supplied.length > 0 &&
+            t("flowVerse.verse.suppliedLiteral", { words: lit.supplied.join(" · ") })}
           {lit.supplied.length > 0 && sim.supplied.length > 0 && " · "}
-          {sim.supplied.length > 0 && `simplified: ${sim.supplied.join(" · ")}`}
+          {sim.supplied.length > 0 &&
+            t("flowVerse.verse.suppliedSimplified", { words: sim.supplied.join(" · ") })}
         </Typography>
       )}
     </Box>
@@ -1089,32 +1098,35 @@ function ResourceList({
   onSelect: (sel: VerseSelection) => void;
 }) {
   const theme = useTheme();
+  const { t } = useTranslation();
   const hl = alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.26 : 0.18);
   const currentKey = selection?.kind === "resource" ? selection.key : null;
 
-  const groups: Array<{ kind: ResourceItem["kind"]; label: string }> = [
-    { kind: "tn", label: "Notes" },
-    { kind: "twl", label: "Word links" },
-    { kind: "tq", label: "Questions" },
+  // `kind` is the identity (it filters the rows and keys the React list);
+  // `labelKey` is display only, translated at render.
+  const groups: Array<{ kind: ResourceItem["kind"]; labelKey: string }> = [
+    { kind: "tn", labelKey: "shell.notes" },
+    { kind: "twl", labelKey: "flowVerse.verse.groupWordLinks" },
+    { kind: "tq", labelKey: "shell.questions" },
   ];
 
   if (resources.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.82rem", mt: 3 }}>
-        No notes, word links or questions exist for this verse.
+        {t("flowVerse.verse.noResources")}
       </Typography>
     );
   }
 
   return (
     <Box sx={{ mt: 3 }}>
-      {groups.map(({ kind, label }) => {
+      {groups.map(({ kind, labelKey }) => {
         const list = resources.filter((r) => r.kind === kind);
         if (list.length === 0) return null;
         return (
           <Box key={kind} sx={{ marginBlockEnd: 2.5 }}>
             <LaneLabel>
-              {label} · {list.length}
+              {t("flowVerse.verse.groupHeading", { label: t(labelKey), n: list.length })}
             </LaneLabel>
             {list.map((r) => (
               <Box
@@ -1179,7 +1191,7 @@ function ResourceList({
                   sx={{ fontSize: "0.72rem", color: theme.palette.flows.warn.ink }}
                 >
                   {r.kind !== "tq" && r.quote && r.positions.length === 0
-                    ? "quote not anchored"
+                    ? t("flowVerse.verse.quoteNotAnchored")
                     : ""}
                 </Box>
               </Box>
