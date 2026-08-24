@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // Derivation layer for the verse fidelity overview (VerseScreen), ported from
 // docs/mockups/book-package/_vlib.js onto the app's real data.
 //
@@ -23,6 +20,8 @@
 // Nothing here invents content. Every observation is computed from the trees
 // that were loaded; when something cannot be resolved it is reported as
 // unresolved rather than guessed.
+
+import type { TFunction } from "i18next";
 
 import { parseAlignment, type SourceWord } from "../../lib/alignment";
 import { matchNorm, matchSourceTokens } from "../../lib/highlight";
@@ -306,7 +305,16 @@ export interface ResourceItem {
   /** Stable selection key, e.g. "tn:<rowId>". */
   key: string;
   kind: ResourceKind;
-  /** Short uppercase-ish tag shown at the start of the row. */
+  /**
+   * Short uppercase-ish tag shown at the start of the row.
+   *
+   * DELIBERATELY NOT TRANSLATED. Almost every value is an untranslatable
+   * resource slug — a tA article id with its family prefix stripped
+   * ("idiom", "metaphor") or a tW category ("kt" / "names" / "other"). The
+   * three fallbacks below ("note" / "term" / "q") live in the same column, so
+   * translating only them would produce a half-localized taxonomy that reads
+   * as a bug. Localize the whole column or none of it; today it is none.
+   */
   tag: string;
   /** Source-language quote, when the resource carries one. */
   quote: string | null;
@@ -446,11 +454,16 @@ function hebOf(words: OriginalWord[], positions: number[]): string {
   return positions.map((p) => words[p]?.text ?? "").filter(Boolean).join(" · ");
 }
 
+// `t` is threaded in rather than read from a hook: this module is pure
+// derivation, and the caller (VerseScreen) recomputes the flags in a display-only
+// useMemo. Flag `id`s stay stable English identifiers — only `label`/`detail`
+// are translated, because ids drive React keys and click-to-audit.
 export function coherence(
   words: OriginalWord[],
   lit: LaneModel,
   sim: LaneModel,
   resources: ResourceItem[],
+  t: TFunction,
 ): CoherenceFlag[] {
   const out: CoherenceFlag[] = [];
   if (words.length === 0) return out;
@@ -458,7 +471,7 @@ export function coherence(
   const holes = (lane: LaneModel) =>
     words.filter((w) => (lane.byPosition.get(w.position) ?? []).length === 0).map((w) => w.position);
 
-  const laneFlags = (lane: LaneModel, kind: "sim" | "lit", laneName: string) => {
+  const laneFlags = (lane: LaneModel, kind: "sim" | "lit") => {
     if (!lane.present) return;
     const missing = holes(lane);
     const content = missing.filter((p) => words[p].isContentWord);
@@ -468,12 +481,15 @@ export function coherence(
       out.push({
         id: `${kind}-holes`,
         level: content.length ? "attention" : "ok",
-        label: `${laneName} renders every original word`,
+        label: t(`flowVerse.flag.${kind}RendersEvery`),
         detail: content.length
-          ? `${content.length} content word${content.length === 1 ? "" : "s"} not rendered: ${hebOf(words, content)}`
+          ? t("flowVerse.flag.contentNotRendered", {
+              count: content.length,
+              words: hebOf(words, content),
+            })
           : missing.length
-            ? `every content word rendered; ${missing.length} function word${missing.length === 1 ? "" : "s"} not (normal)`
-            : `all ${words.length} original words rendered`,
+            ? t("flowVerse.flag.functionNotRendered", { count: missing.length })
+            : t("flowVerse.flag.allRendered", { count: words.length }),
         positions: content,
       });
     }
@@ -481,7 +497,7 @@ export function coherence(
       out.push({
         id: `${kind}-function`,
         level: "note",
-        label: `Function words ${laneName.toLowerCase()} drops`,
+        label: t(`flowVerse.flag.${kind}FunctionWords`),
         detail: hebOf(words, fn),
         positions: fn,
       });
@@ -490,8 +506,8 @@ export function coherence(
 
   // Simplified first — it is the lane whose holes are worth looking at most
   // often — then literal, matching the mockup's flag order.
-  laneFlags(sim, "sim", "Simplified text");
-  laneFlags(lit, "lit", "Literal text");
+  laneFlags(sim, "sim");
+  laneFlags(lit, "lit");
 
   // One original word carried by target words in more than one place: a
   // restructure, worth seeing but not a fault.
@@ -506,8 +522,11 @@ export function coherence(
     out.push({
       id: "spread",
       level: "note",
-      label: "Word rendered in more than one place",
-      detail: `${spread.length} word${spread.length === 1 ? "" : "s"}: ${hebOf(words, spread)}`,
+      label: t("flowVerse.flag.spread"),
+      detail: t("flowVerse.flag.spreadDetail", {
+        count: spread.length,
+        words: hebOf(words, spread),
+      }),
       positions: spread,
     });
   }
@@ -518,10 +537,10 @@ export function coherence(
     out.push({
       id: "tn-anchor",
       level: unanchored.length ? "attention" : "ok",
-      label: "Every note's quote is found in the original",
+      label: t("flowVerse.flag.tnAnchor"),
       detail: unanchored.length
-        ? `${unanchored.length} of ${quoted.length} note quote${quoted.length === 1 ? "" : "s"} no longer match the original text`
-        : `${quoted.length} of ${quoted.length} anchored`,
+        ? t("flowVerse.flag.quotesUnmatched", { count: quoted.length, n: unanchored.length })
+        : t("flowVerse.flag.quotesAnchored", { n: quoted.length, total: quoted.length }),
       positions: [],
     });
   }
@@ -532,8 +551,8 @@ export function coherence(
     out.push({
       id: "tn-article",
       level: "note",
-      label: "Notes with no translationAcademy article",
-      detail: `${noArticle.length} of ${notes.length}`,
+      label: t("flowVerse.flag.tnArticle"),
+      detail: t("flowVerse.flag.ofTotal", { n: noArticle.length, total: notes.length }),
       positions: [],
     });
   }
@@ -542,7 +561,7 @@ export function coherence(
     out.push({
       id: "supplied-lit",
       level: "note",
-      label: "Literal words with no original behind them",
+      label: t("flowVerse.flag.suppliedLit"),
       detail: lit.supplied.join(" · "),
       positions: [],
     });
@@ -551,7 +570,7 @@ export function coherence(
     out.push({
       id: "supplied-sim",
       level: "note",
-      label: "Simplified words with no original behind them",
+      label: t("flowVerse.flag.suppliedSim"),
       detail: sim.supplied.join(" · "),
       positions: [],
     });

@@ -488,6 +488,58 @@ if (orphans.size) {
   console.log("");
 }
 
+// ── reserved-option placeholder scan ──────────────────────────────────────
+// i18next reads a fixed set of option names off the object passed as t()'s
+// second argument. A placeholder sharing one of those names is not
+// interpolated from it — `replace` is the dangerous one: it is the reserved
+// *substitution-data override*, so t(key, { replace: 3 }) makes i18next treat
+// the number 3 as the entire interpolation source and EVERY placeholder in the
+// string renders empty. It fails silently and only when the value is truthy,
+// so a zero-valued smoke test looks fine; this shipped once already, blanking
+// the counts on a destructive lane-replacement confirmation.
+// `count` and `context` are excluded: those reserved names are the documented,
+// intended way to drive plurals/context and interpolate the same value.
+const RESERVED_PLACEHOLDERS = new Set([
+  "replace",
+  "defaultValue",
+  "lng",
+  "lngs",
+  "fallbackLng",
+  "ns",
+  "keySeparator",
+  "nsSeparator",
+  "returnObjects",
+  "returnDetails",
+  "joinArrays",
+  "postProcess",
+  "interpolation",
+  "skipInterpolation",
+]);
+
+const reservedHits = [];
+for (const [key, value] of enFlat) {
+  if (typeof value !== "string") continue;
+  for (const [name] of placeholders(value)) {
+    if (RESERVED_PLACEHOLDERS.has(name)) reservedHits.push([key, name]);
+  }
+}
+
+if (reservedHits.length) {
+  failed = true;
+  hardFailed = true;
+  console.log(
+    `✗ ${SOURCE} — ${reservedHits.length} placeholder(s) using a name i18next reserves:`,
+  );
+  for (const [key, name] of reservedHits.sort()) {
+    console.log(`     - ${key} uses {{${name}}}`);
+  }
+  console.log(
+    "   → rename the placeholder (e.g. {{replace}} -> {{replacing}}) in every",
+  );
+  console.log("     locale AND at the t() call site; it renders empty otherwise.");
+  console.log("");
+}
+
 if (UPDATE_BASELINE) {
   // Gated locales are never baselined — their target is zero gaps.
   for (const code of Object.keys(nextBaseline)) {

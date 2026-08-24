@@ -17,6 +17,7 @@ import {
   allResourceSources,
   buildTranslationSource,
   translationSourceOnFor,
+  upstreamSourceForResource,
 } from "./orgDraft.ts";
 
 // The legacy object the old buildOverrides emitted for `translationSourceOn === true`.
@@ -150,4 +151,18 @@ test("translationSourceOnFor: true unless every resource is blank", () => {
   const oneNonBlank = allResourceSources("blank");
   oneNonBlank.tn = { mode: "upstream" };
   assert.equal(translationSourceOnFor(oneNonBlank), true);
+});
+
+test("upstreamSourceForResource: derives the unfoldingWord upstream { org, repo } (issue #289)", () => {
+  // The per-book source-override upstream preset must resolve to exactly the
+  // { org, repo } that api.verifySource returns for the upstream repo's URL, so
+  // a preset-created override is identical to a URL-pasted one.
+  assert.deepEqual(upstreamSourceForResource("tn"), { org: "unfoldingWord", repo: "en_tn" });
+  assert.deepEqual(upstreamSourceForResource("tq"), { org: "unfoldingWord", repo: "en_tq" });
+  // org is always the upstream org; repo tracks the inference table for every key.
+  for (const key of Object.keys(UW_UPSTREAM_REPOS)) {
+    const src = upstreamSourceForResource(key);
+    assert.equal(src.org, UW_UPSTREAM_ORG);
+    assert.equal(src.repo, UW_UPSTREAM_REPOS[key]);
+  }
 });

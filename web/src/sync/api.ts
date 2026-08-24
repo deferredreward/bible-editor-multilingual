@@ -804,6 +804,12 @@ export async function devSignIn(username = "dev"): Promise<MeResponse> {
     }
     throw new ApiError(res.status, `HTTP ${res.status}`, body);
   }
+  // A successful dev mint means we now hold a fresh access cookie — the same
+  // condition change a silent refresh represents. Fire onAuthRefreshed so the
+  // outbox revives parked ops AND any "session expired" banner raised by the
+  // boot-time 401s (before this mint landed) clears. Without this the banner
+  // stuck until a manual reload (issue #283).
+  emitAuthRefreshed();
   return (await res.json()) as MeResponse;
 }
 
@@ -2208,12 +2214,16 @@ export const api = {
       { signal },
     ),
 
-  exportsRun: (shrinkOverride?: boolean, signal?: AbortSignal) =>
-    request<{ id: string; status: string }>(`/api/exports/run`, {
+  exportsRun: (opts?: { shrinkOverride?: boolean; book?: string }, signal?: AbortSignal) => {
+    const body: { shrinkOverride?: boolean; book?: string } = {};
+    if (opts?.shrinkOverride !== undefined) body.shrinkOverride = opts.shrinkOverride;
+    if (opts?.book) body.book = opts.book;
+    return request<{ id: string; status: string }>(`/api/exports/run`, {
       method: "POST",
-      body: JSON.stringify(shrinkOverride === undefined ? {} : { shrinkOverride }),
+      body: JSON.stringify(body),
       signal,
-    }),
+    });
+  },
 
   exportsInstance: (id: string, signal?: AbortSignal) =>
     request<{ id: string; status: unknown }>(

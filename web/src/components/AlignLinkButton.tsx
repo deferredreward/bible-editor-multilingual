@@ -1,4 +1,5 @@
 import { useMemo, type MouseEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { IconButton, Tooltip } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material";
 import LinkIcon from "@mui/icons-material/Link";
@@ -29,6 +30,7 @@ export function AlignLinkButton({
   sx?: SxProps<Theme>;
   onClick: (e: MouseEvent<HTMLButtonElement>) => void;
 }) {
+  const { t } = useTranslation();
   const broken = useMemo(() => {
     const targetVO = (targetContent as { verseObjects?: unknown[] } | null)?.verseObjects;
     if (!Array.isArray(targetVO)) return false;
@@ -37,7 +39,7 @@ export function AlignLinkButton({
   }, [targetContent, sourceContent]);
 
   return (
-    <Tooltip title={broken ? `${tooltip} — has unaligned words` : tooltip}>
+    <Tooltip title={broken ? t("flowAlign.link.brokenTooltip", { tooltip }) : tooltip}>
       <IconButton
         size="small"
         onClick={onClick}

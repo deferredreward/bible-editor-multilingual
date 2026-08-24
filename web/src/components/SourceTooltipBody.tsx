@@ -5,6 +5,7 @@
 // explicitly when we have no entry at all.
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Box, Divider, Fade } from "@mui/material";
 import type { SourceWord } from "../lib/alignment";
 import type { LexiconEntry } from "../hooks/useLexicon";
@@ -24,6 +25,7 @@ interface Props {
 // instant the tooltip opens. Remounts (and resets its timer) on each new hover
 // because the Tooltip rebuilds its title content per word.
 function PinHint() {
+  const { t } = useTranslation();
   const [show, setShow] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setShow(true), 1500);
@@ -42,11 +44,22 @@ function PinHint() {
           opacity: 0.6,
         }}
       >
-        double-click to pin
+        {t("widgets.sourceTooltip.doubleClickToPin")}
       </Box>
     </Fade>
   );
 }
+
+// The four inline markers parseDefinition can split out, mapped to i18n KEY
+// NAMES. The map is keyed by the raw English marker because that is what the
+// lexicon data contains — the matching stays English, only the rendered label
+// is translated (unknown markers fall back to the raw text).
+const SECTION_LABEL_KEYS: Record<string, string> = {
+  Meaning: "widgets.sourceTooltip.section.meaning",
+  Usage: "widgets.sourceTooltip.section.usage",
+  Source: "widgets.sourceTooltip.section.source",
+  Compare: "widgets.sourceTooltip.section.compare",
+};
 
 // UHAL/UGL `definition` ships as a single text blob with inline "Meaning:",
 // "Usage:", "Source:", and sometimes "Compare ..." markers. Splitting them
@@ -75,6 +88,7 @@ function parseDefinition(raw: string | null | undefined): Array<{ label: string;
 }
 
 export function SourceTooltipBody({ source, lex, twHint, pinHint }: Props) {
+  const { t } = useTranslation();
   const lemma = lex?.lemma || source.lemma || "—";
   const pos = lex?.part_of_speech || source.morph || "—";
   const sections = parseDefinition(lex?.definition);
@@ -158,13 +172,15 @@ export function SourceTooltipBody({ source, lex, twHint, pinHint }: Props) {
                 mr: 0.75,
               }}
             >
-              Grammar
+              {t("widgets.sourceTooltip.grammar")}
             </Box>
             {morphChain && <Box component="span" sx={{ opacity: 0.92 }}>{morphChain}</Box>}
           </Box>
           {decoded.pronounSuffix && (
             <Box sx={{ fontSize: 13, opacity: 0.92 }}>
-              <Box component="span" sx={{ opacity: 0.7 }}>+ attached pronoun </Box>
+              <Box component="span" sx={{ opacity: 0.7 }}>
+                {t("widgets.sourceTooltip.attachedPronoun")}{" "}
+              </Box>
               <Box component="span" sx={{ color: "#a8dcf5", fontWeight: 700 }}>
                 “{decoded.pronounSuffix.gloss}”
               </Box>
@@ -191,7 +207,7 @@ export function SourceTooltipBody({ source, lex, twHint, pinHint }: Props) {
                     mr: 0.75,
                   }}
                 >
-                  {s.label}
+                  {SECTION_LABEL_KEYS[s.label] ? t(SECTION_LABEL_KEYS[s.label]) : s.label}
                 </Box>
               )}
               <Box component="span" sx={{ opacity: 0.92 }}>{s.body}</Box>
@@ -202,7 +218,7 @@ export function SourceTooltipBody({ source, lex, twHint, pinHint }: Props) {
 
       {!hasEntry && (
         <Box sx={{ mt: 0.5, opacity: 0.55, fontStyle: "italic", textAlign: "center" }}>
-          no lexicon entry — stub in source resource
+          {t("widgets.sourceTooltip.noLexiconEntry")}
         </Box>
       )}
 
