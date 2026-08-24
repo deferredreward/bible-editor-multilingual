@@ -26,6 +26,7 @@ import {
   type RowHistoryUser,
 } from "../sync/api";
 import { diffWords } from "../lib/wordDiff";
+import { formatEpochSecondsDateTime } from "../lib/formatDate";
 import { MarkdownView } from "./MarkdownView";
 
 interface Props {
@@ -41,7 +42,7 @@ interface Props {
   onUseVersion: (targetMd: string) => void;
 }
 
-const fmtTime = (epochSec: number) => new Date(epochSec * 1000).toLocaleString();
+const fmtTime = (epochSec: number) => formatEpochSecondsDateTime(epochSec);
 
 function userLabel(u: RowHistoryUser | null, t: TFunction): string {
   if (!u) return "—";

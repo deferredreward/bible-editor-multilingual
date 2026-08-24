@@ -154,6 +154,7 @@ import {
   type ProjectConfig,
 } from "../../sync/api";
 import { bookName } from "../../lib/bookNames";
+import { formatEpochSecondsDateTime } from "../../lib/formatDate";
 
 export interface AdminWorkflowScreenProps extends FlowScreenContext {}
 
@@ -165,8 +166,7 @@ const OCEAN = "#014263";
 
 function fmtDateTime(unixSeconds: number | null | undefined): string {
   if (!unixSeconds) return "—";
-  const d = new Date(unixSeconds * 1000);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  return formatEpochSecondsDateTime(unixSeconds) || "—";
 }
 
 // ── the 8 steps (descriptive only — no backend state, see header) ───────────

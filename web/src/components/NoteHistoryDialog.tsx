@@ -22,6 +22,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { api, type RowHistoryEntry } from "../sync/api";
 import { diffWords } from "../lib/wordDiff";
+import { formatEpochSecondsDateTime } from "../lib/formatDate";
 
 interface NoteSnapshot {
   quote: string | null;
@@ -54,8 +55,7 @@ interface Props {
   readOnly?: boolean;
 }
 
-const fmtTime = (epochSec: number) =>
-  new Date(epochSec * 1000).toLocaleString();
+const fmtTime = (epochSec: number) => formatEpochSecondsDateTime(epochSec);
 
 const userLabel = (e: RowHistoryEntry, t: TFunction) => {
   if (!e.user) return t("dialogs.history.unknownUser");

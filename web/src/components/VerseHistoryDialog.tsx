@@ -22,6 +22,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { api, type VerseHistoryEntry } from "../sync/api";
 import { diffWords } from "../lib/wordDiff";
+import { formatEpochSecondsDateTime } from "../lib/formatDate";
 
 interface Props {
   open: boolean;
@@ -39,7 +40,7 @@ interface Props {
   onUseVersion: (content: unknown, plainText: string | null) => void;
 }
 
-const fmtTime = (epochSec: number) => new Date(epochSec * 1000).toLocaleString();
+const fmtTime = (epochSec: number) => formatEpochSecondsDateTime(epochSec);
 
 const userLabel = (e: VerseHistoryEntry, t: TFunction) => {
   if (!e.user) return t("dialogs.history.unknownUser");

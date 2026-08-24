@@ -51,6 +51,7 @@ import {
 import { MarkdownView } from "../MarkdownView";
 import { TerminologySection } from "../TerminologySection";
 import { bookName } from "../../lib/bookNames";
+import { formatNumber } from "../../lib/formatDate";
 
 export interface StyleScreenProps extends FlowScreenContext {}
 
@@ -358,12 +359,12 @@ function MarkdownPrefPanel({
           ? undefined
           : overLimit
             ? t("moreTools.style.charCountOver", {
-                used: value.length.toLocaleString(),
-                max: maxChars.toLocaleString(),
+                used: formatNumber(value.length),
+                max: formatNumber(maxChars),
               })
             : t("moreTools.style.charCount", {
-                used: value.length.toLocaleString(),
-                max: maxChars.toLocaleString(),
+                used: formatNumber(value.length),
+                max: formatNumber(maxChars),
               })
       }
       footActions={

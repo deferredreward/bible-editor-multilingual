@@ -22,6 +22,7 @@ import DialogTitle from "@mui/material/DialogTitle";
 import Typography from "@mui/material/Typography";
 import { api, ApiError, type RowHistoryEntry } from "../../sync/api";
 import i18n from "../../i18n";
+import { formatEpochSecondsDateTime } from "../../lib/formatDate";
 
 export interface ReviewHistoryDialogProps {
   open: boolean;
@@ -43,7 +44,7 @@ export interface ReviewHistoryDialogProps {
   onUseVersion: (text: string, fromVersion: number) => void;
 }
 
-const fmtTime = (epochSec: number) => new Date(epochSec * 1000).toLocaleString();
+const fmtTime = (epochSec: number) => formatEpochSecondsDateTime(epochSec);
 
 function userLabel(t: TFunction, e: RowHistoryEntry): string {
   if (!e.user) return t("flowReview.history.systemUser");

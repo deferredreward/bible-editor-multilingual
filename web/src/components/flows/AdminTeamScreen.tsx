@@ -102,6 +102,7 @@ import {
   type OrgMember,
   type OrgMembersResponse,
 } from "../../sync/api";
+import { formatDate } from "../../lib/formatDate";
 
 export interface AdminTeamScreenProps extends FlowScreenContext {}
 
@@ -161,8 +162,7 @@ function initialsOf(name: string): string {
 function formatAddedAt(addedAt: number | null): string | null {
   if (addedAt == null) return null;
   // added_at is unixepoch() seconds (api/migrations/0016_user_roles.sql:12).
-  const d = new Date(addedAt * 1000);
-  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString();
+  return formatDate(addedAt * 1000) || null;
 }
 
 // ── shared chrome ────────────────────────────────────────────────────────────

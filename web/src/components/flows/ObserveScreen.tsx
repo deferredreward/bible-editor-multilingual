@@ -64,6 +64,7 @@ import {
   type PipelineJobRow,
 } from "../../sync/api";
 import { getWorkspaceSlug } from "../../sync/workspace";
+import { formatTime } from "../../lib/formatDate";
 
 export interface ObserveScreenProps extends FlowScreenContext {}
 
@@ -346,12 +347,12 @@ export default function ObserveScreen({ role, me, onNavigate }: ObserveScreenPro
     setHealth((h) => ({ ...h, state: "checking" }));
     observeFetch<HealthResponse>("/api/health")
       .then((res) => {
-        setHealth({ state: res.ok ? "ok" : "down", time: new Date().toLocaleTimeString(), body: res });
+        setHealth({ state: res.ok ? "ok" : "down", time: formatTime(new Date()), body: res });
       })
       .catch((err) => {
         setHealth({
           state: "down",
-          time: new Date().toLocaleTimeString(),
+          time: formatTime(new Date()),
           body: err instanceof ApiError ? err.body ?? { error: err.message } : { error: "network error" },
         });
       });

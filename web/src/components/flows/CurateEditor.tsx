@@ -40,6 +40,7 @@ import { TemplateHistoryDialog } from "../TemplateHistoryDialog";
 import { useTemplateAiDraft } from "../../hooks/useTemplateAiDraft";
 import { drafts as draftStore, templateKey } from "../../sync/drafts";
 import { ApiError, api, type TemplateUnit } from "../../sync/api";
+import { formatEpochSecondsDateTime } from "../../lib/formatDate";
 
 export const CURATE_STATE_LABEL_KEYS: Record<string, string> = {
   ai_draft: "moreTools.curate.stateAiDraft",
@@ -171,6 +172,7 @@ export function CurateEditor({
   const {
     drafting: aiDrafting,
     error: aiDraftError,
+    errorCode: aiDraftErrorCode,
     clearError: clearAiDraftError,
     conflictUnit: aiConflictUnit,
     clearConflict: clearAiConflict,
@@ -180,13 +182,15 @@ export function CurateEditor({
   useEffect(() => {
     if (!aiDraftError) return;
     setErrorMsg(aiDraftError);
-    // The 503 body maps to this exact message (useTemplateAiDraft's
-    // mapTemplateDraftError) — detect it once and disable AI drafting for the
-    // rest of the screen, matching the mockup's aiDisabled flag rather than
-    // re-asking the server per unit.
-    if (aiDraftError.startsWith("AI not configured")) onAiDisabled();
+    // The 503 body classifies as this code (useTemplateAiDraft's
+    // classifyTemplateDraftError) — detect it once and disable AI drafting for
+    // the rest of the screen, matching the mockup's aiDisabled flag rather than
+    // re-asking the server per unit. Keyed off the stable `errorCode`, NOT the
+    // message: `error` is localized, so prefix-matching its English prose
+    // stopped working the moment the UI language changed.
+    if (aiDraftErrorCode === "disabled") onAiDisabled();
     clearAiDraftError();
-  }, [aiDraftError, clearAiDraftError, onAiDisabled]);
+  }, [aiDraftError, aiDraftErrorCode, clearAiDraftError, onAiDisabled]);
 
   useEffect(() => {
     if (!aiConflictUnit) return;
@@ -422,7 +426,7 @@ export function CurateEditor({
           {dirty
             ? t("moreTools.curate.oneUnsaved")
             : unit.updated_at
-              ? t("moreTools.curate.savedAt", { time: new Date(unit.updated_at * 1000).toLocaleString() })
+              ? t("moreTools.curate.savedAt", { time: formatEpochSecondsDateTime(unit.updated_at) })
               : t("moreTools.curate.notSavedYet")}
         </Typography>
         <Tooltip title={isValidated ? t("moreTools.curate.approvedNoRedraft") : aiDisabledGlobal ? t("moreTools.curate.aiNotConfigured") : ""}>
