@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // a2-import's two queue panels: the shared pending-imports review queue and the
 // recent import/pipeline activity list. Both read real endpoints:
 //   GET /api/pending-imports?book=&chapter=   (api.getPendingImports)
@@ -10,6 +8,7 @@
 // so this panel asks for a chapter rather than pretending to show everything.
 
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Alert, Box, Button, CircularProgress, Stack, TextField, Typography } from "@mui/material";
 import {
   api,
@@ -29,6 +28,7 @@ function errorText(e: unknown): string {
 }
 
 export function BooksPendingPanel({ book }: { book: string }) {
+  const { t } = useTranslation();
   const [chapter, setChapter] = useState(1);
   const [items, setItems] = useState<PendingImport[] | null>(null);
   const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
@@ -63,19 +63,16 @@ export function BooksPendingPanel({ book }: { book: string }) {
 
   return (
     <Panel>
-      <PanelTop
-        title="Pending imports"
-        sub="Shared review queue of AI-pipeline proposals not yet resolved by any translator. The endpoint is scoped to one book and chapter — there is no whole-project aggregate — so this shows the selected book at the chapter below."
-      />
+      <PanelTop title={t("flowBooks.pending.title")} sub={t("flowBooks.pending.sub")} />
       <PanelBody>
         <Stack direction="row" alignItems="flex-end" spacing={1.5} sx={{ mb: 1.5, flexWrap: "wrap", rowGap: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            Book: {book}
+            {t("flowBooks.pending.bookLabel", { book })}
           </Typography>
           <TextField
             size="small"
             type="number"
-            label="Chapter"
+            label={t("flowBooks.pending.chapter")}
             value={chapter}
             onChange={(e) => {
               const n = Number(e.target.value);
@@ -89,13 +86,13 @@ export function BooksPendingPanel({ book }: { book: string }) {
         {status === "loading" ? (
           <Stack direction="row" spacing={1} alignItems="center">
             <CircularProgress size={16} />
-            <Typography variant="body2">Loading…</Typography>
+            <Typography variant="body2">{t("common.loading")}</Typography>
           </Stack>
         ) : status === "error" ? (
-          <Alert severity="error">Failed to load pending imports: {error}</Alert>
+          <Alert severity="error">{t("flowBooks.pending.loadFailed", { error })}</Alert>
         ) : !items || items.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            Nothing pending for this book and chapter.
+            {t("flowBooks.pending.empty")}
           </Typography>
         ) : (
           items.map((p) => (
@@ -108,7 +105,11 @@ export function BooksPendingPanel({ book }: { book: string }) {
                   <FlowStatusChip kind="draft" label={p.kind} />
                 </Stack>
                 <Typography variant="caption" color="text.secondary">
-                  verse {p.verse} — proposed by {p.startedByUsername ?? "unknown"} ({p.pipelineType})
+                  {t("flowBooks.pending.itemMeta", {
+                    verse: p.verse,
+                    user: p.startedByUsername ?? t("flowBooks.pending.unknownUser"),
+                    pipeline: p.pipelineType,
+                  })}
                 </Typography>
               </Box>
             </ListRow>
@@ -118,14 +119,14 @@ export function BooksPendingPanel({ book }: { book: string }) {
       <PanelFoot
         state={
           status === "loaded"
-            ? `${items?.length ?? 0} pending for ${book} ${chapter}`
+            ? t("flowBooks.pending.footState", { count: items?.length ?? 0, book, chapter })
             : status === "error"
-              ? "Load failed"
-              : "Loading…"
+              ? t("flowBooks.loadFailed")
+              : t("common.loading")
         }
       >
         <Button size="small" sx={{ minHeight: 36 }} onClick={() => void load()}>
-          Refresh
+          {t("flowBooks.refresh")}
         </Button>
       </PanelFoot>
     </Panel>
@@ -140,6 +141,7 @@ const JOB_CHIP: Record<string, FlowStatusKind> = {
 };
 
 export function BooksActivityPanel({ book }: { book: string }) {
+  const { t } = useTranslation();
   const [jobs, setJobs] = useState<PipelineJobRow[] | null>(null);
   const [status, setStatus] = useState<"loading" | "loaded" | "error" | "forbidden">("loading");
   const [error, setError] = useState<string | null>(null);
@@ -171,26 +173,24 @@ export function BooksActivityPanel({ book }: { book: string }) {
 
   return (
     <Panel>
-      <PanelTop
-        title="Recent import activity"
-        sub={`Shared pipeline job queue (the same data as the Observe screen), filtered to jobs for ${book}.`}
-      />
+      <PanelTop title={t("flowBooks.activity.title")} sub={t("flowBooks.activity.sub", { book })} />
       <PanelBody>
         {status === "loading" ? (
           <Stack direction="row" spacing={1} alignItems="center">
             <CircularProgress size={16} />
-            <Typography variant="body2">Loading…</Typography>
+            <Typography variant="body2">{t("common.loading")}</Typography>
           </Stack>
         ) : status === "forbidden" ? (
           <Typography variant="body2" color="text.secondary">
-            Pipeline job status isn't visible for your role.
+            {t("flowBooks.activity.forbidden")}
           </Typography>
         ) : status === "error" ? (
-          <Alert severity="error">Failed to load pipeline jobs: {error}</Alert>
+          <Alert severity="error">{t("flowBooks.activity.loadFailed", { error })}</Alert>
         ) : forBook.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            No pipeline jobs for {book}
-            {others > 0 ? ` (${others} job(s) for other books).` : " — the queue is empty."}
+            {others > 0
+              ? t("flowBooks.activity.emptyOthers", { book, count: others })
+              : t("flowBooks.activity.emptyQueue", { book })}
           </Typography>
         ) : (
           forBook.map((j) => (
@@ -209,7 +209,8 @@ export function BooksActivityPanel({ book }: { book: string }) {
                 </Typography>
                 {j.state === "failed" && (j.error_message || j.error_kind) && (
                   <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                    {j.error_kind ?? "error"}: {j.error_message ?? "no message returned"}
+                    {j.error_kind ?? t("flowBooks.activity.errorKindFallback")}:{" "}
+                    {j.error_message ?? t("flowBooks.activity.noMessage")}
                   </Typography>
                 )}
               </Box>
@@ -220,16 +221,18 @@ export function BooksActivityPanel({ book }: { book: string }) {
       <PanelFoot
         state={
           status === "loaded"
-            ? `${forBook.length} job(s) for ${book}${others > 0 ? `, ${others} elsewhere` : ""}`
+            ? others > 0
+              ? t("flowBooks.activity.footJobsElsewhere", { count: forBook.length, book, others })
+              : t("flowBooks.activity.footJobs", { count: forBook.length, book })
             : status === "forbidden"
-              ? "Not available for your role"
+              ? t("flowBooks.activity.notAvailableRole")
               : status === "error"
-                ? "Load failed"
-                : "Loading…"
+                ? t("flowBooks.loadFailed")
+                : t("common.loading")
         }
       >
         <Button size="small" sx={{ minHeight: 36 }} onClick={() => void load()}>
-          Refresh status
+          {t("flowBooks.refreshStatus")}
         </Button>
       </PanelFoot>
     </Panel>
