@@ -1081,7 +1081,8 @@
     "extendThrough": "توسيع الآية {{verse}} حتى:",
     "back": "← رجوع",
     "spanMultiple": "امتداد عبر عدة آيات…",
-    "defaultTemplate": "افتراضي"
+    "defaultTemplate": "افتراضي",
+    "openArticle": "افتح مقالة translationAcademy الخاصة بهذا المرجع الداعم"
   },
   "aligner": {
     "noAlignmentData": "لا توجد بيانات محاذاة لهذه الآية — إما أن المصدر لا يحتوي على علامات `\\zaln-s`، أو أن الآية حُرِّرت مؤخرًا وأُزيلت المحاذاة.",
