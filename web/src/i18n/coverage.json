@@ -43,6 +43,9 @@
     "ar"
   ],
   "sameAsEnglish": [
+    "appShell.scripture.errorSuffix",
+    "appShell.scripture.wordListSuffix",
+    "dialogs.findReplace.tnScope",
     "flowQuestions.subAuthoring",
     "flowScripture.subPlain",
     "flowTranslate.subtitle",

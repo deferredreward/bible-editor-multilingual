@@ -23,6 +23,7 @@ import {
 import { ApiError, api, type ReimportResource, type ReimportResponse } from "../sync/api";
 import { parseChapterRange } from "../lib/refParser";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 interface Props {
   open: boolean;
@@ -82,19 +83,22 @@ function saveOpts(opts: ResourceState) {
   }
 }
 
-function summarize(res: ReimportResponse): string {
-  const t = res.totals;
+// `t` is passed in (not captured) so the summary is built in the language
+// showing at the moment of the import.
+function summarize(res: ReimportResponse, t: TFunction): string {
+  const n = res.totals;
   const parts: string[] = [];
-  if (t.updated) parts.push(`${t.updated} updated`);
-  if (t.reimported_ai) parts.push(`${t.reimported_ai} refreshed (AI-generated)`);
-  if (t.inserted) parts.push(`${t.inserted} inserted`);
-  if (t.skipped_edited) parts.push(`${t.skipped_edited} skipped (already edited)`);
-  if (t.skipped_locked) parts.push(`${t.skipped_locked} skipped (AI pipeline running)`);
-  if (t.skipped_noop) parts.push(`${t.skipped_noop} unchanged`);
-  if (t.source_attr_reconciled) parts.push(`${t.source_attr_reconciled} source-attr fix(es) synced from master`);
-  if (t.dcs_404) parts.push(`${t.dcs_404} resource(s) not on DCS`);
-  if (parts.length === 0) return `Imported ${res.book} — no changes.`;
-  return `Imported ${res.book}: ${parts.join(", ")}.`;
+  if (n.updated) parts.push(t("dialogs.import.updated", { count: n.updated }));
+  if (n.reimported_ai) parts.push(t("dialogs.import.refreshedAi", { count: n.reimported_ai }));
+  if (n.inserted) parts.push(t("dialogs.import.inserted", { count: n.inserted }));
+  if (n.skipped_edited) parts.push(t("dialogs.import.skippedEdited", { count: n.skipped_edited }));
+  if (n.skipped_locked) parts.push(t("dialogs.import.skippedLocked", { count: n.skipped_locked }));
+  if (n.skipped_noop) parts.push(t("dialogs.import.unchanged", { count: n.skipped_noop }));
+  if (n.source_attr_reconciled)
+    parts.push(t("dialogs.import.sourceAttrSynced", { count: n.source_attr_reconciled }));
+  if (n.dcs_404) parts.push(t("dialogs.import.notOnDcs", { count: n.dcs_404 }));
+  if (parts.length === 0) return t("dialogs.import.noChanges", { book: res.book });
+  return t("dialogs.import.summary", { book: res.book, parts: parts.join(t("dialogs.import.separator")) });
 }
 
 export function ImportFromDoor43Dialog({
@@ -143,7 +147,7 @@ export function ImportFromDoor43Dialog({
     try {
       const res = await api.reimportFromDoor43(refParsed.range.book, { chapters, resources });
       saveOpts(opts);
-      onMessage?.(summarize(res));
+      onMessage?.(summarize(res, t));
       onImported?.();
       onClose();
     } catch (e) {

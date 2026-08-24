@@ -1187,72 +1187,270 @@
     "replacementConfirmButton": "Stage the replacement"
   },
   "books": {
-    "GEN": { "name": "Genesis", "abbr": "Gen" },
-    "EXO": { "name": "Exodus", "abbr": "Exod" },
-    "LEV": { "name": "Leviticus", "abbr": "Lev" },
-    "NUM": { "name": "Numbers", "abbr": "Num" },
-    "DEU": { "name": "Deuteronomy", "abbr": "Deut" },
-    "JOS": { "name": "Joshua", "abbr": "Josh" },
-    "JDG": { "name": "Judges", "abbr": "Judg" },
-    "RUT": { "name": "Ruth", "abbr": "Ruth" },
-    "1SA": { "name": "1 Samuel", "abbr": "1 Sam" },
-    "2SA": { "name": "2 Samuel", "abbr": "2 Sam" },
-    "1KI": { "name": "1 Kings", "abbr": "1 Kgs" },
-    "2KI": { "name": "2 Kings", "abbr": "2 Kgs" },
-    "1CH": { "name": "1 Chronicles", "abbr": "1 Chr" },
-    "2CH": { "name": "2 Chronicles", "abbr": "2 Chr" },
-    "EZR": { "name": "Ezra", "abbr": "Ezra" },
-    "NEH": { "name": "Nehemiah", "abbr": "Neh" },
-    "EST": { "name": "Esther", "abbr": "Esth" },
-    "JOB": { "name": "Job", "abbr": "Job" },
-    "PSA": { "name": "Psalms", "abbr": "Ps" },
-    "PRO": { "name": "Proverbs", "abbr": "Prov" },
-    "ECC": { "name": "Ecclesiastes", "abbr": "Eccl" },
-    "SNG": { "name": "Song of Songs", "abbr": "Song" },
-    "ISA": { "name": "Isaiah", "abbr": "Isa" },
-    "JER": { "name": "Jeremiah", "abbr": "Jer" },
-    "LAM": { "name": "Lamentations", "abbr": "Lam" },
-    "EZK": { "name": "Ezekiel", "abbr": "Ezek" },
-    "DAN": { "name": "Daniel", "abbr": "Dan" },
-    "HOS": { "name": "Hosea", "abbr": "Hos" },
-    "JOL": { "name": "Joel", "abbr": "Joel" },
-    "AMO": { "name": "Amos", "abbr": "Amos" },
-    "OBA": { "name": "Obadiah", "abbr": "Obad" },
-    "JON": { "name": "Jonah", "abbr": "Jonah" },
-    "MIC": { "name": "Micah", "abbr": "Mic" },
-    "NAM": { "name": "Nahum", "abbr": "Nah" },
-    "HAB": { "name": "Habakkuk", "abbr": "Hab" },
-    "ZEP": { "name": "Zephaniah", "abbr": "Zeph" },
-    "HAG": { "name": "Haggai", "abbr": "Hag" },
-    "ZEC": { "name": "Zechariah", "abbr": "Zech" },
-    "MAL": { "name": "Malachi", "abbr": "Mal" },
-    "MAT": { "name": "Matthew", "abbr": "Matt" },
-    "MRK": { "name": "Mark", "abbr": "Mark" },
-    "LUK": { "name": "Luke", "abbr": "Luke" },
-    "JHN": { "name": "John", "abbr": "John" },
-    "ACT": { "name": "Acts", "abbr": "Acts" },
-    "ROM": { "name": "Romans", "abbr": "Rom" },
-    "1CO": { "name": "1 Corinthians", "abbr": "1 Cor" },
-    "2CO": { "name": "2 Corinthians", "abbr": "2 Cor" },
-    "GAL": { "name": "Galatians", "abbr": "Gal" },
-    "EPH": { "name": "Ephesians", "abbr": "Eph" },
-    "PHP": { "name": "Philippians", "abbr": "Phil" },
-    "COL": { "name": "Colossians", "abbr": "Col" },
-    "1TH": { "name": "1 Thessalonians", "abbr": "1 Thess" },
-    "2TH": { "name": "2 Thessalonians", "abbr": "2 Thess" },
-    "1TI": { "name": "1 Timothy", "abbr": "1 Tim" },
-    "2TI": { "name": "2 Timothy", "abbr": "2 Tim" },
-    "TIT": { "name": "Titus", "abbr": "Titus" },
-    "PHM": { "name": "Philemon", "abbr": "Phlm" },
-    "HEB": { "name": "Hebrews", "abbr": "Heb" },
-    "JAS": { "name": "James", "abbr": "Jas" },
-    "1PE": { "name": "1 Peter", "abbr": "1 Pet" },
-    "2PE": { "name": "2 Peter", "abbr": "2 Pet" },
-    "1JN": { "name": "1 John", "abbr": "1 John" },
-    "2JN": { "name": "2 John", "abbr": "2 John" },
-    "3JN": { "name": "3 John", "abbr": "3 John" },
-    "JUD": { "name": "Jude", "abbr": "Jude" },
-    "REV": { "name": "Revelation", "abbr": "Rev" }
+    "GEN": {
+      "name": "Genesis",
+      "abbr": "Gen"
+    },
+    "EXO": {
+      "name": "Exodus",
+      "abbr": "Exod"
+    },
+    "LEV": {
+      "name": "Leviticus",
+      "abbr": "Lev"
+    },
+    "NUM": {
+      "name": "Numbers",
+      "abbr": "Num"
+    },
+    "DEU": {
+      "name": "Deuteronomy",
+      "abbr": "Deut"
+    },
+    "JOS": {
+      "name": "Joshua",
+      "abbr": "Josh"
+    },
+    "JDG": {
+      "name": "Judges",
+      "abbr": "Judg"
+    },
+    "RUT": {
+      "name": "Ruth",
+      "abbr": "Ruth"
+    },
+    "1SA": {
+      "name": "1 Samuel",
+      "abbr": "1 Sam"
+    },
+    "2SA": {
+      "name": "2 Samuel",
+      "abbr": "2 Sam"
+    },
+    "1KI": {
+      "name": "1 Kings",
+      "abbr": "1 Kgs"
+    },
+    "2KI": {
+      "name": "2 Kings",
+      "abbr": "2 Kgs"
+    },
+    "1CH": {
+      "name": "1 Chronicles",
+      "abbr": "1 Chr"
+    },
+    "2CH": {
+      "name": "2 Chronicles",
+      "abbr": "2 Chr"
+    },
+    "EZR": {
+      "name": "Ezra",
+      "abbr": "Ezra"
+    },
+    "NEH": {
+      "name": "Nehemiah",
+      "abbr": "Neh"
+    },
+    "EST": {
+      "name": "Esther",
+      "abbr": "Esth"
+    },
+    "JOB": {
+      "name": "Job",
+      "abbr": "Job"
+    },
+    "PSA": {
+      "name": "Psalms",
+      "abbr": "Ps"
+    },
+    "PRO": {
+      "name": "Proverbs",
+      "abbr": "Prov"
+    },
+    "ECC": {
+      "name": "Ecclesiastes",
+      "abbr": "Eccl"
+    },
+    "SNG": {
+      "name": "Song of Songs",
+      "abbr": "Song"
+    },
+    "ISA": {
+      "name": "Isaiah",
+      "abbr": "Isa"
+    },
+    "JER": {
+      "name": "Jeremiah",
+      "abbr": "Jer"
+    },
+    "LAM": {
+      "name": "Lamentations",
+      "abbr": "Lam"
+    },
+    "EZK": {
+      "name": "Ezekiel",
+      "abbr": "Ezek"
+    },
+    "DAN": {
+      "name": "Daniel",
+      "abbr": "Dan"
+    },
+    "HOS": {
+      "name": "Hosea",
+      "abbr": "Hos"
+    },
+    "JOL": {
+      "name": "Joel",
+      "abbr": "Joel"
+    },
+    "AMO": {
+      "name": "Amos",
+      "abbr": "Amos"
+    },
+    "OBA": {
+      "name": "Obadiah",
+      "abbr": "Obad"
+    },
+    "JON": {
+      "name": "Jonah",
+      "abbr": "Jonah"
+    },
+    "MIC": {
+      "name": "Micah",
+      "abbr": "Mic"
+    },
+    "NAM": {
+      "name": "Nahum",
+      "abbr": "Nah"
+    },
+    "HAB": {
+      "name": "Habakkuk",
+      "abbr": "Hab"
+    },
+    "ZEP": {
+      "name": "Zephaniah",
+      "abbr": "Zeph"
+    },
+    "HAG": {
+      "name": "Haggai",
+      "abbr": "Hag"
+    },
+    "ZEC": {
+      "name": "Zechariah",
+      "abbr": "Zech"
+    },
+    "MAL": {
+      "name": "Malachi",
+      "abbr": "Mal"
+    },
+    "MAT": {
+      "name": "Matthew",
+      "abbr": "Matt"
+    },
+    "MRK": {
+      "name": "Mark",
+      "abbr": "Mark"
+    },
+    "LUK": {
+      "name": "Luke",
+      "abbr": "Luke"
+    },
+    "JHN": {
+      "name": "John",
+      "abbr": "John"
+    },
+    "ACT": {
+      "name": "Acts",
+      "abbr": "Acts"
+    },
+    "ROM": {
+      "name": "Romans",
+      "abbr": "Rom"
+    },
+    "1CO": {
+      "name": "1 Corinthians",
+      "abbr": "1 Cor"
+    },
+    "2CO": {
+      "name": "2 Corinthians",
+      "abbr": "2 Cor"
+    },
+    "GAL": {
+      "name": "Galatians",
+      "abbr": "Gal"
+    },
+    "EPH": {
+      "name": "Ephesians",
+      "abbr": "Eph"
+    },
+    "PHP": {
+      "name": "Philippians",
+      "abbr": "Phil"
+    },
+    "COL": {
+      "name": "Colossians",
+      "abbr": "Col"
+    },
+    "1TH": {
+      "name": "1 Thessalonians",
+      "abbr": "1 Thess"
+    },
+    "2TH": {
+      "name": "2 Thessalonians",
+      "abbr": "2 Thess"
+    },
+    "1TI": {
+      "name": "1 Timothy",
+      "abbr": "1 Tim"
+    },
+    "2TI": {
+      "name": "2 Timothy",
+      "abbr": "2 Tim"
+    },
+    "TIT": {
+      "name": "Titus",
+      "abbr": "Titus"
+    },
+    "PHM": {
+      "name": "Philemon",
+      "abbr": "Phlm"
+    },
+    "HEB": {
+      "name": "Hebrews",
+      "abbr": "Heb"
+    },
+    "JAS": {
+      "name": "James",
+      "abbr": "Jas"
+    },
+    "1PE": {
+      "name": "1 Peter",
+      "abbr": "1 Pet"
+    },
+    "2PE": {
+      "name": "2 Peter",
+      "abbr": "2 Pet"
+    },
+    "1JN": {
+      "name": "1 John",
+      "abbr": "1 John"
+    },
+    "2JN": {
+      "name": "2 John",
+      "abbr": "2 John"
+    },
+    "3JN": {
+      "name": "3 John",
+      "abbr": "3 John"
+    },
+    "JUD": {
+      "name": "Jude",
+      "abbr": "Jude"
+    },
+    "REV": {
+      "name": "Revelation",
+      "abbr": "Rev"
+    }
   },
   "adminDesk": {
     "nav": {
@@ -2543,9 +2741,6 @@
         "compare": "Compare"
       }
     },
-    "align": {
-      "hasUnalignedWords": "{{tooltip}} — has unaligned words"
-    },
     "docColumn": {
       "readOnly": "read-only",
       "editing": "editing"
@@ -2563,6 +2758,582 @@
       "chapterFailed": "chapter {{chapter}} failed to load: {{error}}",
       "bookFront": "{{book}} front",
       "bookChapter": "{{book}} chapter {{chapter}}"
+    }
+  },
+  "flowAlign": {
+    "link": {
+      "brokenTooltip": "{{tooltip}} — has unaligned words"
+    },
+    "lane": {
+      "unsaved": "Unsaved",
+      "align": "Align →",
+      "paragraphMarkers": "Paragraph markers",
+      "inputAria": "{{lane}} verse text",
+      "saving": "Saving…"
+    },
+    "tap": {
+      "suggestionOf": "Suggestion 1 of {{total}}",
+      "accept": "✓ Accept",
+      "skip": "✗ Skip",
+      "noSuggestions": "No alignment suggestions available for this verse right now — pair the words below by tapping.",
+      "allReviewed": "All suggestions reviewed — manual tap-to-pair is below.",
+      "alignedOf": "{{aligned}} of {{total}} words aligned",
+      "jumpToUnaligned": "Jump to unaligned ↓",
+      "scrollInstead": "Scroll word list instead of wrapping",
+      "wrapInstead": "Wrap word list instead of scrolling",
+      "toggleWrapAria": "Toggle source word list wrapping",
+      "sourceGroupsAria": "Source word groups",
+      "unaligned": "unaligned",
+      "split": "Split",
+      "poolAria": "Unaligned target words",
+      "allAligned": "All target words are aligned.",
+      "actionsAria": "Alignment actions",
+      "selectedSource_one": "{{count}} source word selected — {{hint}}",
+      "selectedSource_other": "{{count}} source words selected — {{hint}}",
+      "selectedTarget_one": "{{count}} target word selected — {{hint}}",
+      "selectedTarget_other": "{{count}} target words selected — {{hint}}",
+      "hintViewOnly": "view-only access, so pairings can't be changed",
+      "hintTapSource": "tap a source card to attach",
+      "hintTapTarget": "tap a target word to attach",
+      "unalign": "Unalign",
+      "combine": "⧉ Combine"
+    },
+    "screen": {
+      "loadError": "Could not load {{book}} {{chapter}}. Check your connection and try again.",
+      "prev": "Prev",
+      "sideBySide": "Side-by-side",
+      "noDualContent": "No ULT or UST content for this verse to compare.",
+      "viewOnly": "You have view-only access to this project, so alignment is read-only here — pairings can be inspected but not changed or saved.",
+      "lanePending": "{{lane}} is awaiting a source replacement — a lane in that state is omitted from the chapter payload entirely, so there is nothing to align until the replacement lands.",
+      "noTargetText": "No {{lane}} text exists for {{book}} {{chapter}}:{{verse}} in this workspace. That is normal in a translation-mode workspace whose target lanes have not been drafted yet — there is nothing to align until it is drafted.",
+      "noSourceText": "There is no {{source}} source text for {{book}} {{chapter}}:{{verse}}, so alignment can't be anchored to original-language words.",
+      "modeGroupAria": "Alignment interaction mode",
+      "dragCanvas": "Drag canvas",
+      "tapModeLong": "Tap mode (keyboard accessible)",
+      "switchBlocked": "Save or reset your unsaved alignment before switching modes.",
+      "dragNeedsLarger": "The drag canvas needs a larger screen. Tap-to-pair below does everything it does — tap a word, then tap where it belongs.",
+      "referenceToggle": "Reference — saved {{lane}} alignment",
+      "referenceNote": "Read-only — the alignment currently saved on the server for this verse, shown for comparison. Unsaved edits are not reflected here.",
+      "unalignedPlaceholder": "(unaligned)",
+      "unsavedOne": "1 unsaved alignment change set",
+      "noUnsaved": "No unsaved changes",
+      "saveAlignment": "Save alignment",
+      "noParsable": "This verse has no parsable {{lane}} content to align.",
+      "dualUnsavedBody": "The side-by-side aligner has unsaved work — alignment changes, verse text, or both. Save it before leaving, or discard it.",
+      "lossTitle": "Words will be left unaligned",
+      "lossBody_one": "Saving {{ref}} leaves {{count}} previously aligned word with no original-language link:",
+      "lossBody_other": "Saving {{ref}} leaves {{count}} previously aligned words with no original-language link:"
+    },
+    "notice": {
+      "viewOnlyAlignment": "You have view-only access to this project — alignment changes can't be saved.",
+      "saveBlocked": "Save blocked: this change would de-align words it didn't touch.",
+      "viewOnlyText": "You have view-only access to this project — verse text can't be saved."
+    },
+    "desk": {
+      "title": "Alignment",
+      "sub": "{{book}} {{chapter}} · {{source}} → {{target}}",
+      "backToPackage": "Back to the {{book}} package",
+      "backToScripture": "Back to scripture",
+      "fullyAligned": "{{n}} of {{total}} fully aligned",
+      "notDrafted": "Not drafted",
+      "sourceGaps": "Source gaps",
+      "aligned": "Aligned",
+      "empty": "(empty)",
+      "noLaneText": "No {{lane}} text yet",
+      "partOfVerses": "part of verses {{range}}",
+      "laneGroupAria": "Lane",
+      "laneSwitchBlocked": "Save or reset your unsaved alignment first.",
+      "viewGroupAria": "Alignment view",
+      "single": "Single",
+      "dual": "Dual",
+      "dualTitle": "{{left}} and {{right}} side by side",
+      "nothingToCompare": "Nothing to compare for this verse — neither lane has content here, so the single aligner is shown instead.",
+      "tapMode": "Tap mode",
+      "dragCanvasTitle": "Drag canvas — mouse/touch drag",
+      "tapModeTitle": "Tap mode — keyboard accessible"
+    }
+  },
+  "flowReview": {
+    "common": {
+      "history": "History",
+      "saving": "Saving…",
+      "approving": "Approving…",
+      "unapprove": "Unapprove",
+      "unsavedCount_one": "{{count}} unsaved",
+      "unsavedCount_other": "{{count}} unsaved",
+      "errorWord": "error",
+      "listAnd": "{{list}} and {{last}}",
+      "listSeparator": ", ",
+      "queuedFallback": "queued"
+    },
+    "field": {
+      "note": "Note",
+      "question": "Question",
+      "response": "Answer",
+      "quote": "Quote",
+      "occurrence": "Occurrence",
+      "verse": "Verse",
+      "refRaw": "Reference",
+      "sortOrder": "Order"
+    },
+    "fieldLower": {
+      "note": "note",
+      "question": "question",
+      "response": "answer",
+      "quote": "quote",
+      "occurrence": "occurrence",
+      "verse": "verse",
+      "refRaw": "reference",
+      "sortOrder": "order"
+    },
+    "lock": {
+      "save": "Chapter is locked by an AI run — question edits are rejected until it finishes",
+      "delete": "Chapter is locked by an AI run — deletes are rejected for every kind",
+      "create": "Chapter is locked by an AI run — new rows are rejected until it finishes",
+      "gridSave": "Chapter is locked by an AI run — question edits are rejected"
+    },
+    "articles": {
+      "headingTwTa": "Articles — tW / tA",
+      "glOnly": "Article translation only applies to gateway-language projects.",
+      "switchHint": "Switch between translationWords and translationAcademy — each opens in its own focused view.",
+      "viewOnly": "You have view-only access to this project, so the article editors are read-only — saving, AI translation and approval are disabled.",
+      "searchPlaceholder": "Search articles…",
+      "approvedCount": "{{n}} of {{total}} approved",
+      "noneImported": "No {{resource}} articles imported in this environment",
+      "noneImportedPeriod": "No {{resource}} articles imported in this environment.",
+      "populateFromBooks": "Populate from books",
+      "addByIdPlaceholder": "Add by id…",
+      "addByIdAria": "Add article by id",
+      "add": "Add",
+      "noMatch": "No articles match your search.",
+      "unsavedDraft": "Unsaved draft",
+      "backToArticles": "Back to articles",
+      "historyGapTooltip": "No history endpoint exists for tW/tA articles today (unlike note templates) — this is a real gap, not an omission.",
+      "historyDialogTitle": "Article history",
+      "historyGapBody": "No history endpoint exists for tW/tA articles today (unlike note templates) — this is a real gap, not a mockup omission.",
+      "added": "Added {{id}}",
+      "noSourceForId": "No source found for id \"{{id}}\"",
+      "populateAborted": "Populate stopped — source changed mid-run. Try again.",
+      "populateWarnings_one": "Populate: {{count}} warning(s)",
+      "populateWarnings_other": "Populate: {{count}} warning(s)",
+      "populateDone": "Populate: done",
+      "partTitle": "title",
+      "partSubtitle": "subtitle",
+      "partBody": "body",
+      "noParts": "No parts found for this article.",
+      "sourceReadOnly": "Source (English, read-only)",
+      "draftAria": "{{part}} draft (target language)",
+      "translating": "Translating…",
+      "staleDraft": "Your unsaved draft here predates a newer server version — saving now would overwrite it.",
+      "conflictSnack": "Someone else saved a part of this article first. Everything you typed is still here — we only picked up their version number, so pressing Save again will go through."
+    },
+    "queue": {
+      "preconditionTwice": "A save was rejected twice for a missing precondition — it was not retried again.",
+      "preconditionRetryFailed": "A save was rejected for a missing precondition and could not be retried.",
+      "saveParked": "A save failed ({{reason}}) and is parked in the failed-ops queue.",
+      "reverted": "Reverted to the last value loaded from the server.",
+      "approveNeedsDraft": "Approve needs an AI draft first — this row hasn't been through the AI pipeline yet.",
+      "approveFailed": "Approve failed ({{status}}).",
+      "approveAllExtraNoDraft": " That row has no AI draft to approve yet.",
+      "approveAllExtraLocked": " The chapter may be locked by an AI run.",
+      "approveAllStopped": "Stopped at {{ref}} — approve failed ({{status}}).{{extra}} {{done}} of {{total}} approved; the rest were not attempted.",
+      "noteAdded": "New note added.",
+      "questionAdded": "New question added.",
+      "addFailed": "Could not add ({{status}}).",
+      "deleted": "Deleted {{ref}}.",
+      "restoredFromTrash": "Restored from trash.",
+      "movedToTrash": "Moved to trash.",
+      "trashFailed": "Could not change trash state ({{status}}).",
+      "preserveFailed": "Could not change Preserve.",
+      "hintFailed": "Could not toggle Hint.",
+      "reorderNotesOnly": "Reordering applies to notes only",
+      "noNoteSelected": "No note selected",
+      "alreadyFirst": "Already first in this verse",
+      "alreadyLast": "Already last in this verse",
+      "noSortOrder": "These notes have no sort order recorded yet — reorder needs one on both",
+      "moved": "Moved — sort order swapped.",
+      "noteInserted": "Note inserted after this one.",
+      "insertFailed": "Could not insert ({{status}}).",
+      "enterVerseNumber": "Enter a verse number in this chapter.",
+      "retargeted": "Retargeted to {{book}} {{chapter}}:{{verse}}.",
+      "suggestNotesOnly": "AI suggestions are wired for notes only",
+      "suggestNeedsSupportRef": "Pick a support reference first — the AI request is keyed by it",
+      "suggestNeedsQuote": "Add a quote first — the AI request needs the phrase to explain",
+      "missingUltVerse": "ULT verse text unavailable for this verse.",
+      "missingUstVerse": "UST verse text unavailable for this verse.",
+      "quoteNotAligned": "Couldn't match this quote to the ULT alignment — copy the support phrase exactly from ULT.",
+      "aiPrereqMissing": "AI prerequisites missing.",
+      "aiDraftWithWarnings": "AI draft inserted — not saved. {{warnings}}",
+      "aiDraftInserted": "AI draft inserted into the editor — click Save to keep it.",
+      "aiSuggestFailed": "AI suggestion failed ({{status}}).",
+      "templateInserted": "Template inserted into the editor — click Save to keep it.",
+      "noSourceWords": "No source words selected — the quote was left unchanged.",
+      "quoteRebuilt": "Quote rebuilt from the source words.",
+      "keptMine": "Kept your version — re-sending it against the server's current version.",
+      "keptTheirs": "Kept their version — your edit was discarded.",
+      "discardedMine": "Discarded your {{fields}} change — the row now shows the server's values. Anything unsaved in the draft box was left alone.",
+      "questionPrefix": "Q: {{question}}",
+      "tabNotes": "Notes",
+      "tabQuestions": "Questions",
+      "goToFirstUnsaved": "Go to the first unsaved edit and focus Save",
+      "thisVerse": "This verse",
+      "thisVerseSheet": "This verse — read-only context",
+      "cardView": "Card view",
+      "gridView": "Grid view",
+      "previousCard": "Previous card",
+      "nextCard": "Next card",
+      "noNotes": "No notes for this chapter.",
+      "noQuestions": "No questions for this chapter.",
+      "kindNote": "Translation note",
+      "kindQuestion": "Translation question",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "insertAfter": "Insert note after this one",
+      "retargetTitle": "Retarget verse reference",
+      "retargetAction": "Retarget",
+      "retargetFieldLabel": "Verse number within {{book}} {{chapter}}",
+      "pickSourceWords": "Pick source words to rebuild this note's quote",
+      "noSourceVerse": "No {{label}} verse loaded for this chapter — nothing to build a quote from",
+      "suggestTooltip": "Draft this note with AI",
+      "drafting": "Drafting…",
+      "suggest": "✨ Suggest",
+      "templatesNotesOnly": "Templates are keyed by a note's support reference",
+      "noTemplateForRef": "No template recorded for this support reference",
+      "insertTemplate": "Insert a curated template",
+      "preserveNotesOnly": "Preserve only applies to notes",
+      "hintNotesOnly": "Hint only applies to notes",
+      "restore": "Restore",
+      "trash": "Trash",
+      "restoreTooltip": "Bring this note back out of the trash",
+      "trashTooltip": "Move this note to the visible, restorable trash",
+      "deleteQuestionTooltip": "Questions are deleted outright — there is no question trash"
+    },
+    "conflictNotice": {
+      "rowGone": "That row is no longer in this chapter — the other editor may have deleted it.",
+      "readFailed": "Couldn't read the other editor's version ({{status}})."
+    },
+    "rail": {
+      "approveAllNotes": "Approve all notes ({{n}})",
+      "approveAllQuestions": "Approve all questions ({{n}})",
+      "addNote": "+ Note",
+      "addQuestion": "+ Question",
+      "approvingProgress": "Approving {{done}} of {{total}}…",
+      "adding": "Adding…",
+      "badgeNote": "N",
+      "badgeQuestion": "Q"
+    },
+    "grid": {
+      "heading": "Questions — dense grid (English authoring)",
+      "questionForAria": "Question for {{ref}}",
+      "responseForAria": "Response for {{ref}}",
+      "saveRowAria": "Save {{ref}}",
+      "deleteRowAria": "Delete {{ref}}"
+    },
+    "context": {
+      "noLaneText": "No {{label}} text loaded for this verse.",
+      "wordLinks": "Word links (read-only)",
+      "noWordLinks": "No word links recorded for this verse.",
+      "wordLinksNote": "Word links have no approve lifecycle — shown here for reference only."
+    },
+    "source": {
+      "noQuote": "No {{label}} quote on this note.",
+      "occurrence": "occurrence {{n}}",
+      "buildFromSource": "Build from source"
+    },
+    "history": {
+      "titleNote": "Note history",
+      "titleQuestion": "Question history",
+      "restore": "Restore",
+      "inTrash": "This note is in the trash.",
+      "noVersions": "No recorded versions for this row.",
+      "switchTo": "Switch to v{{version}}",
+      "switchExplains": "Switching restores this version's {{field}} text only — quote, support reference and flags stay as they are now.",
+      "loadFailed": "Could not load history ({{status}}).",
+      "systemUser": "system",
+      "userNum": "user #{{id}}",
+      "fieldNote": "note",
+      "fieldResponse": "response"
+    },
+    "conflict": {
+      "agoJustNow": ", just now",
+      "agoMinutes_one": ", {{count}} min ago",
+      "agoMinutes_other": ", {{count}} min ago",
+      "agoHours_one": ", 1 hour ago",
+      "agoHours_other": ", {{count}} hours ago",
+      "agoDays_one": ", 1 day ago",
+      "agoDays_other": ", {{count}} days ago",
+      "theirs": "Theirs",
+      "theirsWithMeta": "Theirs ({{meta}})",
+      "mine": "Mine",
+      "stillLoadingTheirs": "Still loading the other editor's version",
+      "theirsUnreadable": "The other editor's version couldn't be read, so it can't be adopted",
+      "titleNote": "Someone else saved this note first",
+      "titleQuestion": "Someone else saved this question first",
+      "titleFields": "Someone else changed this row's {{fields}} first",
+      "titleRow": "Someone else changed this row first",
+      "loadingTheirs": "Loading their version…",
+      "theirsUnavailable": "Their version could not be read.",
+      "empty": "(empty)",
+      "bodyTextual": "Another editor saved a change while you were editing. Choose which version to keep — the other is discarded.",
+      "bodyFields": "Another editor changed this row while your change was queued. Discarding yours affects only the change listed below — anything unsaved in the draft box stays where it is.",
+      "unidentified": "The change that conflicted could not be identified.",
+      "theirVersionLine": "Their version: {{meta}}",
+      "unknownVersion": "unknown",
+      "keepTheirs": "Keep theirs",
+      "discardMine": "Discard my change",
+      "noServerVersion": "No server version to re-send against",
+      "keepMine": "Keep mine"
+    }
+  },
+  "dialogs": {
+    "common": {
+      "close": "close"
+    },
+    "catalogPicker": {
+      "typeToFilter": "type to filter…"
+    },
+    "twArticle": {
+      "viewOnDcs": "View on DCS",
+      "noSource": "No Translation Words source is configured for this project.",
+      "loadFailed": "Couldn’t load this article.",
+      "openOnDoor43": "Open on Door43"
+    },
+    "twlSuggestions": {
+      "paused": "Suggestions paused — Words checked here",
+      "reopen": "reopen",
+      "heading": "Suggestions",
+      "rescan": "re-scan this verse",
+      "loadFailed": "couldn’t load suggestions",
+      "empty": "no new links suggested for this verse",
+      "add": "add this link",
+      "undoReject": "undo rejection",
+      "reject": "reject suggestion"
+    },
+    "quoteBuilder": {
+      "header": "Build quote · {{book}} {{chapter}}:{{verse}}",
+      "shiftHint": "shift-click for a range",
+      "noSourceWords": "no source words for this verse",
+      "noUltAlignment": "no ULT alignment for this verse",
+      "noUstAlignment": "no UST alignment for this verse",
+      "noHebrewAlignment": "no Hebrew alignment for this word",
+      "preview": "Preview",
+      "occurrence": "occurrence {{n}}",
+      "useSelection": "Use selection"
+    },
+    "history": {
+      "currentVersion": "current: v{{version}}",
+      "restoredSuffix": " (restored)",
+      "loadFailed": "failed to load history: {{error}}",
+      "current": "current",
+      "imported": "imported",
+      "snapshot": "snapshot",
+      "diffVsCurrent": "diff vs current",
+      "diffHeading": "diff: v{{from}} → v{{to}}",
+      "previewHeading": "preview of v{{version}}",
+      "empty": "(empty)",
+      "pickVersion": "pick a version on the left to preview.",
+      "alreadyCurrent": "Already current",
+      "switchTo": "Switch to v{{version}}",
+      "switch": "Switch",
+      "unknownUser": "unknown",
+      "userNumber": "user #{{id}}",
+      "diffVersions": "v{{from}} → v{{to}}"
+    },
+    "noteHistory": {
+      "title": "Note history",
+      "created": "created",
+      "deleted": "deleted",
+      "fieldSupportRef": "Support ref",
+      "fieldQuote": "Quote",
+      "fieldNote": "Note"
+    },
+    "verseHistory": {
+      "title": "Verse history",
+      "sourceAi": "AI",
+      "sourceReimport": "re-import",
+      "preAi": "pre-AI",
+      "textOnly": "text only",
+      "textOnlyTooltip": "alignment wasn't stored for this version — can't restore it",
+      "textOnlyNotice": "This point in history kept only the verse text, not its word alignment, so it can be viewed but not restored.",
+      "footerNote": "History begins at the first saved edit; the original imported text may not be retained."
+    },
+    "import": {
+      "updated_one": "{{count}} updated",
+      "updated_other": "{{count}} updated",
+      "refreshedAi_one": "{{count}} refreshed (AI-generated)",
+      "refreshedAi_other": "{{count}} refreshed (AI-generated)",
+      "inserted_one": "{{count}} inserted",
+      "inserted_other": "{{count}} inserted",
+      "skippedEdited_one": "{{count}} skipped (already edited)",
+      "skippedEdited_other": "{{count}} skipped (already edited)",
+      "skippedLocked_one": "{{count}} skipped (AI pipeline running)",
+      "skippedLocked_other": "{{count}} skipped (AI pipeline running)",
+      "unchanged_one": "{{count}} unchanged",
+      "unchanged_other": "{{count}} unchanged",
+      "sourceAttrSynced_one": "{{count}} source-attr fix(es) synced from master",
+      "sourceAttrSynced_other": "{{count}} source-attr fix(es) synced from master",
+      "notOnDcs_one": "{{count}} resource(s) not on DCS",
+      "notOnDcs_other": "{{count}} resource(s) not on DCS",
+      "separator": ", ",
+      "noChanges": "Imported {{book}} — no changes.",
+      "summary": "Imported {{book}}: {{parts}}."
+    },
+    "findReplace": {
+      "findPlaceholder": "find",
+      "invalidRegex": "invalid regex",
+      "regexTooltip": "use the input as a JavaScript regex",
+      "caseTooltip": "case-sensitive",
+      "strongsTooltip": "treat this number as a Strong's number — search Hebrew/Greek tokens instead of bible text",
+      "bibleScopeTooltip": "search scripture text (ULT / UST / UHB / UGNT)",
+      "bibleScope": "Bible",
+      "tnScopeTooltip": "search translation notes — note text, support reference (SR), and note id",
+      "tnScope": "TN",
+      "noResults": "no results",
+      "prevMatch": "previous match (Shift+Enter)",
+      "nextMatch": "next match (Enter)",
+      "chapterOnlyTooltip": "Find is searching the current chapter only. Switch Scripture to “book” mode to search the whole book.",
+      "chapterOnly": "this chapter only",
+      "scopeLoaded": "scope: {{ready}}/{{total}} ch loaded",
+      "loadFullBookTooltip": "fetch every chapter of this book now so search covers the whole book — only useful once per session",
+      "loadFullBook": "load full book",
+      "closeTooltip": "close (Esc)",
+      "replacePlaceholder": "replace",
+      "noControlChars": "no tabs or line breaks in notes",
+      "replaceOneTnTooltip": "replace this match in the note body (id & support reference are never changed)",
+      "replaceOneBibleTooltip": "replace the active match (scripture only, this verse, overwrites alignment for it)",
+      "replace": "replace",
+      "replaceAllTnTooltip": "replace across every matching note body in all loaded chapters (id & support reference are never changed)",
+      "replaceAllBibleTooltip": "replace every scripture match in every loaded chapter (one PATCH per affected verse; alignment is overwritten where it lands)",
+      "replaceAll": "replace all",
+      "selectSingleScope": "select a single scope to replace",
+      "noteScopeHint": "note text only · id & SR untouched",
+      "summaryVerses_one": "replaced {{count}} verse",
+      "summaryVerses_other": "replaced {{count}} verses",
+      "summaryAlignmentLost_one": " — alignment milestones destroyed in {{count}}",
+      "summaryAlignmentLost_other": " — alignment milestones destroyed in {{count}}",
+      "summaryReadOnlySkipped_one": " — {{count}} match in UHB/UGNT skipped (read-only)",
+      "summaryReadOnlySkipped_other": " — {{count}} matches in UHB/UGNT skipped (read-only)",
+      "summaryMatches_one": "replaced {{count}} match",
+      "summaryMatches_other": "replaced {{count}} matches",
+      "summaryInNotes_one": " in {{count}} note",
+      "summaryInNotes_other": " in {{count}} notes",
+      "summaryStructuralSkipped_one": " — {{count}} match in id / support reference skipped",
+      "summaryStructuralSkipped_other": " — {{count}} matches in id / support reference skipped",
+      "summaryEmptySkipped_one": " — {{count}} skipped (would empty the note)",
+      "summaryEmptySkipped_other": " — {{count}} skipped (would empty the note)",
+      "confirmTitle": "Replace all?",
+      "confirmBible_one": "Rewrite {{count}} verse across all loaded chapters. Alignment is overwritten wherever the replacement lands, and there is no bulk undo.",
+      "confirmBible_other": "Rewrite {{count}} verses across all loaded chapters. Alignment is overwritten wherever the replacement lands, and there is no bulk undo.",
+      "confirmTn_one": "Replace {{count}} match across {{notes}} in all loaded chapters. Note ids and support references are left unchanged, and there is no bulk undo.",
+      "confirmTn_other": "Replace {{count}} matches across {{notes}} in all loaded chapters. Note ids and support references are left unchanged, and there is no bulk undo.",
+      "confirmTnNotes_one": "{{count}} note",
+      "confirmTnNotes_other": "{{count}} notes",
+      "confirmButtonVerses_one": "Replace {{count}} verse",
+      "confirmButtonVerses_other": "Replace {{count}} verses",
+      "confirmButtonMatches_one": "Replace {{count}} match",
+      "confirmButtonMatches_other": "Replace {{count}} matches"
+    }
+  },
+  "appShell": {
+    "common": {
+      "unknownError": "unknown error",
+      "confirm": "Confirm"
+    },
+    "auth": {
+      "signingIn": "signing in…",
+      "signedOutTitle": "You're signed out",
+      "signInToContinue": "Sign in to continue",
+      "queuedEditsSafe": "Queued edits stay in your browser until you sign back in.",
+      "signInWithDoor43": "Sign in with Door43",
+      "signInDev": "Sign in (dev)",
+      "notAuthorizedTitle": "Not authorized",
+      "notAllowlistedNamed": "Your DCS account \"{{username}}\" isn't on the editor allowlist for this app yet.",
+      "notAllowlisted": "Your DCS account isn't on the editor allowlist for this app yet.",
+      "askAdmin": "If you should have access, ask an admin to add you.",
+      "signInDifferentAccount": "Sign in with a different Door43 account",
+      "authFailed": "auth failed: {{message}}"
+    },
+    "alerts": {
+      "viewRun": "view run"
+    },
+    "viewer": {
+      "readOnlyBannerBefore": "You're signed in as an ",
+      "readOnlyBannerAfter": " member — read-only access. Edits won't be saved. Ask an admin to add you to the editor allowlist if you need to edit."
+    },
+    "session": {
+      "signIn": "Sign in",
+      "expired": "Your session expired — sign in to keep saving. Queued edits will sync after sign-in."
+    },
+    "time": {
+      "secondsAgo": "{{n}}s ago",
+      "minutesAgo": "{{n}} min ago",
+      "minutesShortAgo": "{{n}}m ago",
+      "hoursAgo": "{{n}}h ago",
+      "daysAgo": "{{n}}d ago"
+    },
+    "pipelineState": {
+      "queued": "queued",
+      "dispatching": "starting…",
+      "running": "running",
+      "pausedOutage": "paused (outage)",
+      "pausedUsageLimit": "paused (daily budget)",
+      "failed": "failed",
+      "cancelled": "cancelled",
+      "done": "done"
+    },
+    "pipeline": {
+      "updatedSuffix": " · updated {{time}}"
+    },
+    "sync": {
+      "targetVerseStatus": "status {{ref}}",
+      "targetLaneCheck": "{{lane}} check {{ref}}",
+      "deleteSuffix": " (delete)"
+    },
+    "shell": {
+      "aiMissingUlt": "ULT verse text unavailable for this verse.",
+      "aiMissingUst": "UST verse text unavailable for this verse.",
+      "aiHebrewNotFound": "Couldn't match this English to the ULT alignment — copy the support phrase exactly from ULT.",
+      "aiPrereqMissing": "AI prerequisites missing.",
+      "panelComingLater": "{{type}} — panel coming in a later pass"
+    },
+    "scripture": {
+      "cantPreserveAlignment": "Can't preserve alignment on {{ref}} {{lane}} — not saved{{affected}}.",
+      "affectedSuffix": " (affected: {{sample}})",
+      "wordsUnaligned_one": "{{count}} word in {{book}} {{chapter}}:{{verse}} {{lane}} is now unaligned — re-align it on the Align screen.",
+      "wordsUnaligned_other": "{{count}} words in {{book}} {{chapter}}:{{verse}} {{lane}} are now unaligned — re-align them on the Align screen.",
+      "historyLoadFailed": "Could not load history for {{lane}} ({{error}}).",
+      "clipboardUnavailable": "Clipboard isn't available in this browser — nothing copied.",
+      "copiedVerses_one": "Copied {{count}} verse ({{lane}}) to the clipboard.",
+      "copiedVerses_other": "Copied {{count}} verses ({{lane}}) to the clipboard.",
+      "copyFailed": "Copy to clipboard failed.",
+      "loadError": "Could not load {{book}} {{chapter}}{{error}}. Scripture can’t be shown until the chapter loads.",
+      "errorSuffix": " ({{error}})",
+      "findReplace": "Find/Replace",
+      "copyChapter": "Copy Chapter",
+      "chapterBoard": "Chapter board",
+      "verseMarkedDone": "Verse marked done",
+      "showLane": "Show {{lane}}",
+      "laneAwaitingReplacementLong": "{{lane}} is awaiting a source replacement. The chapter read omits a lane in this state and verse reads answer 409 lane_replacement_required, so editing is off until the replacement lands.",
+      "laneReadOnly": "{{lane}} is configured text-read-only in this project — alignment may still be editable on the Align screen.",
+      "lanePendingReplacement": "{{lane}} lane pending replacement",
+      "serverSaid": " (server said: {{reason}})",
+      "noRowsForLane": " — the chapter payload contains no rows for this lane",
+      "verseHistoryLane": "Verse history ({{lane}})",
+      "bothLanesHidden": "Both lanes are hidden. Re-enable one with the checkboxes above.",
+      "find": "Find",
+      "history": "History",
+      "replacementElsewhere": "Replacement targets {{ref}}; open that verse to apply it here.",
+      "replaceWouldUnalign": "Replace would unalign untouched words in {{ref}} {{lane}} — not saved{{affected}}.",
+      "unalignConfirmTitle": "This save would unalign words it didn’t touch",
+      "unalignConfirmBody_one": "Saving {{ref}} drops the alignment on {{count}} word{{words}}. Your typing is kept either way — saving anyway leaves those words for you to re-align on the Align screen.",
+      "unalignConfirmBody_other": "Saving {{ref}} drops the alignment on {{count}} words{{words}}. Your typing is kept either way — saving anyway leaves those words for you to re-align on the Align screen.",
+      "wordListSuffix": ": {{sample}}",
+      "bulkCheckTitle": "Check the whole chapter?",
+      "bulkClearTitle": "Clear the whole chapter?",
+      "bulkCheckBody_one": "This adds your check on the {{lane}} lane for {{count}} verse in {{book}} {{chapter}}.",
+      "bulkCheckBody_other": "This adds your check on the {{lane}} lane for {{count}} verses in {{book}} {{chapter}}.",
+      "bulkClearBody_one": "This removes your check on the {{lane}} lane for {{count}} verse in {{book}} {{chapter}}.",
+      "bulkClearBody_other": "This removes your check on the {{lane}} lane for {{count}} verses in {{book}} {{chapter}}."
     }
   }
 }

@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // t3-scripture: the paired scripture editor, ported from
 // docs/flows/ui/t3-scripture.html onto the app's real data + save machinery.
 //
@@ -45,6 +42,12 @@ import {
 import { useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTranslation } from "react-i18next";
+// Some notices below are raised from useCallback bodies whose dependency arrays
+// must NOT gain `t`: they close over save/enqueue work, and react-i18next hands
+// out a NEW `t` identity on every language change, which would churn those
+// callbacks (and, through them, the effects that subscribe with them). Those
+// call sites use the i18n singleton directly instead.
+import i18n from "../../i18n";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 
@@ -243,10 +246,20 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
         if (result.kind === "fatal" && LANE_REPLACEMENT_REASONS.has(result.reason)) {
           setLaneReplacement((prev) => ({ ...prev, [target.bibleVersion]: result.reason }));
         } else if (result.kind === "fatal") {
-          setNotice(`Save failed for ${target.bibleVersion} (${result.reason}).`);
+          setNotice(
+            i18n.t("flowScripture.saveFailed", {
+              lane: target.bibleVersion,
+              reason: result.reason,
+            }),
+          );
         } else if (result.kind === "conflict") {
           setNotice(
-            `${book} ${target.chapter}:${target.verse} ${target.bibleVersion} changed on the server — resolve the conflict from the sync bar.`,
+            i18n.t("flowScripture.verseConflict", {
+              book,
+              chapter: target.chapter,
+              verse: target.verse,
+              lane: target.bibleVersion,
+            }),
           );
         }
       }
@@ -299,9 +312,11 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
         }
         const sample = lost.slice(0, 3).join(", ");
         setNotice(
-          `Can't preserve alignment on ${book} ${chapter}:${base.verse} ${bibleVersion} — not saved${
-            sample ? ` (affected: ${sample})` : ""
-          }.`,
+          i18n.t("appShell.scripture.cantPreserveAlignment", {
+            ref: `${book} ${chapter}:${base.verse}`,
+            lane: bibleVersion,
+            affected: sample ? i18n.t("appShell.scripture.affectedSuffix", { sample }) : "",
+          }),
         );
         return false;
       }
@@ -347,7 +362,13 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
       );
       if (after - before > 0) {
         setNotice(
-          `${after - before} word(s) in ${book} ${chapter}:${base.verse} ${bibleVersion} are now unaligned — re-align them on the Align screen.`,
+          i18n.t("appShell.scripture.wordsUnaligned", {
+            count: after - before,
+            book,
+            chapter,
+            verse: base.verse,
+            lane: bibleVersion,
+          }),
         );
       }
       const newPlainText = extractPlainText(result.content);
@@ -487,7 +508,9 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
           return;
         }
       }
-      setNotice(`Could not load history for ${bibleVersion} (${String(e)}).`);
+      setNotice(
+        t("appShell.scripture.historyLoadFailed", { lane: bibleVersion, error: String(e) }),
+      );
     }
   }
 
@@ -574,8 +597,11 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
         <FlowNav current="scripture" book={book} chapter={chapter} verse={verse} role={role} />
         <Box sx={{ p: 3 }}>
           <Alert severity="error">
-            Could not load {book} {chapter}
-            {error ? ` (${error})` : ""}. Scripture can&rsquo;t be shown until the chapter loads.
+            {t("appShell.scripture.loadError", {
+              book,
+              chapter,
+              error: error ? t("appShell.scripture.errorSuffix", { error }) : "",
+            })}
           </Alert>
         </Box>
       </Stack>
@@ -604,14 +630,14 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
       }
     }
     if (!navigator.clipboard?.writeText) {
-      setNotice("Clipboard isn't available in this browser — nothing copied.");
+      setNotice(t("appShell.scripture.clipboardUnavailable"));
       return;
     }
     try {
       await navigator.clipboard.writeText(lines.join("\n"));
-      setNotice(`Copied ${lines.length} verse(s) (ULT) to the clipboard.`);
+      setNotice(t("appShell.scripture.copiedVerses", { count: lines.length, lane: "ULT" }));
     } catch {
-      setNotice("Copy to clipboard failed.");
+      setNotice(t("appShell.scripture.copyFailed"));
     }
   }
 
@@ -632,7 +658,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
           {/* nav strip */}
           <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5, flexWrap: "wrap" }}>
             <IconButton
-              aria-label="Previous verse"
+              aria-label={t("flowScripture.prevVerse")}
               onClick={() => goVerse(-1)}
               disabled={verseNums.length === 0 || verse === verseNums[0]}
               sx={{ minWidth: 44, minHeight: 44 }}
@@ -643,7 +669,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
               {book} {chapter}:{verse}
             </Typography>
             <IconButton
-              aria-label="Next verse"
+              aria-label={t("flowScripture.nextVerse")}
               onClick={() => goVerse(1)}
               disabled={verseNums.length === 0 || verse === verseNums[verseNums.length - 1]}
               sx={{ minWidth: 44, minHeight: 44 }}
@@ -651,11 +677,13 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
               <ChevronRightIcon />
             </IconButton>
             <Box sx={{ flex: 1 }} />
-            {unsavedHere > 0 && <FlowStatusChip kind="warn" label={`${unsavedHere} unsaved`} />}
+            {unsavedHere > 0 && (
+              <FlowStatusChip kind="warn" label={`${unsavedHere} ${t("sync.unsaved")}`} />
+            )}
             {isDesktop && (
               <>
                 <Button size="small" variant="outlined" sx={{ minHeight: 44 }} onClick={() => setFindOpen(true)}>
-                  Find/Replace
+                  {t("appShell.scripture.findReplace")}
                 </Button>
                 <ExportUsfmButton
                   book={book}
@@ -664,10 +692,10 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
                   chapterVersesFor={(version) => Object.values(data?.verses?.[version] ?? {})}
                 />
                 <Button size="small" variant="outlined" sx={{ minHeight: 44 }} onClick={() => void copyChapter()}>
-                  Copy Chapter
+                  {t("appShell.scripture.copyChapter")}
                 </Button>
                 <Button size="small" variant="outlined" sx={{ minHeight: 44 }} onClick={() => setBoardOpen(true)}>
-                  Chapter board
+                  {t("appShell.scripture.chapterBoard")}
                 </Button>
               </>
             )}
@@ -677,7 +705,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
           <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 2, flexWrap: "wrap" }}>
             <FormControlLabel
               control={<Switch checked={doneNow} onChange={toggleDone} disabled={!canEditRole} />}
-              label="Verse marked done"
+              label={t("appShell.scripture.verseMarkedDone")}
               sx={{ marginInlineEnd: 0 }}
             />
             {TARGET_LANES.map((bv) => (
@@ -689,7 +717,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
                     onChange={(e) => setVisibleLanes((p) => ({ ...p, [bv]: e.target.checked }))}
                   />
                 }
-                label={`Show ${versionLabel(projectConfig, bv)}`}
+                label={t("appShell.scripture.showLane", { lane: versionLabel(projectConfig, bv) })}
                 sx={{ marginInlineEnd: 0 }}
               />
             ))}
@@ -703,7 +731,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
 
           {!canEditRole && (
             <Alert severity="info" sx={{ mb: 2 }}>
-              You have view-only access to this project, so the verse editors are read-only.
+              {t("flowScripture.viewOnlyEditors")}
             </Alert>
           )}
 
@@ -734,14 +762,16 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
               // Plain absence is NOT evidence of a replacement — say what is
               // actually known. Only `pendingReplacement` (projectConfig
               // pendingTarget, or an observed 409) earns replacement wording.
-              const notDraftedYet = `No ${laneDisplay} text exists for this verse in this workspace. That is normal in a translation-mode workspace whose target lanes have not been drafted yet.`;
+              const notDraftedYet = t("flowScripture.laneNoText", { lane: laneDisplay });
               let disabledReason: string | null = null;
               if (info.pendingReplacement) {
-                disabledReason = `${laneDisplay} is awaiting a source replacement. The chapter read omits a lane in this state and verse reads answer 409 lane_replacement_required, so editing is off until the replacement lands.`;
+                disabledReason = t("appShell.scripture.laneAwaitingReplacementLong", {
+                  lane: laneDisplay,
+                });
               } else if (info.textReadOnly) {
-                disabledReason = `${laneDisplay} is configured text-read-only in this project — alignment may still be editable on the Align screen.`;
+                disabledReason = t("appShell.scripture.laneReadOnly", { lane: laneDisplay });
               } else if (!canEditRole) {
-                disabledReason = "View-only access.";
+                disabledReason = t("flowScripture.viewOnly");
               } else if (!base) {
                 // When the whole lane is missing the info alert below already
                 // says this; don't print it twice.
@@ -751,10 +781,12 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
                 <Box key={bv}>
                   {info.pendingReplacement && (
                     <Alert severity="warning" sx={{ mb: 1 }}>
-                      {laneDisplay} lane pending replacement
-                      {laneReplacement[bv] ? ` (server said: ${laneReplacement[bv]})` : ""}
+                      {t("appShell.scripture.lanePendingReplacement", { lane: laneDisplay })}
+                      {laneReplacement[bv]
+                        ? t("appShell.scripture.serverSaid", { reason: laneReplacement[bv] })
+                        : ""}
                       {info.laneOmitted && !laneReplacement[bv]
-                        ? " — the chapter payload contains no rows for this lane"
+                        ? t("appShell.scripture.noRowsForLane")
                         : ""}
                       .
                     </Alert>
@@ -790,15 +822,13 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
                     disabled={!base}
                     onClick={() => void openHistory(bv)}
                   >
-                    Verse history ({laneDisplay})
+                    {t("appShell.scripture.verseHistoryLane", { lane: laneDisplay })}
                   </Button>
                 </Box>
               );
             })}
             {shownLanes.length === 0 && (
-              <Alert severity="info">
-                Both lanes are hidden. Re-enable one with the checkboxes above.
-              </Alert>
+              <Alert severity="info">{t("appShell.scripture.bothLanesHidden")}</Alert>
             )}
           </Box>
         </Box>
@@ -807,17 +837,17 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
       {/* <900: the chrome actions move into the fixed bar (nothing renders >=900). */}
       <FlowActionBar>
         <Button variant="outlined" onClick={() => setFindOpen(true)}>
-          Find
+          {t("appShell.scripture.find")}
         </Button>
         <Button variant="outlined" onClick={() => setBoardOpen(true)}>
-          Board
+          {t("shell.board")}
         </Button>
         <Button
           variant="outlined"
           disabled={!activeLaneForBar}
           onClick={() => activeLaneForBar && void openHistory(activeLaneForBar)}
         >
-          History
+          {t("appShell.scripture.history")}
         </Button>
       </FlowActionBar>
 
@@ -871,7 +901,9 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
             // guarded enqueue is pinned to the active verse — move there first
             // rather than writing to a verse the user isn't looking at.
             setNotice(
-              `Replacement targets ${book} ${ch}:${verseNum}; open that verse to apply it here.`,
+              t("appShell.scripture.replacementElsewhere", {
+                ref: `${book} ${ch}:${verseNum}`,
+              }),
             );
             return;
           }
@@ -879,9 +911,11 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
           if (guardBlocksSave(delta, "find_replace")) {
             const sample = delta.unexpectedLosses.slice(0, 3).map((l) => l.text).join(", ");
             setNotice(
-              `Replace would unalign untouched words in ${book} ${ch}:${verseNum} ${bibleVersion} — not saved${
-                sample ? ` (affected: ${sample})` : ""
-              }.`,
+              t("appShell.scripture.replaceWouldUnalign", {
+                ref: `${book} ${ch}:${verseNum}`,
+                lane: bibleVersion,
+                affected: sample ? t("appShell.scripture.affectedSuffix", { sample }) : "",
+              }),
             );
             return;
           }
@@ -931,21 +965,24 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
       />
 
       <Dialog open={Boolean(pendingLoss)} onClose={() => setPendingLoss(null)}>
-        <DialogTitle>This save would unalign words it didn&rsquo;t touch</DialogTitle>
+        <DialogTitle>{t("appShell.scripture.unalignConfirmTitle")}</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Saving {pendingLoss?.ref} drops the alignment on{" "}
-            {pendingLoss?.lostWords.length ?? 0} word(s)
-            {pendingLoss && pendingLoss.lostWords.length > 0
-              ? `: ${pendingLoss.lostWords.slice(0, 6).join(", ")}`
-              : ""}
-            . Your typing is kept either way — saving anyway leaves those words for you to re-align
-            on the Align screen.
+            {t("appShell.scripture.unalignConfirmBody", {
+              count: pendingLoss?.lostWords.length ?? 0,
+              ref: pendingLoss?.ref ?? "",
+              words:
+                pendingLoss && pendingLoss.lostWords.length > 0
+                  ? t("appShell.scripture.wordListSuffix", {
+                      sample: pendingLoss.lostWords.slice(0, 6).join(", "),
+                    })
+                  : "",
+            })}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setPendingLoss(null)} sx={{ minHeight: 44 }}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             variant="contained"
@@ -956,26 +993,38 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
               setSavingLane(null);
             }}
           >
-            Save anyway
+            {t("shell.saveAnyway")}
           </Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={Boolean(pendingBulk)} onClose={() => setPendingBulk(null)}>
-        <DialogTitle>{pendingBulk?.checked ? "Check" : "Clear"} the whole chapter?</DialogTitle>
+        <DialogTitle>
+          {pendingBulk?.checked
+            ? t("appShell.scripture.bulkCheckTitle")
+            : t("appShell.scripture.bulkClearTitle")}
+        </DialogTitle>
         <DialogContent>
           <DialogContentText>
-            This {pendingBulk?.checked ? "adds" : "removes"} your check on the{" "}
-            {pendingBulk?.lane} lane for {pendingBulk?.verses.length ?? 0} verse(s) in {book}{" "}
-            {chapter}.
+            {t(
+              pendingBulk?.checked
+                ? "appShell.scripture.bulkCheckBody"
+                : "appShell.scripture.bulkClearBody",
+              {
+                count: pendingBulk?.verses.length ?? 0,
+                lane: pendingBulk ? t(`lanes.${pendingBulk.lane}`) : "",
+                book,
+                chapter,
+              },
+            )}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setPendingBulk(null)} sx={{ minHeight: 44 }}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button variant="contained" onClick={commitBulk} sx={{ minHeight: 44 }}>
-            Confirm
+            {t("appShell.common.confirm")}
           </Button>
         </DialogActions>
       </Dialog>

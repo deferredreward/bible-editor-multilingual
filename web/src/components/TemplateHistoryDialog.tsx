@@ -18,6 +18,7 @@ import {
   ToggleButtonGroup,
 } from "@mui/material";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   api,
   type TemplateHistory,
@@ -42,9 +43,9 @@ interface Props {
 
 const fmtTime = (epochSec: number) => new Date(epochSec * 1000).toLocaleString();
 
-function userLabel(u: RowHistoryUser | null): string {
+function userLabel(u: RowHistoryUser | null, t: TFunction): string {
   if (!u) return "—";
-  return u.full_name || u.username || `user #${u.id}`;
+  return u.full_name || u.username || t("dialogs.history.userNumber", { id: u.id });
 }
 
 type ViewMode = "snapshot" | "diff";
@@ -210,7 +211,7 @@ export function TemplateHistoryDialog({
                               variant="body2"
                               sx={{ fontFamily: "monospace", fontWeight: 600 }}
                             >
-                              v{e.version}
+                              {t("aligner.versionChip", { version: e.version })}
                             </Typography>
                             {isLive && (
                               <Chip
@@ -241,7 +242,7 @@ export function TemplateHistoryDialog({
                               color="text.secondary"
                               component="div"
                             >
-                              {userLabel(e.user)}
+                              {userLabel(e.user, t)}
                             </Typography>
                           </>
                         }
@@ -257,8 +258,11 @@ export function TemplateHistoryDialog({
                   <Stack direction="row" alignItems="center" spacing={1}>
                     <Typography variant="caption" color="text.secondary">
                       {viewMode === "diff" && canDiff
-                        ? `v${selected.version} → v${currentVersion}`
-                        : `v${selected.version}`}
+                        ? t("dialogs.history.diffVersions", {
+                            from: selected.version,
+                            to: currentVersion,
+                          })
+                        : t("aligner.versionChip", { version: selected.version })}
                     </Typography>
                     <Box sx={{ flex: 1 }} />
                     <ToggleButtonGroup

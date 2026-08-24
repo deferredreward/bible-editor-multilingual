@@ -18,6 +18,8 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from "@mui/material";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { api, type RowHistoryEntry } from "../sync/api";
 import { diffWords } from "../lib/wordDiff";
 
@@ -55,9 +57,9 @@ interface Props {
 const fmtTime = (epochSec: number) =>
   new Date(epochSec * 1000).toLocaleString();
 
-const userLabel = (e: RowHistoryEntry) => {
-  if (!e.user) return "unknown";
-  return e.user.full_name || e.user.username || `user #${e.user.id}`;
+const userLabel = (e: RowHistoryEntry, t: TFunction) => {
+  if (!e.user) return t("dialogs.history.unknownUser");
+  return e.user.full_name || e.user.username || t("dialogs.history.userNumber", { id: e.user.id });
 };
 
 const tsvToDisplay = (s: string | null) => (s ?? "").replace(/\\n/g, "\n");
@@ -74,6 +76,7 @@ export function NoteHistoryDialog({
   onUseVersion,
   readOnly = false,
 }: Props) {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<RowHistoryEntry[]>([]);
@@ -160,7 +163,7 @@ export function NoteHistoryDialog({
       <DialogTitle>
         <Stack direction="row" alignItems="center" spacing={1}>
           <Typography variant="h6" component="span">
-            Note history
+            {t("dialogs.noteHistory.title")}
           </Typography>
           <Chip
             label={noteId}
@@ -170,8 +173,8 @@ export function NoteHistoryDialog({
           />
           <Box sx={{ flex: 1 }} />
           <Typography variant="caption" color="text.secondary">
-            current: v{effectiveVersion}
-            {effectiveVersion !== currentVersion ? " (restored)" : ""}
+            {t("dialogs.history.currentVersion", { version: effectiveVersion })}
+            {effectiveVersion !== currentVersion ? t("dialogs.history.restoredSuffix") : ""}
           </Typography>
         </Stack>
       </DialogTitle>
@@ -182,7 +185,7 @@ export function NoteHistoryDialog({
           </Box>
         ) : error ? (
           <Box sx={{ p: 2 }}>
-            <Alert severity="error">failed to load history: {error}</Alert>
+            <Alert severity="error">{t("dialogs.history.loadFailed", { error })}</Alert>
           </Box>
         ) : (
           <Stack direction="row" sx={{ minHeight: 360 }}>
@@ -212,11 +215,11 @@ export function NoteHistoryDialog({
                               variant="body2"
                               sx={{ fontFamily: "monospace", fontWeight: 600 }}
                             >
-                              v{e.version}
+                              {t("aligner.versionChip", { version: e.version })}
                             </Typography>
                             {isLive && (
                               <Chip
-                                label="current"
+                                label={t("dialogs.history.current")}
                                 size="small"
                                 color="primary"
                                 variant="outlined"
@@ -225,7 +228,7 @@ export function NoteHistoryDialog({
                             )}
                             {e.action === "create" && (
                               <Chip
-                                label="created"
+                                label={t("dialogs.noteHistory.created")}
                                 size="small"
                                 variant="outlined"
                                 sx={{ height: 18, fontSize: 10 }}
@@ -233,7 +236,7 @@ export function NoteHistoryDialog({
                             )}
                             {e.action === "imported" && (
                               <Chip
-                                label="imported"
+                                label={t("dialogs.history.imported")}
                                 size="small"
                                 variant="outlined"
                                 sx={{ height: 18, fontSize: 10 }}
@@ -241,7 +244,7 @@ export function NoteHistoryDialog({
                             )}
                             {e.action === "delete" && (
                               <Chip
-                                label="deleted"
+                                label={t("dialogs.noteHistory.deleted")}
                                 size="small"
                                 color="error"
                                 variant="outlined"
@@ -260,7 +263,7 @@ export function NoteHistoryDialog({
                               color="text.secondary"
                               component="div"
                             >
-                              {userLabel(e)}
+                              {userLabel(e, t)}
                             </Typography>
                           </>
                         }
@@ -276,8 +279,11 @@ export function NoteHistoryDialog({
                   <Stack direction="row" alignItems="center" spacing={1}>
                     <Typography variant="caption" color="text.secondary">
                       {viewMode === "diff" && canDiff
-                        ? `diff: v${selected!.version} → v${effectiveVersion}`
-                        : `preview of v${selected?.version}`}
+                        ? t("dialogs.history.diffHeading", {
+                            from: selected!.version,
+                            to: effectiveVersion,
+                          })
+                        : t("dialogs.history.previewHeading", { version: selected?.version })}
                     </Typography>
                     <Box sx={{ flex: 1 }} />
                     <ToggleButtonGroup
@@ -289,28 +295,30 @@ export function NoteHistoryDialog({
                       }}
                       sx={{ "& .MuiToggleButton-root": { py: 0.25, px: 1 } }}
                     >
-                      <ToggleButton value="snapshot">snapshot</ToggleButton>
+                      <ToggleButton value="snapshot">
+                        {t("dialogs.history.snapshot")}
+                      </ToggleButton>
                       <ToggleButton value="diff" disabled={!canDiff}>
-                        diff vs current
+                        {t("dialogs.history.diffVsCurrent")}
                       </ToggleButton>
                     </ToggleButtonGroup>
                   </Stack>
                   {viewMode === "diff" && canDiff ? (
                     <>
                       <DiffPreview
-                        label="Support ref"
+                        label={t("dialogs.noteHistory.fieldSupportRef")}
                         from={selectedSnapshot.support_reference}
                         to={effectiveSnapshot!.support_reference}
                       />
                       <DiffPreview
-                        label="Quote"
+                        label={t("dialogs.noteHistory.fieldQuote")}
                         from={tsvToDisplay(selectedSnapshot.quote)}
                         to={tsvToDisplay(effectiveSnapshot!.quote)}
                         rtl
                       />
                       <Divider />
                       <DiffPreview
-                        label="Note"
+                        label={t("dialogs.noteHistory.fieldNote")}
                         from={tsvToDisplay(selectedSnapshot.note)}
                         to={tsvToDisplay(effectiveSnapshot!.note)}
                       />
@@ -318,17 +326,17 @@ export function NoteHistoryDialog({
                   ) : (
                     <>
                       <FieldPreview
-                        label="Support ref"
+                        label={t("dialogs.noteHistory.fieldSupportRef")}
                         value={selectedSnapshot.support_reference}
                       />
                       <FieldPreview
-                        label="Quote"
+                        label={t("dialogs.noteHistory.fieldQuote")}
                         value={tsvToDisplay(selectedSnapshot.quote)}
                         rtl
                       />
                       <Divider />
                       <FieldPreview
-                        label="Note"
+                        label={t("dialogs.noteHistory.fieldNote")}
                         value={tsvToDisplay(selectedSnapshot.note)}
                       />
                     </>
@@ -336,7 +344,7 @@ export function NoteHistoryDialog({
                 </Stack>
               ) : (
                 <Typography variant="body2" color="text.secondary">
-                  pick a version on the left to preview.
+                  {t("dialogs.history.pickVersion")}
                 </Typography>
               )}
             </Box>
@@ -344,7 +352,7 @@ export function NoteHistoryDialog({
         )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Close</Button>
+        <Button onClick={onClose}>{t("common.close")}</Button>
         {!readOnly && (
         <Button
           variant="contained"
@@ -356,10 +364,10 @@ export function NoteHistoryDialog({
           }}
         >
           {isCurrent
-            ? "Already current"
+            ? t("dialogs.history.alreadyCurrent")
             : selected
-              ? `Switch to v${selected.version}`
-              : "Switch"}
+              ? t("dialogs.history.switchTo", { version: selected.version })
+              : t("dialogs.history.switch")}
         </Button>
         )}
       </DialogActions>
@@ -376,6 +384,7 @@ function FieldPreview({
   value: string | null;
   rtl?: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <Box>
       <Typography
@@ -407,7 +416,7 @@ function FieldPreview({
         }}
         dir={rtl ? "rtl" : "ltr"}
       >
-        {value || "(empty)"}
+        {value || t("dialogs.history.empty")}
       </Box>
     </Box>
   );
@@ -424,6 +433,7 @@ function DiffPreview({
   to: string | null;
   rtl?: boolean;
 }) {
+  const { t } = useTranslation();
   const fromStr = from ?? "";
   const toStr = to ?? "";
   const ops = useMemo(() => diffWords(fromStr, toStr), [fromStr, toStr]);
@@ -460,7 +470,7 @@ function DiffPreview({
       >
         {identical && fromStr === "" && toStr === "" ? (
           <Box component="span" sx={{ color: "text.disabled" }}>
-            (empty)
+            {t("dialogs.history.empty")}
           </Box>
         ) : identical ? (
           <Box component="span">{fromStr}</Box>

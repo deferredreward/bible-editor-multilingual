@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // TranslateAlignScreen — the redesigned per-book Alignment screen (Benjamin,
 // 2026-08-10: "alignment next, with the other widths"). No dedicated artifact
 // exists; the chrome is synthesized from the design system exactly as the
@@ -117,6 +114,7 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import MenuBookIcon from "@mui/icons-material/MenuBook";
+import { useTranslation } from "react-i18next";
 
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip } from "./FlowStatusChip";
@@ -256,6 +254,7 @@ export default function TranslateAlignScreen({
   verse,
   mode,
 }: TranslateAlignScreenProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
   const INSPIRE = "#31ADE3";
@@ -430,6 +429,11 @@ export default function TranslateAlignScreen({
 
   // ── chrome state ──────────────────────────────────────────────────────────
   const [dragDirty, setDragDirty] = useState(false);
+  // The snackbar holds an i18n KEY, not a rendered sentence: the setters below
+  // sit inside data-mutating useCallbacks, and adding `t` to their deps would
+  // give them a new identity on every language change (react-i18next rebinds
+  // `t`), re-firing saves. Translating at render keeps the notice reactive to
+  // a language switch without dragging `t` into a save path.
   const [notice, setNotice] = useState<string | null>(null);
   const [lock, setLock] = useState<ChapterLockedBody | null>(null);
   const [pendingLoss, setPendingLoss] = useState<PendingLoss | null>(null);
@@ -464,12 +468,12 @@ export default function TranslateAlignScreen({
   const enqueueAlignment = useCallback(
     (row: VerseDto, bibleVersion: string, content: unknown, plain: string, expectedVersion: number) => {
       if (!canEdit) {
-        setNotice("You have view-only access to this project — alignment changes can't be saved.");
+        setNotice("flowAlign.notice.viewOnlyAlignment");
         return;
       }
       const delta = analyzeAlignmentDelta(row.content, content);
       if (guardBlocksSave(delta, "alignment_edit")) {
-        setNotice("Save blocked: this change would de-align words it didn't touch.");
+        setNotice("flowAlign.notice.saveBlocked");
         return;
       }
       void outbox.enqueueVerse(
@@ -509,7 +513,7 @@ export default function TranslateAlignScreen({
   // (AlignScreen.tsx:388-409).
   const handleTapSave = useCallback(() => {
     if (!canEdit) {
-      setNotice("You have view-only access to this project — alignment changes can't be saved.");
+      setNotice("flowAlign.notice.viewOnlyAlignment");
       return;
     }
     if (!tapState || !targetVerse) return;
@@ -548,7 +552,7 @@ export default function TranslateAlignScreen({
   const handleSaveReading = useCallback(
     (bibleVersion: string, plain: string, base: VerseDto) => {
       if (!canEdit) {
-        setNotice("You have view-only access to this project — verse text can't be saved.");
+        setNotice("flowAlign.notice.viewOnlyText");
         return;
       }
       const oldEditable = extractEditableText(base.content);
@@ -743,7 +747,12 @@ export default function TranslateAlignScreen({
   const totalVerses = verseNums.length;
 
   // ── shared chrome bits ────────────────────────────────────────────────────
-  const sub = `${book} ${chapter} · ${sourceLane} → ${laneLabel}`;
+  const sub = t("flowAlign.desk.sub", {
+    book,
+    chapter,
+    source: sourceLane,
+    target: laneLabel,
+  });
 
   const cardSx = {
     bgcolor: "background.paper",
@@ -760,14 +769,18 @@ export default function TranslateAlignScreen({
 
   // Segmented control in the sibling screens' language
   // (TranslateWordsScreen.tsx:1317-1345 segButton, sized for a header row).
+  // `keyId` is a stable English/id token — the React key must never be the
+  // translated label, or every button in these groups remounts on a language
+  // switch. Callers that pass an untranslated code (the lane picker's ULT/UST
+  // display labels) can let it fall back to `label`.
   const segButton = (
     active: boolean,
     label: string,
     onClick: () => void,
-    opts?: { disabled?: boolean; title?: string; ariaLabel?: string },
+    opts?: { disabled?: boolean; title?: string; ariaLabel?: string; keyId?: string },
   ) => (
     <Button
-      key={label}
+      key={opts?.keyId ?? label}
       onClick={onClick}
       aria-pressed={active}
       aria-label={opts?.ariaLabel}
@@ -810,7 +823,7 @@ export default function TranslateAlignScreen({
       <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
         <Stack direction="row" alignItems="center" spacing={1.25}>
           <IconButton
-            aria-label={`Back to the ${book} package`}
+            aria-label={t("flowAlign.desk.backToPackage", { book })}
             onClick={() => {
               location.hash = `#/package/${book}`;
             }}
@@ -820,7 +833,7 @@ export default function TranslateAlignScreen({
           </IconButton>
           <Box sx={{ minWidth: 0 }}>
             <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
-              Alignment
+              {t("flowAlign.desk.title")}
             </Typography>
             <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
               {sub}
@@ -838,11 +851,11 @@ export default function TranslateAlignScreen({
               }}
               sx={{ flex: "none", minHeight: 34, textTransform: "none", fontWeight: 600 }}
             >
-              Scripture
+              {t("flowScripture.title")}
             </Button>
           ) : (
             <IconButton
-              aria-label="Back to scripture"
+              aria-label={t("flowAlign.desk.backToScripture")}
               onClick={() => {
                 location.hash = `#/scripture/${book}/${chapter}`;
               }}
@@ -856,7 +869,7 @@ export default function TranslateAlignScreen({
               Benjamin 2026-08-10) — same goVerse hash rewrite and disabled
               logic as the detail header's pair */}
           <IconButton
-            aria-label="Previous verse"
+            aria-label={t("flowScripture.prevVerse")}
             onClick={() => goVerse(prevVerse)}
             disabled={prevVerse == null}
             sx={{ width: 34, height: 34, flex: "none" }}
@@ -873,7 +886,10 @@ export default function TranslateAlignScreen({
                 whiteSpace: "nowrap",
               }}
             >
-              Verse {verseIdx >= 0 ? verseIdx + 1 : "—"} of {totalVerses || "—"}
+              {t("flowScripture.verseOfTotal", {
+                n: verseIdx >= 0 ? verseIdx + 1 : "—",
+                total: totalVerses || "—",
+              })}
             </Typography>
             <Typography
               variant="caption"
@@ -881,11 +897,11 @@ export default function TranslateAlignScreen({
               component="p"
               sx={{ m: 0, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}
             >
-              {alignedCount} of {totalVerses || 0} fully aligned
+              {t("flowAlign.desk.fullyAligned", { n: alignedCount, total: totalVerses || 0 })}
             </Typography>
           </Box>
           <IconButton
-            aria-label="Next verse"
+            aria-label={t("flowScripture.nextVerse")}
             onClick={() => goVerse(nextVerse)}
             disabled={nextVerse == null}
             sx={{ width: 34, height: 34, flex: "none" }}
@@ -929,9 +945,7 @@ export default function TranslateAlignScreen({
       <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", textAlign: "start" }}>
         {topbar}
         <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 2 }}>
-          <Alert severity="error">
-            Could not load {book} {chapter}. Check your connection and try again.
-          </Alert>
+          <Alert severity="error">{t("flowAlign.screen.loadError", { book, chapter })}</Alert>
         </Box>
       </Box>
     );
@@ -939,11 +953,13 @@ export default function TranslateAlignScreen({
 
   // ── verse list (md+ pane) ─────────────────────────────────────────────────
   const chipForRow = (r: VerseRowStatus) => {
-    if (!r.hasTarget) return <FlowStatusChip kind="skip" label="Not drafted" />;
+    if (!r.hasTarget) return <FlowStatusChip kind="skip" label={t("flowAlign.desk.notDrafted")} />;
     if (r.unaligned > 0)
-      return <FlowStatusChip kind="warn" label={`${r.unaligned} unaligned`} />;
-    if (r.sourceGaps) return <FlowStatusChip kind="warn" label="Source gaps" />;
-    return <FlowStatusChip kind="ok" label="Aligned" />;
+      return (
+        <FlowStatusChip kind="warn" label={t("aligner.unalignedCount", { count: r.unaligned })} />
+      );
+    if (r.sourceGaps) return <FlowStatusChip kind="warn" label={t("flowAlign.desk.sourceGaps")} />;
+    return <FlowStatusChip kind="ok" label={t("flowAlign.desk.aligned")} />;
   };
 
   const listRow = (r: VerseRowStatus) => {
@@ -986,16 +1002,16 @@ export default function TranslateAlignScreen({
                 textAlign: "start",
               }}
             >
-              {r.snippet || "(empty)"}
+              {r.snippet || t("flowAlign.desk.empty")}
             </Typography>
           ) : (
             <Typography variant="body2" color="text.secondary" sx={{ fontStyle: "italic" }}>
-              No {laneLabel} text yet
+              {t("flowAlign.desk.noLaneText", { lane: laneLabel })}
             </Typography>
           )}
           {r.row && (r.row.verse_end ?? r.row.verse) > r.row.verse && (
             <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
-              part of verses {formatVerseLabel(r.row)}
+              {t("flowAlign.desk.partOfVerses", { range: formatVerseLabel(r.row) })}
             </Typography>
           )}
         </Box>
@@ -1027,7 +1043,7 @@ export default function TranslateAlignScreen({
       }}
     >
       <IconButton
-        aria-label="Previous verse"
+        aria-label={t("flowScripture.prevVerse")}
         onClick={() => goVerse(prevVerse)}
         disabled={prevVerse == null}
         sx={{ width: 34, height: 34, flex: "none" }}
@@ -1041,7 +1057,7 @@ export default function TranslateAlignScreen({
         {book} {chapter}:{targetVerse ? formatVerseLabel(targetVerse) : verse}
       </Typography>
       <IconButton
-        aria-label="Next verse"
+        aria-label={t("flowScripture.nextVerse")}
         onClick={() => goVerse(nextVerse)}
         disabled={nextVerse == null}
         sx={{ width: 34, height: 34, flex: "none" }}
@@ -1057,13 +1073,15 @@ export default function TranslateAlignScreen({
         direction="row"
         spacing={0.5}
         role="group"
-        aria-label="Lane"
+        aria-label={t("flowAlign.desk.laneGroupAria")}
         sx={{ bgcolor: skip.soft, borderRadius: "10px", p: 0.5 }}
       >
         {([LANE_LEFT, LANE_RIGHT] as Lane[]).map((l) =>
           segButton(lane === l, versionLabel(projectConfig, l), () => setLane(l), {
             disabled: lane !== l && dirty,
-            title: lane !== l && dirty ? "Save or reset your unsaved alignment first." : undefined,
+            title:
+              lane !== l && dirty ? t("flowAlign.desk.laneSwitchBlocked") : undefined,
+            keyId: l,
           }),
         )}
       </Stack>
@@ -1072,15 +1090,21 @@ export default function TranslateAlignScreen({
         direction="row"
         spacing={0.5}
         role="group"
-        aria-label="Alignment view"
+        aria-label={t("flowAlign.desk.viewGroupAria")}
         sx={{ bgcolor: skip.soft, borderRadius: "10px", p: 0.5 }}
       >
-        {segButton(mode === "single", "Single", () => setRouteMode("single"))}
-        {segButton(mode === "dual", "Dual", () => setRouteMode("dual"), {
+        {segButton(mode === "single", t("flowAlign.desk.single"), () => setRouteMode("single"), {
+          keyId: "single",
+        })}
+        {segButton(mode === "dual", t("flowAlign.desk.dual"), () => setRouteMode("dual"), {
           disabled: !dualProps,
           title: dualProps
-            ? `${versionLabel(projectConfig, LANE_LEFT)} and ${versionLabel(projectConfig, LANE_RIGHT)} side by side`
-            : "No ULT or UST content for this verse to compare.",
+            ? t("flowAlign.desk.dualTitle", {
+                left: versionLabel(projectConfig, LANE_LEFT),
+                right: versionLabel(projectConfig, LANE_RIGHT),
+              })
+            : t("flowAlign.screen.noDualContent"),
+          keyId: "dual",
         })}
       </Stack>
     </Box>
@@ -1103,26 +1127,20 @@ export default function TranslateAlignScreen({
       {lock && <LockBanner pipelineType={lock.pipelineType} startedAt={lock.startedAt} />}
 
       {mode === "dual" && !dualProps && (
-        <Alert severity="info">
-          Nothing to compare for this verse — neither lane has content here, so the single
-          aligner is shown instead.
-        </Alert>
+        <Alert severity="info">{t("flowAlign.desk.nothingToCompare")}</Alert>
       )}
 
       {!canEdit && (
-        <Alert severity="info">
-          You have view-only access to this project, so alignment is read-only here — pairings
-          can be inspected but not changed or saved.
-        </Alert>
+        <Alert severity="info">{t("flowAlign.screen.viewOnly")}</Alert>
       )}
 
       {noTarget || noSource ? (
         <Alert severity="info">
           {noTarget
             ? targetLanePending
-              ? `${laneLabel} is awaiting a source replacement — a lane in that state is omitted from the chapter payload entirely, so there is nothing to align until the replacement lands.`
-              : `No ${laneLabel} text exists for ${book} ${chapter}:${verse} in this workspace. That is normal in a translation-mode workspace whose target lanes have not been drafted yet — there is nothing to align until it is drafted.`
-            : `There is no ${sourceLane} source text for ${book} ${chapter}:${verse}, so alignment can't be anchored to original-language words.`}
+              ? t("flowAlign.screen.lanePending", { lane: laneLabel })
+              : t("flowAlign.screen.noTargetText", { lane: laneLabel, book, chapter, verse })
+            : t("flowAlign.screen.noSourceText", { source: sourceLane, book, chapter, verse })}
         </Alert>
       ) : (
         <>
@@ -1131,7 +1149,7 @@ export default function TranslateAlignScreen({
           {isTabletUp ? (
             <Box
               role="group"
-              aria-label="Alignment interaction mode"
+              aria-label={t("flowAlign.screen.modeGroupAria")}
               sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}
             >
               <Stack
@@ -1139,27 +1157,38 @@ export default function TranslateAlignScreen({
                 spacing={0.5}
                 sx={{ bgcolor: skip.soft, borderRadius: "10px", p: 0.5, overflow: "hidden" }}
               >
-                {segButton(interaction === "drag", "Drag canvas", () => setInteractionChoice("drag"), {
-                  disabled: interaction !== "drag" && dirty,
-                  title: "Drag canvas — mouse/touch drag",
-                  ariaLabel: "Drag canvas — mouse/touch drag",
-                })}
-                {segButton(interaction === "tap", "Tap mode", () => setInteractionChoice("tap"), {
-                  disabled: interaction !== "tap" && dirty,
-                  title: "Tap mode — keyboard accessible",
-                  ariaLabel: "Tap mode — keyboard accessible",
-                })}
+                {segButton(
+                  interaction === "drag",
+                  t("flowAlign.screen.dragCanvas"),
+                  () => setInteractionChoice("drag"),
+                  {
+                    disabled: interaction !== "drag" && dirty,
+                    title: t("flowAlign.desk.dragCanvasTitle"),
+                    ariaLabel: t("flowAlign.desk.dragCanvasTitle"),
+                    keyId: "drag",
+                  },
+                )}
+                {segButton(
+                  interaction === "tap",
+                  t("flowAlign.desk.tapMode"),
+                  () => setInteractionChoice("tap"),
+                  {
+                    disabled: interaction !== "tap" && dirty,
+                    title: t("flowAlign.desk.tapModeTitle"),
+                    ariaLabel: t("flowAlign.desk.tapModeTitle"),
+                    keyId: "tap",
+                  },
+                )}
               </Stack>
               {dirty && (
                 <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                  Save or reset your unsaved alignment before switching modes.
+                  {t("flowAlign.screen.switchBlocked")}
                 </Typography>
               )}
             </Box>
           ) : (
             <Typography variant="caption" sx={{ display: "block", color: "text.secondary" }}>
-              The drag canvas needs a larger screen. Tap-to-pair below does everything it does —
-              tap a word, then tap where it belongs.
+              {t("flowAlign.screen.dragNeedsLarger")}
             </Typography>
           )}
 
@@ -1258,11 +1287,13 @@ export default function TranslateAlignScreen({
                 }}
               >
                 <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                  {tapDirty ? "1 unsaved alignment change set" : "No unsaved changes"}
+                  {tapDirty
+                    ? t("flowAlign.screen.unsavedOne")
+                    : t("flowAlign.screen.noUnsaved")}
                 </Typography>
                 <Box sx={{ flex: 1 }} />
                 <Button onClick={handleTapReset} disabled={!tapDirty} sx={{ minHeight: 44 }}>
-                  Reset
+                  {t("aligner.reset")}
                 </Button>
                 <Button
                   variant="contained"
@@ -1270,12 +1301,14 @@ export default function TranslateAlignScreen({
                   disabled={!tapDirty || !canEdit}
                   sx={{ minHeight: 44, fontWeight: 700 }}
                 >
-                  Save alignment
+                  {t("flowAlign.screen.saveAlignment")}
                 </Button>
               </Box>
             </Box>
           ) : (
-            <Alert severity="info">This verse has no parsable {laneLabel} content to align.</Alert>
+            <Alert severity="info">
+              {t("flowAlign.screen.noParsable", { lane: laneLabel })}
+            </Alert>
           )}
         </>
       )}
@@ -1371,7 +1404,7 @@ export default function TranslateAlignScreen({
               onClick={() => goVerse(prevVerse)}
               sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
             >
-              Previous
+              {t("flowScripture.previous")}
             </Button>
             <Button
               endIcon={<ChevronRightIcon sx={chevronFlip} />}
@@ -1379,7 +1412,7 @@ export default function TranslateAlignScreen({
               onClick={() => goVerse(nextVerse)}
               sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
             >
-              Next
+              {t("flowScripture.next")}
             </Button>
           </Stack>
         </Box>
@@ -1410,22 +1443,19 @@ export default function TranslateAlignScreen({
 
       {/* save-or-discard gate for the dual aligner (AlignScreen.tsx:912-935) */}
       <Dialog open={pendingDualAction !== null} onClose={() => setPendingDualAction(null)}>
-        <DialogTitle>Unsaved changes</DialogTitle>
+        <DialogTitle>{t("shell.unsavedChanges")}</DialogTitle>
         <DialogContent>
-          <DialogContentText>
-            The side-by-side aligner has unsaved work — alignment changes, verse text, or both.
-            Save it before leaving, or discard it.
-          </DialogContentText>
+          <DialogContentText>{t("flowAlign.screen.dualUnsavedBody")}</DialogContentText>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setPendingDualAction(null)} sx={{ minHeight: 44 }}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button color="error" onClick={() => resolveDualAction("discard")} sx={{ minHeight: 44 }}>
-            Discard
+            {t("shell.discard")}
           </Button>
           <Button variant="contained" onClick={() => resolveDualAction("save")} sx={{ minHeight: 44 }}>
-            Save
+            {t("common.save")}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1433,11 +1463,13 @@ export default function TranslateAlignScreen({
       {/* unalign confirm — the same gate Shell puts in front of the aligner
           (AlignScreen.tsx:937-965) */}
       <Dialog open={pendingLoss !== null} onClose={() => setPendingLoss(null)}>
-        <DialogTitle>Words will be left unaligned</DialogTitle>
+        <DialogTitle>{t("flowAlign.screen.lossTitle")}</DialogTitle>
         <DialogContent>
           <DialogContentText component="div">
-            Saving {pendingLoss?.ref} leaves {pendingLoss?.lostWords.length} previously aligned
-            word{pendingLoss?.lostWords.length === 1 ? "" : "s"} with no original-language link:
+            {t("flowAlign.screen.lossBody", {
+              ref: pendingLoss?.ref ?? "",
+              count: pendingLoss?.lostWords.length ?? 0,
+            })}
             <Box component="p" sx={{ fontWeight: 700, marginBlockStart: 1 }}>
               {pendingLoss?.lostWords.slice(0, 12).join(", ")}
               {(pendingLoss?.lostWords.length ?? 0) > 12 ? " …" : ""}
@@ -1446,7 +1478,7 @@ export default function TranslateAlignScreen({
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setPendingLoss(null)} sx={{ minHeight: 44 }}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             variant="contained"
@@ -1456,7 +1488,7 @@ export default function TranslateAlignScreen({
             }}
             sx={{ minHeight: 44 }}
           >
-            Save anyway
+            {t("flowScripture.saveAnyway")}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1465,7 +1497,7 @@ export default function TranslateAlignScreen({
         open={notice !== null}
         autoHideDuration={6000}
         onClose={() => setNotice(null)}
-        message={notice ?? ""}
+        message={notice ? t(notice) : ""}
       />
     </Box>
   );
