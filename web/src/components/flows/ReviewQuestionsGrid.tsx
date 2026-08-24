@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // Dense English-authoring grid for translationQuestions, after #questionsGrid
 // in docs/flows/ui/t2-review.html (F.3 QuestionsTable). Authoring mode only —
 // a translator reviewing drafts works one card at a time; a question author
@@ -10,6 +7,7 @@
 // with real deletes wired, a shared page-level "current row" id would let a
 // click on row 3 act on whichever row happened to be selected.
 
+import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import TextField from "@mui/material/TextField";
@@ -47,6 +45,7 @@ export function ReviewQuestionsGrid({
   onDeleteRow,
   locked,
 }: ReviewQuestionsGridProps) {
+  const { t } = useTranslation();
   const valueOf = (row: TqRow, field: "question" | "response") =>
     edits[row.id]?.[field] ?? row[field] ?? "";
 
@@ -68,20 +67,20 @@ export function ReviewQuestionsGrid({
           color="text.secondary"
           sx={{ fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}
         >
-          Questions — dense grid (English authoring)
+          {t("flowReview.grid.heading")}
         </Typography>
       </Box>
       <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
         <Box component="thead">
           <Box component="tr" sx={{ textAlign: "start", color: "text.secondary" }}>
             <Box component="th" sx={{ ...cellSx, textAlign: "start", width: 110 }}>
-              Ref
+              {t("questions.ref")}
             </Box>
             <Box component="th" sx={{ ...cellSx, textAlign: "start" }}>
-              Question
+              {t("questions.question")}
             </Box>
             <Box component="th" sx={{ ...cellSx, textAlign: "start" }}>
-              Response
+              {t("questions.response")}
             </Box>
             <Box component="th" sx={{ ...cellSx, width: 96 }} />
           </Box>
@@ -107,7 +106,9 @@ export function ReviewQuestionsGrid({
                     variant="standard"
                     value={valueOf(row, "question")}
                     onChange={(e) => onEditCell(row.id, "question", e.target.value)}
-                    inputProps={{ "aria-label": `Question for ${refFor(row)}` }}
+                    inputProps={{
+                      "aria-label": t("flowReview.grid.questionForAria", { ref: refFor(row) }),
+                    }}
                   />
                 </Box>
                 <Box component="td" sx={cellSx}>
@@ -117,21 +118,21 @@ export function ReviewQuestionsGrid({
                     variant="standard"
                     value={valueOf(row, "response")}
                     onChange={(e) => onEditCell(row.id, "response", e.target.value)}
-                    inputProps={{ "aria-label": `Response for ${refFor(row)}` }}
+                    inputProps={{
+                      "aria-label": t("flowReview.grid.responseForAria", { ref: refFor(row) }),
+                    }}
                   />
                 </Box>
                 <Box component="td" sx={{ ...cellSx, whiteSpace: "nowrap" }}>
                   <Tooltip
                     title={
-                      locked
-                        ? "Chapter is locked by an AI run — question edits are rejected"
-                        : "Save"
+                      locked ? t("flowReview.lock.gridSave") : t("common.save")
                     }
                   >
                     <span>
                       <IconButton
                         size="small"
-                        aria-label={`Save ${refFor(row)}`}
+                        aria-label={t("flowReview.grid.saveRowAria", { ref: refFor(row) })}
                         disabled={locked || !dirty}
                         onClick={() =>
                           // No local reset here: the owner applies the patch to
@@ -149,15 +150,13 @@ export function ReviewQuestionsGrid({
                   </Tooltip>
                   <Tooltip
                     title={
-                      locked
-                        ? "Chapter is locked by an AI run — deletes are rejected for every kind"
-                        : "Delete"
+                      locked ? t("flowReview.lock.delete") : t("common.delete")
                     }
                   >
                     <span>
                       <IconButton
                         size="small"
-                        aria-label={`Delete ${refFor(row)}`}
+                        aria-label={t("flowReview.grid.deleteRowAria", { ref: refFor(row) })}
                         disabled={locked}
                         onClick={() => onDeleteRow(row)}
                       >
@@ -173,7 +172,7 @@ export function ReviewQuestionsGrid({
       </Box>
       {rows.length === 0 && (
         <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: "start" }}>
-          No questions for this chapter.
+          {t("flowReview.queue.noQuestions")}
         </Typography>
       )}
     </Box>

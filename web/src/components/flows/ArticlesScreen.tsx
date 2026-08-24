@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // t5-articles: tW / tA article translation, ported from
 // docs/flows/ui/t5-articles.html. Reuses the same data + save machinery as
 // components/ArticleWorkspace.tsx (useArticles, api.getArticle/patchArticle/
@@ -20,6 +17,7 @@
 // stays disabled-with-explanation here rather than faked.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Box,
@@ -59,6 +57,7 @@ import { api, ApiError, type ArticleUnit, type ArticleUnitMeta } from "../../syn
 import { drafts as draftStore, articleKey, type DraftRecord } from "../../sync/drafts";
 import { pipelineStore, getSessionKey } from "../../sync/pipelineStore";
 import { useArticleRailCollapsed } from "../../lib/editorPrefs";
+import i18n from "../../i18n";
 import { MarkdownView } from "../MarkdownView";
 
 type Resource = "tw" | "ta";
@@ -89,6 +88,7 @@ function orderParts(list: ArticleUnit[]): ArticleUnit[] {
 export interface ArticlesScreenProps extends FlowScreenContext {}
 
 export default function ArticlesScreen({ role }: ArticlesScreenProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up("md")); // >=900: rail + editor side by side
 
@@ -181,12 +181,14 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
       setAddId("");
       setArticleId(res.article_id);
       setMobileView("editor");
-      setSnack(`Added ${res.article_id}`);
+      // i18n.t, never the hook's `t`: putting `t` in this callback's deps would
+      // give it a new identity on every language change.
+      setSnack(i18n.t("flowReview.articles.added", { id: res.article_id }));
     } catch (e) {
       const code = e instanceof ApiError ? (e.body as { error?: string } | undefined)?.error : undefined;
       setSnack(
         code === "source_not_found"
-          ? `No source found for id "${id}"`
+          ? i18n.t("flowReview.articles.noSourceForId", { id })
           : e instanceof Error
             ? e.message
             : String(e),
@@ -213,10 +215,10 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
       refetch();
       setSnack(
         aborted
-          ? "Populate stopped — source changed mid-run. Try again."
+          ? i18n.t("flowReview.articles.populateAborted")
           : warnings > 0
-            ? `Populate: ${warnings} warning(s)`
-            : "Populate: done",
+            ? i18n.t("flowReview.articles.populateWarnings", { count: warnings })
+            : i18n.t("flowReview.articles.populateDone"),
       );
     } catch (e) {
       setSnack(e instanceof Error ? e.message : String(e));
@@ -230,9 +232,9 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
       <Box>
         <FlowNav current="articles" role={role} />
         <Stack alignItems="center" justifyContent="center" sx={{ height: "60vh", px: 4 }} spacing={1}>
-          <Typography variant="h6">Articles — tW / tA</Typography>
+          <Typography variant="h6">{t("flowReview.articles.headingTwTa")}</Typography>
           <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 420 }}>
-            Article translation only applies to gateway-language projects.
+            {t("flowReview.articles.glOnly")}
           </Typography>
         </Stack>
       </Box>
@@ -268,14 +270,13 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
           </ToggleButton>
         </ToggleButtonGroup>
         <Typography variant="caption" color="text.secondary">
-          Switch between translationWords and translationAcademy — each opens in its own focused view.
+          {t("flowReview.articles.switchHint")}
         </Typography>
       </Stack>
 
       {!canEdit && (
         <Alert severity="info" sx={{ mx: 2, mb: 1 }}>
-          You have view-only access to this project, so the article editors are read-only — saving,
-          AI translation and approval are disabled.
+          {t("flowReview.articles.viewOnly")}
         </Alert>
       )}
 
@@ -301,7 +302,7 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
               pt: 1,
             }}
           >
-            <Tooltip title="Show article list">
+            <Tooltip title={t("articles.showList")}>
               <IconButton size="small" onClick={() => setRailCollapsedPref(false)}>
                 <MenuIcon fontSize="small" />
               </IconButton>
@@ -322,7 +323,7 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
             <Stack spacing={1} sx={{ p: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
               {isDesktop && (
                 <Stack direction="row" justifyContent="flex-end">
-                  <Tooltip title="Hide article list">
+                  <Tooltip title={t("articles.hideList")}>
                     <IconButton size="small" onClick={() => setRailCollapsedPref(true)}>
                       <MenuOpenIcon fontSize="small" />
                     </IconButton>
@@ -334,11 +335,13 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
                 fullWidth
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search articles…"
-                inputProps={{ "aria-label": "Search articles", style: { fontSize: 13.5 } }}
+                placeholder={t("flowReview.articles.searchPlaceholder")}
+                inputProps={{ "aria-label": t("articles.searchPlaceholder"), style: { fontSize: 13.5 } }}
               />
               <Typography variant="caption" color="text.secondary">
-                {total ? `${validatedCount} of ${total} approved` : `No ${resource} articles imported in this environment`}
+                {total
+                  ? t("flowReview.articles.approvedCount", { n: validatedCount, total })
+                  : t("flowReview.articles.noneImported", { resource })}
               </Typography>
               <Button
                 size="small"
@@ -354,7 +357,7 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
                 }}
                 startIcon={busy ? <CircularProgress size={14} /> : undefined}
               >
-                Populate from books
+                {t("flowReview.articles.populateFromBooks")}
               </Button>
               <Stack direction="row" spacing={0.75}>
                 <TextField
@@ -362,8 +365,11 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
                   fullWidth
                   value={addId}
                   onChange={(e) => setAddId(e.target.value)}
-                  placeholder="Add by id…"
-                  inputProps={{ "aria-label": "Add article by id", style: { fontSize: 12.5 } }}
+                  placeholder={t("flowReview.articles.addByIdPlaceholder")}
+                  inputProps={{
+                    "aria-label": t("flowReview.articles.addByIdAria"),
+                    style: { fontSize: 12.5 },
+                  }}
                 />
                 <Button
                   size="small"
@@ -371,19 +377,21 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
                   disabled={busy || !addId.trim() || !canEdit}
                   onClick={handleAdd}
                 >
-                  Add
+                  {t("flowReview.articles.add")}
                 </Button>
               </Stack>
             </Stack>
 
-            <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }} role="list" aria-label="Articles">
+            <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }} role="list" aria-label={t("articles.title")}>
               {loading && articles.length === 0 ? (
                 <Stack alignItems="center" sx={{ p: 3 }}>
                   <CircularProgress size={20} />
                 </Stack>
               ) : filtered.length === 0 ? (
                 <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-                  {total ? "No articles match your search." : `No ${resource} articles imported in this environment.`}
+                  {total
+                    ? t("flowReview.articles.noMatch")
+                    : t("flowReview.articles.noneImportedPeriod", { resource })}
                 </Typography>
               ) : (
                 filtered.map((a) => {
@@ -408,7 +416,9 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
                         cursor: "pointer",
                         px: 1.5,
                         py: 0.75,
-                        bgcolor: selected ? (t) => alpha(t.palette.primary.main, 0.08) : "transparent",
+                        bgcolor: selected
+                          ? (th) => alpha(th.palette.primary.main, 0.08)
+                          : "transparent",
                         "&:hover": { bgcolor: "action.hover" },
                       }}
                     >
@@ -418,9 +428,9 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
                         </Typography>
                       </Box>
                       {unsaved && (
-                        <Tooltip title="Unsaved draft">
+                        <Tooltip title={t("flowReview.articles.unsavedDraft")}>
                           <Box
-                            aria-label="Unsaved draft"
+                            aria-label={t("flowReview.articles.unsavedDraft")}
                             sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: "#E59D33", flexShrink: 0 }}
                           />
                         </Tooltip>
@@ -440,19 +450,19 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
             <Box sx={{ p: { xs: 1.5, md: 2.5 }, maxWidth: 1180, mx: "auto" }}>
               <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5, flexWrap: "wrap" }}>
                 {!isDesktop && (
-                  <IconButton size="small" onClick={() => setMobileView("list")} aria-label="Back to articles">
+                  <IconButton size="small" onClick={() => setMobileView("list")} aria-label={t("flowReview.articles.backToArticles")}>
                     <ArrowBackIcon fontSize="small" />
                   </IconButton>
                 )}
                 <Box sx={{ flexGrow: 1 }} />
-                <Tooltip title="No history endpoint exists for tW/tA articles today (unlike note templates) — this is a real gap, not an omission.">
+                <Tooltip title={t("flowReview.articles.historyGapTooltip")}>
                   <span>
                     <Button
                       size="small"
                       startIcon={<HistoryIcon fontSize="small" />}
                       onClick={() => setHistoryOpen(true)}
                     >
-                      History
+                      {t("flowReview.common.history")}
                     </Button>
                   </span>
                 </Tooltip>
@@ -461,7 +471,7 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
               {!articleId ? (
                 <Stack alignItems="center" justifyContent="center" sx={{ height: "50vh" }}>
                   <Typography variant="body2" color="text.secondary">
-                    Select an article to translate.
+                    {t("articles.selectArticle")}
                   </Typography>
                 </Stack>
               ) : (
@@ -482,15 +492,14 @@ export default function ArticlesScreen({ role }: ArticlesScreenProps) {
       </Box>
 
       <Dialog open={historyOpen} onClose={() => setHistoryOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Article history</DialogTitle>
+        <DialogTitle>{t("flowReview.articles.historyDialogTitle")}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary">
-            No history endpoint exists for tW/tA articles today (unlike note templates) — this is a real
-            gap, not a mockup omission.
+            {t("flowReview.articles.historyGapBody")}
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setHistoryOpen(false)}>Close</Button>
+          <Button onClick={() => setHistoryOpen(false)}>{t("common.close")}</Button>
         </DialogActions>
       </Dialog>
 
@@ -530,6 +539,7 @@ function ArticleEditorPanel({
   canEdit,
   onServerChange,
 }: EditorProps) {
+  const { t } = useTranslation();
   const pathsKey = useMemo(() => [...paths].sort().join("|"), [paths]);
 
   const [parts, setParts] = useState<ArticleUnit[] | null>(null);
@@ -734,13 +744,14 @@ function ArticleEditorPanel({
     }
   }, [resource, articleId]);
 
+  // Pure display — no fetch, no mutation — so `t` is safe in the deps here.
   const partLabel = useCallback(
     (part: ArticleUnit): string => {
-      if (part.part === "title") return "title";
-      if (part.part === "sub-title") return "subtitle";
-      return languageTitle || "body";
+      if (part.part === "title") return t("flowReview.articles.partTitle");
+      if (part.part === "sub-title") return t("flowReview.articles.partSubtitle");
+      return languageTitle || t("flowReview.articles.partBody");
     },
-    [languageTitle],
+    [languageTitle, t],
   );
 
   const unsavedCount = (parts ?? []).filter(isDirtyPart).length;
@@ -756,7 +767,7 @@ function ArticleEditorPanel({
     return (
       <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 3, textAlign: "center" }}>
         <Typography variant="body2" color="text.secondary">
-          No parts found for this article.
+          {t("flowReview.articles.noParts")}
         </Typography>
       </Box>
     );
@@ -775,7 +786,10 @@ function ArticleEditorPanel({
         </Typography>
         <FlowStatusChip kind={stateChipKind(aggregate)} />
         {unsavedCount > 0 && (
-          <FlowStatusChip kind="warn" label={`${unsavedCount} unsaved`} />
+          <FlowStatusChip
+            kind="warn"
+            label={t("flowReview.common.unsavedCount", { count: unsavedCount })}
+          />
         )}
       </Stack>
 
@@ -818,7 +832,7 @@ function ArticleEditorPanel({
                     onClick={() => setPreviews((prev) => ({ ...prev, [part.path]: !preview }))}
                     sx={{ py: 0, color: "text.secondary" }}
                   >
-                    {preview ? "Edit" : "Preview"}
+                    {preview ? t("articles.edit") : t("articles.preview")}
                   </Button>
                 </Stack>
 
@@ -839,7 +853,7 @@ function ArticleEditorPanel({
                       variant="caption"
                       sx={{ display: "block", fontWeight: 700, textTransform: "uppercase", fontSize: 10.5, mb: 0.5 }}
                     >
-                      Source (English, read-only)
+                      {t("flowReview.articles.sourceReadOnly")}
                     </Typography>
                     <MarkdownView markdown={part.source_md} dir="ltr" />
                   </Box>
@@ -859,7 +873,7 @@ function ArticleEditorPanel({
                     minRows={part.part === "body" ? 6 : 1}
                     spellCheck
                     variant="outlined"
-                    aria-label={`${part.part} draft (target language)`}
+                    aria-label={t("flowReview.articles.draftAria", { part: part.part })}
                     inputProps={{
                       readOnly: !canEdit,
                       dir: direction,
@@ -892,7 +906,11 @@ function ArticleEditorPanel({
             }
             onClick={handleTranslate}
           >
-            {translating ? "Translating…" : isUntranslated ? "Translate" : "Re-run AI"}
+            {translating
+              ? t("flowReview.articles.translating")
+              : isUntranslated
+                ? t("common.translate")
+                : t("translation.reRun")}
           </Button>
         )}
         <Box sx={{ flexGrow: 1 }} />
@@ -903,7 +921,7 @@ function ArticleEditorPanel({
           disabled={!anyDirty || saving || !canEdit}
           onClick={handleSave}
         >
-          Save
+          {t("common.save")}
         </Button>
         {isDraftState && (
           <Button
@@ -914,7 +932,7 @@ function ArticleEditorPanel({
             disabled={anyDirty || !canEdit}
             onClick={() => handleValidate(true)}
           >
-            Approve
+            {t("common.approve")}
           </Button>
         )}
         {isValidated && (
@@ -925,7 +943,7 @@ function ArticleEditorPanel({
             disabled={anyDirty || !canEdit}
             onClick={() => handleValidate(false)}
           >
-            Unapprove
+            {t("flowReview.common.unapprove")}
           </Button>
         )}
       </Stack>
@@ -936,7 +954,7 @@ function ArticleEditorPanel({
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
         <Alert severity="warning" onClose={() => setStaleDraft(false)}>
-          Your unsaved draft here predates a newer server version — saving now would overwrite it.
+          {t("flowReview.articles.staleDraft")}
         </Alert>
       </Snackbar>
       <Snackbar
@@ -946,8 +964,7 @@ function ArticleEditorPanel({
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >
         <Alert severity="warning" onClose={() => setConflict(false)}>
-          Someone else saved a part of this article first. Everything you typed is still here — we only
-          picked up their version number, so pressing Save again will go through.
+          {t("flowReview.articles.conflictSnack")}
         </Alert>
       </Snackbar>
       <Snackbar

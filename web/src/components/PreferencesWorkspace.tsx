@@ -938,7 +938,9 @@ function LaneCard({ lane, label, cfg }: { lane: "lit" | "sim"; label: string; cf
                 </Box>
                 <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75 }}>
                   {t("preferences.scriptureLanes.confirmBooksSummary", {
-                    replace: affectedBooks.filter((b) => selectedBooks.has(b)).length,
+                    // NOT `replace`: that is i18next's reserved substitution-data
+                    // option, and a truthy value silently blanks every placeholder.
+                    replacing: affectedBooks.filter((b) => selectedBooks.has(b)).length,
                     keep: affectedBooks.filter((b) => !selectedBooks.has(b)).length,
                   })}
                 </Typography>

@@ -5,6 +5,7 @@
 // extractPlainText, so a token's [start, end) slice on a verse's plain_text
 // matches the token's raw surface text.
 
+import i18n from "../i18n";
 import { normalizeStrong } from "../hooks/useLexicon";
 import { nfc } from "./hebrew";
 
@@ -114,20 +115,24 @@ export function classifySourceQuery(
   return { kind: "english" };
 }
 
+// DISPLAY ONLY — rendered as the find overlay's helperText (FindReplaceOverlay).
+// Nothing branches on the returned text; `q.kind` is the stable logic value.
+// Translated per call (never cached at module load) so a UI-language switch
+// repaints it. The Strong's number itself is interpolated, never translated.
 export function describeSourceMode(q: SourceQueryKind): string {
   switch (q.kind) {
     case "english":
-      return "text search";
+      return i18n.t("messages.sourceMode.text");
     case "strong":
-      return q.keys.length > 1 ? `Strong's ${q.keys[0]}` : `Strong's ${q.keys[0]}`;
+      return i18n.t("messages.sourceMode.strong", { strong: q.keys[0] });
     case "hebrew-lemma":
-      return "Hebrew (with vowels)";
+      return i18n.t("messages.sourceMode.hebrewVowels");
     case "hebrew-consonants":
-      return "Hebrew consonants";
+      return i18n.t("messages.sourceMode.hebrewConsonants");
     case "greek-lemma":
-      return "Greek (with accents)";
+      return i18n.t("messages.sourceMode.greekAccents");
     case "greek-accent-insensitive":
-      return "Greek (accent-insensitive)";
+      return i18n.t("messages.sourceMode.greekAccentInsensitive");
   }
 }
 

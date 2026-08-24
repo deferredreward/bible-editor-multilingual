@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // PackageHubScreen — the book-package navigation hub at #/package/{book}.
 // This screen REPLACES the FlowNav pill bar: it is where a translator lands
 // after picking a book, and the "Back to {book} package" chevron on every
@@ -76,6 +73,7 @@
 // for the "{source} to {target}" sub-line (TranslateNotesScreen:547-549).
 
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Box,
@@ -106,6 +104,11 @@ const COLUMN_PX = 480;
 
 // The four chapter-scoped surfaces expand in place; words navigates directly.
 type ExpandableSurface = "scripture" | "notes" | "questions" | "alignment";
+
+// What a chapter row counts. An IDENTITY, not a display string: it selects the
+// i18n key ("No verses" / "{{count}} verses") at render time, so the label can
+// pluralize and translate without the caller passing English prose.
+type HubUnit = "verses" | "notes" | "questions";
 
 interface HubChapterSummary {
   chapter: number;
@@ -176,7 +179,7 @@ function SurfaceRow({ title, subText, onClick, cardSx, expanded, expandable, dis
 
 interface ChapterListProps {
   countOf: (c: HubChapterSummary) => number;
-  unit: string;
+  unit: HubUnit;
   href: (chapter: number) => string;
   wide: boolean;
   chapters: HubChapterSummary[];
@@ -189,6 +192,7 @@ interface ChapterListProps {
 // `chapters` (formerly the closed-over `realChapters`) are now explicit
 // props.
 function ChapterList({ countOf, unit, href, wide, chapters }: ChapterListProps) {
+  const { t } = useTranslation();
   return (
     <Stack
       spacing={0.75}
@@ -225,10 +229,12 @@ function ChapterList({ countOf, unit, href, wide, chapters }: ChapterListProps) 
             }}
           >
             <Typography sx={{ fontWeight: 600, fontSize: "0.9rem", flex: "none" }}>
-              Chapter {c.chapter}
+              {t("adminPages.progress.chapterN", { chapter: c.chapter })}
             </Typography>
             <Typography variant="caption" color="text.secondary" sx={{ flex: 1, minWidth: 0 }}>
-              {empty ? `No ${unit}` : `${n} ${unit}`}
+              {empty
+                ? t(`flowVerse.hub.chapterEmpty.${unit}`)
+                : t(`flowVerse.hub.chapterUnit.${unit}`, { count: n })}
             </Typography>
             {!empty && (
               <ChevronRightIcon fontSize="small" sx={{ color: "text.secondary", flex: "none" }} />
@@ -242,13 +248,14 @@ function ChapterList({ countOf, unit, href, wide, chapters }: ChapterListProps) 
 
 export default function PackageHubScreen({ book, role }: PackageHubScreenProps) {
   const theme = useTheme();
+  const { t } = useTranslation();
   const { skip } = theme.palette.flows;
   // md+ (>=900px): the surface cards flow into the grid-3 desk (file header).
   const wide = useMediaQuery(theme.breakpoints.up("md"));
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
-  const targetLabel = projectConfig?.languageName || "Target";
+  const targetLabel = projectConfig?.languageName || t("flowWords.target");
 
   const { summary, summaryStatus } = useBook(book, true);
 
@@ -275,8 +282,11 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
 
   const name = bookName(book);
   const sub = translationMode
-    ? `Book package · ${(projectConfig?.translationSource?.languageCode ?? "en").toUpperCase()} to ${targetLabel}`
-    : `Book package · ${targetLabel}`;
+    ? t("flowVerse.hub.subTranslation", {
+        source: (projectConfig?.translationSource?.languageCode ?? "en").toUpperCase(),
+        target: targetLabel,
+      })
+    : t("flowVerse.hub.subPlain", { target: targetLabel });
 
   const cardSx = {
     bgcolor: "background.paper",
@@ -335,7 +345,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
         <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
-              aria-label="Back to books"
+              aria-label={t("adminPages.progress.backToBooks")}
               onClick={() => {
                 location.hash = "#/books";
               }}
@@ -362,13 +372,13 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
                   whiteSpace: "nowrap",
                 }}
               >
-                {totals.chapters} {totals.chapters === 1 ? "chapter" : "chapters"}
+                {t("flowVerse.hub.chapterCount", { count: totals.chapters })}
               </Typography>
             )}
             {role === "admin" && (
               <IconButton
-                aria-label="Open the admin desk"
-                title="Admin"
+                aria-label={t("flowVerse.hub.openAdminDesk")}
+                title={t("flowBooks.menu.admin")}
                 onClick={() => {
                   location.hash = "#/admin/progress";
                 }}
@@ -405,7 +415,7 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
       >
         {summaryStatus === "error" ? (
           <Alert severity="error" sx={{ mt: 1, ...(wide ? { gridColumn: "1 / -1" } : {}) }}>
-            Could not load {name}.
+            {t("flowWords.loadError", { book: name })}
           </Alert>
         ) : summaryStatus !== "ready" ? (
           <Stack
@@ -419,15 +429,18 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
           <>
             <Box sx={sectionHeadSx}>
               <Typography component="h2" sx={sectionTitleSx}>
-                Chapter by chapter
+                {t("flowVerse.hub.sectionChapters")}
               </Typography>
             </Box>
 
             <Box sx={cellSx}>
               <SurfaceRow
                 cardSx={cardSx}
-                title="Scripture"
-                subText={`${totals.chapters} ${totals.chapters === 1 ? "chapter" : "chapters"} · ${totals.verses} verses`}
+                title={t("panelTitle.scripture")}
+                subText={`${t("flowVerse.hub.chapterCount", { count: totals.chapters })} · ${t(
+                  "flowVerse.hub.verseCount",
+                  { count: totals.verses },
+                )}`}
                 expandable
                 expanded={open === "scripture"}
                 onClick={() => toggle("scripture")}
@@ -446,8 +459,12 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
             <Box sx={cellSx}>
               <SurfaceRow
                 cardSx={cardSx}
-                title="Notes"
-                subText={totals.tn === 0 ? `No notes in ${name}` : `${totals.tn} notes`}
+                title={t("shell.notes")}
+                subText={
+                  totals.tn === 0
+                    ? t("flowVerse.hub.noNotesIn", { book: name })
+                    : t("flowVerse.hub.noteCount", { count: totals.tn })
+                }
                 expandable
                 expanded={open === "notes"}
                 disabled={totals.tn === 0}
@@ -467,8 +484,12 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
             <Box sx={cellSx}>
               <SurfaceRow
                 cardSx={cardSx}
-                title="Questions"
-                subText={totals.tq === 0 ? `No questions in ${name}` : `${totals.tq} questions`}
+                title={t("shell.questions")}
+                subText={
+                  totals.tq === 0
+                    ? t("flowVerse.hub.noQuestionsIn", { book: name })
+                    : t("flowVerse.hub.questionCount", { count: totals.tq })
+                }
                 expandable
                 expanded={open === "questions"}
                 disabled={totals.tq === 0}
@@ -491,8 +512,8 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
             <Box sx={cellSx}>
               <SurfaceRow
                 cardSx={cardSx}
-                title="Alignment"
-                subText="Connect translated words to the source text"
+                title={t("panelTitle.alignment")}
+                subText={t("flowVerse.hub.alignmentSub")}
                 expandable
                 expanded={open === "alignment"}
                 onClick={() => toggle("alignment")}
@@ -510,15 +531,15 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
 
             <Box sx={sectionHeadSx}>
               <Typography component="h2" sx={sectionTitleSx}>
-                Whole book
+                {t("flowVerse.hub.sectionWholeBook")}
               </Typography>
             </Box>
 
             <Box sx={cellSx}>
               <SurfaceRow
                 cardSx={cardSx}
-                title="Words & Articles"
-                subText="Key terms and academy articles"
+                title={t("flowWords.title")}
+                subText={t("flowVerse.hub.wordsSub")}
                 onClick={() => {
                   location.hash = `#/words/${book}`;
                 }}

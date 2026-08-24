@@ -50,6 +50,7 @@ import { CatalogPicker } from "./CatalogPicker";
 import { shortSupport } from "../lib/supportReference";
 import { TCM, buildSH } from "../lib/noteTemplates";
 import { getLockUnapprovedDrafts } from "../lib/editorPrefs";
+import { formatEpochSecondsDateTime } from "../lib/formatDate";
 import { drafts, rowKey, draftDirtyBorderSx } from "../sync/drafts";
 
 const NoteHistoryDialog = lazy(() =>
@@ -1248,13 +1249,13 @@ function NoteCardInner({
                   restored: row.restored_from_version,
                   unsaved: hasRowDiff ? t("noteCard.unsavedEditsSuffix") : "",
                   version: row.version,
-                  date: new Date(row.updated_at * 1000).toLocaleString(),
+                  date: formatEpochSecondsDateTime(row.updated_at),
                 })
               : t("noteCard.versionTooltip", {
                   version: row.version,
                   unsaved: hasRowDiff ? t("noteCard.unsavedEditsSuffix") : "",
                   saved: t("noteCard.timesSaved", { count: row.version - 1 }),
-                  date: new Date(row.updated_at * 1000).toLocaleString(),
+                  date: formatEpochSecondsDateTime(row.updated_at),
                 })
           }
         >

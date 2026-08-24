@@ -21,6 +21,7 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type AdminUser, type OrgMembersResponse } from "../sync/api";
+import { formatDate } from "../lib/formatDate";
 
 const ROLE_OPTIONS: Array<{ value: "admin" | "editor"; labelKey: string }> = [
   { value: "editor", labelKey: "preferences.users.roleEditor" },
@@ -348,7 +349,7 @@ export function UserManagementSection() {
                 ))}
               </TextField>
               <Typography variant="body2" color="text.secondary">
-                {u.addedAt != null ? new Date(u.addedAt * 1000).toLocaleDateString() : "—"}
+                {u.addedAt != null ? formatDate(u.addedAt * 1000) : "—"}
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 {u.source === "dcs_team" ? t("preferences.users.fromTeam") : (u.addedBy ?? "—")}

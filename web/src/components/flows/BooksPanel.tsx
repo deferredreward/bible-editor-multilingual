@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // Panel chrome shared by the a2-import port (BooksScreen + its sibling
 // Books*.tsx panels). Mirrors .panel / .panel-top / .panel-body / .panel-foot
 // in docs/flows/ui/_tokens.css: a card with a titled head, a padded body, and

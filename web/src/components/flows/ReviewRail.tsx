@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // Queue-at-a-glance rail, after .queue-panel / .approve-all-row /
 // .add-row-actions / .queue-list in docs/flows/ui/t2-review.html. Shown at
 // tablet and desktop; the phone band replaces it with card-to-card nav.
@@ -10,6 +7,7 @@
 // owns the writes and their honest failure reporting.
 
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import LinearProgress from "@mui/material/LinearProgress";
@@ -135,12 +133,13 @@ export function ReviewRail({
   addDisabledReason,
   addPending,
 }: ReviewRailProps) {
+  const { t } = useTranslation();
   const unapproved = activeKind === "tn" ? unapprovedNotes : unapprovedQuestions;
   const approveLabel =
     activeKind === "tn"
-      ? `Approve all notes (${unapprovedNotes})`
-      : `Approve all questions (${unapprovedQuestions})`;
-  const addLabel = activeKind === "tn" ? "+ Note" : "+ Question";
+      ? t("flowReview.rail.approveAllNotes", { n: unapprovedNotes })
+      : t("flowReview.rail.approveAllQuestions", { n: unapprovedQuestions });
+  const addLabel = activeKind === "tn" ? t("flowReview.rail.addNote") : t("flowReview.rail.addQuestion");
 
   const theme = useTheme();
   const { skip } = theme.palette.flows;
@@ -183,7 +182,6 @@ export function ReviewRail({
     [items, statusFilter, effectiveTypeFilter],
   );
 
-  const kindWord = activeKind === "tn" ? "notes" : "questions";
   const filtersActive = statusFilter !== "all" || effectiveTypeFilter !== "all";
 
   return (
@@ -214,7 +212,7 @@ export function ReviewRail({
             mb: 1,
           }}
         >
-          Approve all
+          {t("common.approveAll")}
         </Typography>
         <Button
           fullWidth
@@ -230,7 +228,10 @@ export function ReviewRail({
         {approveProgress && (
           <Box sx={{ mt: 1 }}>
             <Typography variant="caption" color="text.secondary">
-              Approving {approveProgress.done} of {approveProgress.total}…
+              {t("flowReview.rail.approvingProgress", {
+                done: approveProgress.done,
+                total: approveProgress.total,
+              })}
             </Typography>
             <LinearProgress
               variant="determinate"
@@ -259,7 +260,7 @@ export function ReviewRail({
             title={addDisabled ? addDisabledReason : undefined}
             sx={{ borderStyle: "dashed", minHeight: 44 }}
           >
-            {addPending ? "Adding…" : addLabel}
+            {addPending ? t("flowReview.rail.adding") : addLabel}
           </Button>
         </Box>
       </Box>
@@ -285,20 +286,26 @@ export function ReviewRail({
             display: "block",
           }}
         >
-          Filter
+          {t("flowReview.rail.filterHeading")}
         </Typography>
         <Select
           size="small"
           fullWidth
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as ReviewStatusFilter)}
-          aria-label={`Filter ${kindWord} by status`}
+          aria-label={
+            activeKind === "tn"
+              ? t("flowReview.rail.statusFilterAriaNotes")
+              : t("flowReview.rail.statusFilterAriaQuestions")
+          }
           sx={{ fontSize: "0.8125rem", bgcolor: "background.paper" }}
         >
-          <MenuItem value="all">All statuses</MenuItem>
-          <MenuItem value="pending">Pending</MenuItem>
-          <MenuItem value="approved">Approved</MenuItem>
-          {activeKind === "tn" && <MenuItem value="trashed">Trashed</MenuItem>}
+          <MenuItem value="all">{t("flowReview.rail.statusAll")}</MenuItem>
+          <MenuItem value="pending">{t("flowReview.rail.statusPending")}</MenuItem>
+          <MenuItem value="approved">{t("flowTranslate.status.approved")}</MenuItem>
+          {activeKind === "tn" && (
+            <MenuItem value="trashed">{t("flowTranslate.status.trashed")}</MenuItem>
+          )}
         </Select>
         {activeKind === "tn" && typeOptions.length > 0 && (
           <Select
@@ -306,10 +313,10 @@ export function ReviewRail({
             fullWidth
             value={effectiveTypeFilter}
             onChange={(e) => setTypeFilter(e.target.value as string)}
-            aria-label="Filter notes by type"
+            aria-label={t("flowReview.rail.typeFilterAria")}
             sx={{ fontSize: "0.8125rem", bgcolor: "background.paper" }}
           >
-            <MenuItem value="all">All types</MenuItem>
+            <MenuItem value="all">{t("flowReview.rail.typeAll")}</MenuItem>
             {typeOptions.map((o) => (
               <MenuItem key={o.slug} value={o.slug} title={o.slug}>
                 {o.label} ({o.count})
@@ -322,11 +329,19 @@ export function ReviewRail({
       <Box sx={{ overflowY: "auto" }}>
         {items.length === 0 ? (
           <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: "start" }}>
-            No {kindWord} for this chapter.
+            {activeKind === "tn"
+              ? t("flowReview.queue.noNotes")
+              : t("flowReview.queue.noQuestions")}
           </Typography>
         ) : visibleItems.length === 0 ? (
           <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: "start" }}>
-            No {kindWord} match {filtersActive ? "the current filters" : "this chapter"}.
+            {filtersActive
+              ? activeKind === "tn"
+                ? t("flowReview.rail.noNotesFiltered")
+                : t("flowReview.rail.noQuestionsFiltered")
+              : activeKind === "tn"
+                ? t("flowReview.queue.noNotes")
+                : t("flowReview.queue.noQuestions")}
           </Typography>
         ) : (
           visibleItems.map((item) => (
@@ -359,7 +374,9 @@ export function ReviewRail({
                 aria-hidden="true"
                 sx={{ width: 16, flex: "none", fontSize: "0.65rem", fontWeight: 700, color: "text.secondary" }}
               >
-                {activeKind === "tn" ? "N" : "Q"}
+                {activeKind === "tn"
+                  ? t("flowReview.rail.badgeNote")
+                  : t("flowReview.rail.badgeQuestion")}
               </Box>
               <Box sx={{ minWidth: 0, flex: 1 }}>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0 }}>

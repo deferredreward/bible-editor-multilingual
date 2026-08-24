@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // a1-setup: admin setup wizard. Port of docs/flows/ui/a1-setup.html — that
 // mockup's 5 steps (organization / sources / lanes / review & apply / done)
 // are NOT re-implemented here. web/src/components/SetupWizard.tsx already IS
@@ -26,6 +24,7 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";
+import { useTranslation } from "react-i18next";
 import { FlowNav } from "./FlowNav";
 import type { FlowScreenContext } from "./types";
 import { SetupWizard } from "../SetupWizard";
@@ -34,6 +33,7 @@ import { WorkspaceChoiceDialog } from "../WorkspaceChoiceDialog";
 export interface SetupScreenProps extends FlowScreenContext {}
 
 export default function SetupScreen({ role, me, onNavigate }: SetupScreenProps) {
+  const { t } = useTranslation();
   // Where the mockup showed a step-5 "Preview workspace picker", this opens the
   // real WorkspaceChoiceDialog (GET /api/workspaces + the real switch flow) —
   // there is no preview mode, so picking an org actually switches the active
@@ -62,14 +62,13 @@ export default function SetupScreen({ role, me, onNavigate }: SetupScreenProps) 
             mb: 0.5,
           }}
         >
-          Bundle A · Stand up an org
+          {t("moreTools.setup.eyebrow")}
         </Typography>
         <Typography variant="h5" sx={{ mb: 0.5 }}>
-          Setup wizard
+          {t("moreTools.setup.title")}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3, maxWidth: 640 }}>
-          Five linear steps: organization, sources to pull from, scripture lanes,
-          review &amp; apply, done. Admin role only.
+          {t("moreTools.setup.subtitle")}
         </Typography>
 
         {role !== "admin" ? (
@@ -77,20 +76,18 @@ export default function SetupScreen({ role, me, onNavigate }: SetupScreenProps) 
           // role, and nothing is fabricated in its place.
           <Paper variant="outlined" sx={{ p: 3 }}>
             <Typography variant="subtitle1" gutterBottom>
-              Admin only
+              {t("moreTools.common.adminOnly")}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              The setup wizard configures which Door43 sources this project
-              pulls from and where it writes — only an admin can change that.
-              Your role is <strong>{role}</strong>. Ask a project admin to make
-              changes here, or continue with your regular work.
+              {t("moreTools.setup.adminOnlyDesc")} {t("moreTools.common.yourRoleIs")}{" "}
+              <strong>{role}</strong>. {t("moreTools.setup.adminOnlyAsk")}
             </Typography>
             <Button
               variant="outlined"
               sx={{ mt: 2 }}
               onClick={() => onNavigate(me?.lastBook || "OBA", me?.lastChapter || 1, me?.lastVerse || 1)}
             >
-              Back to home
+              {t("moreTools.common.backToHome")}
             </Button>
           </Paper>
         ) : (
@@ -101,11 +98,10 @@ export default function SetupScreen({ role, me, onNavigate }: SetupScreenProps) 
 
             <Box sx={{ mt: 2 }}>
               <Button variant="text" size="small" onClick={() => setWsPickerOpen(true)}>
-                Switch workspace…
+                {t("moreTools.setup.switchWorkspace")}
               </Button>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
-                This is the real picker, not a preview: choosing an organization switches the active
-                workspace and reloads the app.
+                {t("moreTools.setup.realPickerNote")}
               </Typography>
             </Box>
             {wsPickerOpen && <WorkspaceChoiceDialog onClose={() => setWsPickerOpen(false)} />}

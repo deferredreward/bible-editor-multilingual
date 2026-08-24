@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // One scripture lane card from docs/flows/ui/t3-scripture.html (.lane-block):
 // the read-only original-language line, the paragraph-marker toolbar, the
 // editable target box, and the Undo / Save footer.
@@ -14,6 +11,7 @@
 // parent a string and nothing else.
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Stack from "@mui/material/Stack";
@@ -75,6 +73,7 @@ export function ScriptureLane({
   onSave,
   onAlign,
 }: ScriptureLaneProps) {
+  const { t } = useTranslation();
   const [value, setValue] = useState(editableBaseline);
   const boxRef = useRef<HTMLTextAreaElement | null>(null);
   // Which draft key the box currently holds. A change means "different
@@ -201,17 +200,17 @@ export function ScriptureLane({
   // There is no draft/approved lifecycle on verses. "Edited" means a human has
   // touched the row (updated_by set); anything else is still the import.
   const chip = !base ? (
-    <FlowStatusChip kind="skip" label="No data" />
+    <FlowStatusChip kind="skip" label={t("flowScripture.chipNoData")} />
   ) : base.updated_by != null ? (
     <FlowStatusChip kind="edited" />
   ) : (
-    <FlowStatusChip kind="draft" label="Imported" />
+    <FlowStatusChip kind="draft" label={t("flowScripture.chipImported")} />
   );
 
   return (
     <Box
       component="section"
-      aria-label={`${bibleVersion} lane`}
+      aria-label={t("flowScripture.laneAria", { lane: bibleVersion })}
       sx={{
         bgcolor: "background.paper",
         border: "1px solid",
@@ -225,10 +224,10 @@ export function ScriptureLane({
           {laneLabel && laneLabel !== bibleVersion ? `${bibleVersion} → ${laneLabel}` : bibleVersion}
         </Typography>
         {chip}
-        {dirty && <FlowStatusChip kind="warn" label="Unsaved" />}
+        {dirty && <FlowStatusChip kind="warn" label={t("flowAlign.lane.unsaved")} />}
         <Box sx={{ flex: 1 }} />
         <Button size="small" variant="outlined" onClick={onAlign} sx={{ minHeight: 44 }}>
-          Align →
+          {t("flowAlign.lane.align")}
         </Button>
       </Stack>
 
@@ -251,17 +250,23 @@ export function ScriptureLane({
         }}
       >
         {sourceText ?? (
-          // UI chrome, always English — pin dir so it doesn't inherit the
-          // parent Typography's rtl (issue #163). Real source text above
-          // correctly follows sourceRtl; this is only the empty-state copy.
-          <Box component="em" dir="ltr" sx={{ fontSize: "0.85rem", fontFamily: "inherit", textAlign: "start" }}>
-            No {sourceLabel} source text loaded for this verse.
+          // UI chrome in the UI language — `dir="auto"` so it follows its own
+          // text (LTR in English, RTL in Arabic) instead of inheriting the
+          // parent Typography's scripture rtl (issue #163). Real source text
+          // above correctly follows sourceRtl; this is only the empty state.
+          <Box component="em" dir="auto" sx={{ fontSize: "0.85rem", fontFamily: "inherit", textAlign: "start" }}>
+            {t("flowScripture.noSourceText", { source: sourceLabel })}
           </Box>
         )}
       </Typography>
 
       {canEdit && (
-        <Stack direction="row" spacing={0.75} sx={{ mb: 1, flexWrap: "wrap" }} aria-label="Paragraph markers">
+        <Stack
+          direction="row"
+          spacing={0.75}
+          sx={{ mb: 1, flexWrap: "wrap" }}
+          aria-label={t("flowAlign.lane.paragraphMarkers")}
+        >
           {PARAGRAPH_MARKERS.map((m) => (
             <Button
               key={m}
@@ -296,7 +301,7 @@ export function ScriptureLane({
         inputProps={{
           dir: targetRtl ? "rtl" : "ltr",
           spellCheck: false,
-          "aria-label": `${bibleVersion} verse text`,
+          "aria-label": t("flowAlign.lane.inputAria", { lane: bibleVersion }),
         }}
         sx={{
           "& .MuiInputBase-root": {
@@ -317,7 +322,7 @@ export function ScriptureLane({
 
       <Stack direction="row" spacing={1} sx={{ mt: 1.25, flexWrap: "wrap" }}>
         <Button variant="outlined" disabled={!dirty || saving} onClick={handleUndo} sx={{ minHeight: 44 }}>
-          Undo
+          {t("common.undo")}
         </Button>
         <Box sx={{ flex: 1 }} />
         <Button
@@ -326,7 +331,7 @@ export function ScriptureLane({
           onClick={() => onSave(value)}
           sx={{ minHeight: 44 }}
         >
-          {saving ? "Saving…" : "Save"}
+          {saving ? t("flowAlign.lane.saving") : t("common.save")}
         </Button>
       </Stack>
     </Box>
