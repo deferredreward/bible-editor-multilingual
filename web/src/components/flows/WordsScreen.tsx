@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // t6-words: the per-verse translationWords link (TWL) screen, ported from
 // docs/flows/ui/t6-words.html onto the app's real data + save machinery.
 //
@@ -18,6 +15,7 @@
 // suggestions) the UI says so rather than inventing content.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Autocomplete,
@@ -129,6 +127,7 @@ function verseObjectsOf(dto: VerseDto | undefined | null): unknown[] | null {
 // editor. Both are left undestructured rather than accepted-and-ignored.
 export default function WordsScreen({ role, book, chapter, verse }: WordsScreenProps) {
   const theme = useTheme();
+  const { t } = useTranslation();
   const isDesktop = useMediaQuery(theme.breakpoints.up("md")); // >=900: list + detail side by side
   const isTabletUp = useMediaQuery(theme.breakpoints.up("tablet")); // >=560: table rather than cards
 
@@ -330,23 +329,31 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
     setMobilePane("detail");
   }
 
-  function reportError(prefix: string, err: unknown) {
+  // `op` is an identity, never a translated string: it selects the message key
+  // so each operation gets its own natural sentence rather than an English verb
+  // interpolated into a translated frame.
+  function reportError(op: "create" | "add", err: unknown) {
     if (err instanceof ApiError) {
       const body = err.body as { error?: string } | undefined;
       if (err.status === 409 && body?.error === "chapter_locked") {
         setLock(err.body as ChapterLockedBody);
-        setNotice(`${prefix} blocked — an AI run currently holds this chapter.`);
+        setNotice(t(`flowVerse.words.error.${op}.locked`));
         return;
       }
-      setNotice(`${prefix} failed (HTTP ${err.status}${body?.error ? ` ${body.error}` : ""}).`);
+      setNotice(
+        t(`flowVerse.words.error.${op}.http`, {
+          status: err.status,
+          detail: body?.error ? ` ${body.error}` : "",
+        }),
+      );
       return;
     }
-    setNotice(`${prefix} failed.`);
+    setNotice(t(`flowVerse.words.error.${op}.failed`));
   }
 
   async function handleSave() {
     if (!canEdit) {
-      setNotice("You have view-only access to this project — word links can't be saved.");
+      setNotice(t("flowVerse.words.viewOnlySave"));
       return;
     }
     if (!selectedRow || !dirty || busy) return;
@@ -369,7 +376,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
         },
       });
       setBaseline(form);
-      setNotice("Word link queued for save.");
+      setNotice(t("flowVerse.words.queuedForSave"));
     } finally {
       setBusy(false);
     }
@@ -378,12 +385,12 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
   function handleUndo() {
     if (!selectedRow || !dirty) return;
     setForm(baseline);
-    setNotice("Reverted to the last saved values.");
+    setNotice(t("flowVerse.words.reverted"));
   }
 
   async function handleDelete() {
     if (!canEdit) {
-      setNotice("You have view-only access to this project — word links can't be deleted.");
+      setNotice(t("flowVerse.words.viewOnlyDelete"));
       return;
     }
     if (!selectedRow || busy) return;
@@ -399,7 +406,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
       // actually returned rather than us pre-judging it.
       await outbox.enqueueDeleteRow("twl", id, version, book);
       setMobilePane("list");
-      setNotice("Word link deleted.");
+      setNotice(t("flowVerse.words.deleted"));
     } finally {
       setBusy(false);
     }
@@ -426,7 +433,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
     if (!qb) return;
     if (!canEdit) {
       setQb(null);
-      setNotice("You have view-only access to this project — word links can't be changed.");
+      setNotice(t("flowVerse.words.viewOnlyChange"));
       return;
     }
     const built = buildQuoteFromSelection(uhbVo, qbKeys);
@@ -434,7 +441,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
     if (qb.mode === "edit") {
       setForm((f) => ({ ...f, quote: built.quote, occurrence: String(built.occurrence) }));
       setQb(null);
-      setNotice("Quote updated locally — commits on Save.");
+      setNotice(t("flowVerse.words.quoteUpdated"));
       return;
     }
     setQb(null);
@@ -453,9 +460,9 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
       applyLocalRowInsert("twl", created);
       setSelectedId(created.id);
       setMobilePane("detail");
-      setNotice("Word link created — now set its tW article.");
+      setNotice(t("flowVerse.words.created"));
     } catch (err) {
-      reportError("Create", err);
+      reportError("create", err);
     } finally {
       setBusy(false);
     }
@@ -498,14 +505,12 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
   const handleAddSuggestion = useCallback(
     async (s: TwlSuggestion, chosenArticleId: string) => {
       if (!canEdit) {
-        setNotice("You have view-only access to this project — word links can't be added.");
+        setNotice(t("flowVerse.words.viewOnlyAdd"));
         return;
       }
       const resolved = suggestionQuote(s);
       if (!resolved || !resolved.orig_words) {
-        setNotice(
-          `Couldn't resolve “${s.matchedText}” to an original-language quote — add it manually with “Build from source”.`,
-        );
+        setNotice(t("flowVerse.words.cantResolve", { text: s.matchedText }));
         return;
       }
       const category = chosenArticleId.split("/")[0];
@@ -524,13 +529,17 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
         });
         applyLocalRowInsert("twl", created);
         setSelectedId(created.id);
-        setNotice("Word link added from suggestion.");
+        setNotice(t("flowVerse.words.addedFromSuggestion"));
       } catch (err) {
-        reportError("Add", err);
+        reportError("add", err);
       }
     },
     // nextSortOrder / reportError close over state that changes each render;
     // recreating the callback per render is cheaper than memoizing them all.
+    // `t` is deliberately NOT a dep either: react-i18next hands out a new `t`
+    // identity on every language change, and this callback creates a row on the
+    // server — re-identifying it on a language switch buys nothing and invites
+    // re-runs in any future effect that depends on it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [canEdit, suggestionQuote, book, chapter, verse, applyLocalRowInsert, links],
   );
@@ -556,20 +565,13 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
   function targetContext(quote: string) {
     if (!ultVo) {
       return ultLanePending ? (
-        <em>
-          ULT verse content isn&rsquo;t available for this verse: the lane is omitted from the
-          chapter payload while it awaits a source replacement. Nothing is shown here rather than
-          guessing.
-        </em>
+        <em>{t("flowVerse.words.ultPending", { lane: "ULT" })}</em>
       ) : (
-        <em>
-          No ULT text exists for this verse in this workspace. That is normal in a
-          translation-mode workspace whose target lanes have not been drafted yet.
-        </em>
+        <em>{t("flowScripture.laneNoText", { lane: "ULT" })}</em>
       );
     }
     const tokens = collectTargetTokens(ultVo);
-    if (tokens.length === 0) return <em>No alignment data on this verse.</em>;
+    if (tokens.length === 0) return <em>{t("flowVerse.words.noAlignmentData")}</em>;
     const want = nfc(quote);
     const marked = tokens.map((t) => ({
       text: t.text,
@@ -580,10 +582,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
         <>
           {ultPlain ?? ""}
           <br />
-          <em>
-            No exact alignment-milestone match for “{quote}” — a quote spanning partial or merged
-            milestones isn&rsquo;t resolved here.
-          </em>
+          <em>{t("flowVerse.words.noMilestoneMatch", { quote })}</em>
         </>
       );
     }
@@ -620,18 +619,18 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
       >
         {!isDesktop && (
           <Button size="small" onClick={() => setMobilePane("list")} sx={{ minHeight: 44 }}>
-            ← Links
+            {t("flowVerse.words.backToLinks")}
           </Button>
         )}
         <Typography
           variant="overline"
           sx={{ color: "text.secondary", fontWeight: 700, letterSpacing: "0.07em" }}
         >
-          Edit word link
+          {t("flowVerse.words.editTitle")}
         </Typography>
         <Box sx={{ flex: 1 }} />
         <Typography variant="caption" color="text.secondary">
-          {selectedIndex + 1} of {links.length}
+          {t("flowScripture.ofTotal", { n: selectedIndex + 1, total: links.length })}
         </Typography>
       </Stack>
 
@@ -641,7 +640,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
           component="div"
           sx={{ fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "text.secondary" }}
         >
-          Quote (original-language)
+          {t("flowVerse.words.quoteOriginal")}
         </Typography>
         <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" sx={{ mt: 0.5 }}>
           <Box
@@ -664,12 +663,12 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
             sx={{ minHeight: 44 }}
             onClick={(e) => openQuoteBuilder("edit", e.currentTarget)}
           >
-            Build from source
+            {t("flowVerse.words.buildFromSource")}
           </Button>
         </Stack>
 
         <TextField
-          label="Occurrence"
+          label={t("flowVerse.words.occurrenceLabel")}
           type="number"
           size="small"
           value={form.occurrence}
@@ -686,7 +685,14 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
             onChange={(_e, v) => setForm((f) => ({ ...f, article: v ?? "" }))}
             onInputChange={(_e, v) => setForm((f) => ({ ...f, article: v }))}
             renderInput={(params) => (
-              <TextField {...params} size="small" label="tW article link" placeholder="kt/god" />
+              // "kt/god" is a tW article SLUG, shown as the input's example —
+              // it is an id, not prose, so it stays as-is in every language.
+              <TextField
+                {...params}
+                size="small"
+                label={t("flowVerse.words.articleLinkLabel")}
+                placeholder="kt/god"
+              />
             )}
           />
           <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 0.5, flexWrap: "wrap" }}>
@@ -696,16 +702,16 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
                 href={`#/articles/tw/${encodeURIComponent(form.article)}`}
                 sx={{ fontSize: "0.8rem", fontWeight: 600, color: "primary.main" }}
               >
-                Read article →
+                {t("flowVerse.words.readArticleArrow")}
               </Box>
             ) : (
               <Typography variant="caption" color="text.secondary">
-                No tW article linked.
+                {t("flowVerse.words.noArticleLinked")}
               </Typography>
             )}
             {articleOptions.length === 0 && (
               <Typography variant="caption" color="text.secondary" sx={{ fontStyle: "italic" }}>
-                The tW catalog is empty here — no autocomplete options available.
+                {t("flowVerse.words.catalogEmpty")}
               </Typography>
             )}
           </Stack>
@@ -717,8 +723,10 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
             component="div"
             sx={{ fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "text.secondary" }}
           >
-            In target (ULT)
-            {ultRow && isRangeRow(ultRow) ? ` · verses ${formatVerseLabel(ultRow)}` : ""}
+            {t("flowVerse.words.inTarget", { lane: "ULT" })}
+            {ultRow && isRangeRow(ultRow)
+              ? ` ${t("flowVerse.words.versesSuffix", { label: formatVerseLabel(ultRow) })}`
+              : ""}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, overflowWrap: "anywhere" }}>
             {targetContext(form.quote)}
@@ -729,25 +737,26 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
         {isDesktop && (
           <Stack direction="row" spacing={1} sx={{ mt: 2.5, flexWrap: "wrap" }}>
             <Button variant="outlined" disabled={!dirty || busy} onClick={handleUndo} sx={{ flex: 1, minHeight: 44 }}>
-              Undo
+              {t("common.undo")}
             </Button>
             <Button variant="contained" disabled={!canEdit || !dirty || busy} onClick={handleSave} sx={{ flex: 1, minHeight: 44 }}>
-              {busy ? "Working…" : "Save"}
+              {busy ? t("flowVerse.words.working") : t("common.save")}
             </Button>
             <Button color="warning" variant="outlined" disabled={!canEdit || busy} onClick={handleDelete} sx={{ flex: 1, minHeight: 44 }}>
-              Delete
+              {t("common.delete")}
             </Button>
           </Stack>
         )}
 
         <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1.5 }}>
-          Manual reorder is off — TWL is canonically ordered by source-word position.
+          {t("flowVerse.words.reorderOff")}
         </Typography>
       </Box>
     </Box>
   ) : (
     <Alert severity="info">
-      No word link selected. {links.length === 0 ? "This verse has none yet — use “Add link”." : ""}
+      {t("flowVerse.words.noneSelected")}{" "}
+      {links.length === 0 ? t("flowVerse.words.noneYetUseAdd") : ""}
     </Alert>
   );
 
@@ -762,7 +771,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
     <Box sx={{ minWidth: 0 }}>
       <Stack direction="row" alignItems="center" spacing={1.25} sx={{ mb: 1.25, flexWrap: "wrap" }}>
         <Typography variant="body2" sx={{ fontWeight: 600, color: "text.secondary" }}>
-          {links.length === 1 ? "1 word link on this verse" : `${links.length} word links on this verse`}
+          {t("flowVerse.words.linkCount", { count: links.length })}
         </Typography>
         <Box sx={{ flex: 1 }} />
         <Button
@@ -772,21 +781,21 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
           onClick={(e) => openQuoteBuilder("add", e.currentTarget)}
           disabled={!canEdit || busy || !uhbVo}
         >
-          + Add link
+          {t("flowVerse.words.addLink")}
         </Button>
       </Stack>
 
       {links.length === 0 ? (
-        <Alert severity="info">No word links on this verse yet.</Alert>
+        <Alert severity="info">{t("flowVerse.words.emptyList")}</Alert>
       ) : isTabletUp ? (
         <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, overflowX: "auto" }}>
           <Table size="small" sx={{ minWidth: 460 }}>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ textAlign: "start" }}>Quote</TableCell>
-                <TableCell sx={{ textAlign: "start" }}>Occ</TableCell>
-                <TableCell sx={{ textAlign: "start" }}>tW link</TableCell>
-                <TableCell sx={{ textAlign: "start" }}>Article</TableCell>
+                <TableCell sx={{ textAlign: "start" }}>{t("words.quote")}</TableCell>
+                <TableCell sx={{ textAlign: "start" }}>{t("flowVerse.words.colOcc")}</TableCell>
+                <TableCell sx={{ textAlign: "start" }}>{t("flowVerse.words.colTwLink")}</TableCell>
+                <TableCell sx={{ textAlign: "start" }}>{t("flowVerse.words.colArticle")}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -798,7 +807,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
                   onClick={() => selectLink(r.id)}
                   tabIndex={0}
                   role="button"
-                  aria-label={`Edit word link ${r.quote}`}
+                  aria-label={t("flowVerse.words.editAria", { quote: r.quote })}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
@@ -824,7 +833,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
                       </Box>
                     ) : (
                       <Typography variant="caption" color="text.secondary" sx={{ fontStyle: "italic" }}>
-                        no article linked
+                        {t("flowVerse.words.noArticleLinkedShort")}
                       </Typography>
                     )}
                   </TableCell>
@@ -835,7 +844,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
         </Box>
       ) : (
         // <560: one card per link so nothing scrolls sideways.
-        <Stack spacing={1.25} role="list" aria-label="Word links">
+        <Stack spacing={1.25} role="list" aria-label={t("flowVerse.words.listAria")}>
           {linkRows.map((r) => (
             <Box
               key={r.id}
@@ -863,7 +872,10 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
                 {r.quote || "—"}
               </Typography>
               <Typography variant="caption" color="text.secondary" component="div">
-                occurrence {r.occurrence} · {r.article || "no article linked"}
+                {t("flowVerse.words.cardMeta", {
+                  occurrence: r.occurrence,
+                  article: r.article || t("flowVerse.words.noArticleLinkedShort"),
+                })}
               </Typography>
             </Box>
           ))}
@@ -876,9 +888,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
         component="p"
         sx={{ fontStyle: "italic", mt: 1 }}
       >
-        Word links have no approve lifecycle — there is no validate endpoint for TWL rows, so Save
-        and Delete are the only state-changing actions here. Suggestions below are unsaved
-        candidates until you add one.
+        {t("flowVerse.words.noApproveLifecycle")}
       </Typography>
 
       {/* Suggestions — the mockup merges them into the same list; here they
@@ -916,9 +926,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
       <Stack sx={{ height: "100%", minHeight: 0 }}>
         <FlowNav current="words" book={book} chapter={chapter} verse={verse} role={role} />
         <Box sx={{ p: 3 }}>
-          <Alert severity="error">
-            Could not load {book} {chapter}. Word links can&rsquo;t be shown until the chapter loads.
-          </Alert>
+          <Alert severity="error">{t("flowVerse.words.chapterLoadError", { book, chapter })}</Alert>
         </Box>
       </Stack>
     );
@@ -944,7 +952,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
           {/* Verse navigation — stays on this screen, only the hash verse moves. */}
           <Stack direction="row" alignItems="center" spacing={1.25} sx={{ mb: 1.75, flexWrap: "wrap" }}>
             <IconButton
-              aria-label="Previous verse"
+              aria-label={t("flowScripture.prevVerse")}
               onClick={() => goVerse(-1)}
               disabled={verseNums.length === 0 || verse === verseNums[0]}
               sx={{ minWidth: 44, minHeight: 44 }}
@@ -955,7 +963,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
               {book} {chapter}:{verse}
             </Typography>
             <IconButton
-              aria-label="Next verse"
+              aria-label={t("flowScripture.nextVerse")}
               onClick={() => goVerse(1)}
               disabled={verseNums.length === 0 || verse === verseNums[verseNums.length - 1]}
               sx={{ minWidth: 44, minHeight: 44 }}
@@ -966,10 +974,10 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
             {!isDesktop && (
               <>
                 <Button size="small" variant="outlined" sx={{ minHeight: 44 }} onClick={() => setLinksSheet(true)}>
-                  Links list
+                  {t("flowVerse.words.linksListBtn")}
                 </Button>
                 <Button size="small" variant="outlined" sx={{ minHeight: 44 }} onClick={() => setVerseSheet(true)}>
-                  This verse
+                  {t("flowVerse.words.thisVerseBtn")}
                 </Button>
               </>
             )}
@@ -986,23 +994,23 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
 
           {!canEdit && (
             <Alert severity="info" sx={{ mb: 2 }}>
-              You have view-only access to this project, so word links are read-only — they can be
-              inspected but not added, edited or deleted.
+              {t("flowVerse.words.viewOnlyBanner")}
             </Alert>
           )}
 
           <WordsLexiconStrip
             words={sourceWords}
             rtl={sourceIsHebrew}
-            label={sourceIsHebrew ? "Hebrew" : "Greek"}
+            label={sourceIsHebrew ? t("flowTranslate.hebrew") : t("flowTranslate.greek")}
             lexicon={lexicon}
           />
 
           {uhbRow && isRangeRow(uhbRow) && (
             <Alert severity="info" sx={{ mb: 2 }}>
-              The original text bridges verses {formatVerseLabel(uhbRow)} in one row, so the words
-              above span all of them. A link you build here is still filed under{" "}
-              {chapter}:{verse}.
+              {t("flowVerse.words.bridgedNotice", {
+                label: formatVerseLabel(uhbRow),
+                ref: `${chapter}:${verse}`,
+              })}
             </Alert>
           )}
 
@@ -1027,13 +1035,13 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
       {showDetail && selectedRow && (
         <FlowActionBar>
           <Button variant="outlined" disabled={!dirty || busy} onClick={handleUndo}>
-            Undo
+            {t("common.undo")}
           </Button>
           <Button variant="contained" disabled={!canEdit || !dirty || busy} onClick={handleSave}>
-            {busy ? "Working…" : "Save"}
+            {busy ? t("flowVerse.words.working") : t("common.save")}
           </Button>
           <Button color="warning" variant="outlined" disabled={!canEdit || busy} onClick={handleDelete}>
-            Delete
+            {t("common.delete")}
           </Button>
         </FlowActionBar>
       )}
@@ -1043,15 +1051,15 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
         <Box sx={{ p: 2, maxHeight: "78vh", overflowY: "auto" }}>
           <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
             <Typography variant="subtitle1" sx={{ flex: 1 }}>
-              Word links — {book} {chapter}:{verse}
+              {t("flowVerse.words.sheetTitle", { ref: `${book} ${chapter}:${verse}` })}
             </Typography>
-            <IconButton aria-label="Close" onClick={() => setLinksSheet(false)} sx={{ minWidth: 44, minHeight: 44 }}>
+            <IconButton aria-label={t("common.close")} onClick={() => setLinksSheet(false)} sx={{ minWidth: 44, minHeight: 44 }}>
               <CloseIcon />
             </IconButton>
           </Stack>
           {links.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
-              No word links on this verse yet.
+              {t("flowVerse.words.emptyList")}
             </Typography>
           ) : (
             <Stack spacing={1}>
@@ -1069,7 +1077,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
                     {r.quote || "—"}
                   </Box>
                   <Box component="span" sx={{ ml: 1, opacity: 0.7 }}>
-                    {r.article || "no article"}
+                    {r.article || t("flowVerse.words.noArticleShort")}
                   </Box>
                 </Button>
               ))}
@@ -1083,9 +1091,9 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
         <Box sx={{ p: 2, maxHeight: "78vh", overflowY: "auto" }}>
           <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
             <Typography variant="subtitle1" sx={{ flex: 1 }}>
-              This verse — read-only context
+              {t("flowVerse.words.verseSheetTitle")}
             </Typography>
-            <IconButton aria-label="Close" onClick={() => setVerseSheet(false)} sx={{ minWidth: 44, minHeight: 44 }}>
+            <IconButton aria-label={t("common.close")} onClick={() => setVerseSheet(false)} sx={{ minWidth: 44, minHeight: 44 }}>
               <CloseIcon />
             </IconButton>
           </Stack>
@@ -1093,14 +1101,14 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
             ULT
           </Typography>
           <Typography variant="body2" sx={{ bgcolor: "action.hover", borderRadius: 1, p: 1, mb: 1.5, textAlign: "start" }}>
-            {ultPlain ?? <em>ULT verse content isn&rsquo;t available for this verse right now.</em>}
+            {ultPlain ?? <em>{t("flowVerse.words.laneUnavailable", { lane: "ULT" })}</em>}
           </Typography>
           <Divider sx={{ mb: 1.5 }} />
           <Typography variant="caption" color="text.secondary">
             UST
           </Typography>
           <Typography variant="body2" sx={{ bgcolor: "action.hover", borderRadius: 1, p: 1, textAlign: "start" }}>
-            {ustPlain ?? <em>UST verse content isn&rsquo;t available for this verse right now.</em>}
+            {ustPlain ?? <em>{t("flowVerse.words.laneUnavailable", { lane: "UST" })}</em>}
           </Typography>
         </Box>
       </Drawer>
