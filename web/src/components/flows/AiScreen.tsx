@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // l1-ai: Lead — run AI pipelines. Port of docs/flows/ui/l1-ai.html. The menu,
 // confirm dialog, and 409 "already running" dialog are NOT re-implemented here
 // — they're the real, already-tested PipelineMenu (web/src/components/
@@ -36,6 +34,8 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { AdminDesk } from "./AdminDesk";
 import { AdminPageHeader } from "./AdminPageHeader";
@@ -64,45 +64,73 @@ const DEFAULT_CHAPTER = 1;
 // translate can't be told apart from a tN one here — both get this one
 // generic label, matching PipelineStatusBar.tsx's TYPE_LABEL (same
 // limitation, same choice, not new).
-const TYPE_LABEL: Record<PipelineType, string> = {
-  generate: "Generate ULT + UST",
-  notes: "Write translation notes",
-  tqs: "Write translation questions",
-  translate: "Translate chapter",
+const TYPE_LABEL_KEY: Record<PipelineType, string> = {
+  generate: "pipeline.generateUltUst",
+  notes: "pipeline.writeTranslationNotes",
+  tqs: "pipeline.writeTranslationQuestions",
+  translate: "translation.translateChapter",
 };
+
+function typeLabel(type: PipelineType, t: TFunction): string {
+  const key = TYPE_LABEL_KEY[type] as string | undefined;
+  return key ? t(key) : type;
+}
 
 // Friendly PipelineErrorKind copy — mirrors docs/flows/ui/l1-ai.html's
 // ERROR_COPY verbatim (same enum, same intent: no bare enum string in front
 // of a translator).
-const ERROR_COPY: Record<PipelineErrorKind, string> = {
-  transient_outage:
-    "The AI service had a temporary outage. It should recover on its own — try again in a few minutes.",
-  auth_error: "The AI service rejected our credentials. An admin needs to check the BT_API_TOKEN.",
-  usage_limit: "This workspace hit its daily AI usage limit. The run will resume automatically tomorrow.",
-  sdk_error: "Something went wrong talking to the AI service. Retrying usually fixes this.",
-  non_success_result: "The AI service finished but reported a failure. Retry, or check with an admin if it keeps happening.",
-  missing_output: "The AI service didn't return any content for this chapter. Retry — if it keeps happening, this chapter may need attention.",
-  stale_output: "The AI's draft was based on an older version of this chapter and was rejected to avoid overwriting newer edits. Retry to draft against the current text.",
-  interrupted: "This run was interrupted before it finished — likely the server restarted mid-job. Nothing was lost; retry to pick it back up.",
-  import_failed: "The finished draft couldn't be imported into the chapter. An admin may need to look at the import log.",
+const ERROR_COPY_KEY: Record<PipelineErrorKind, string> = {
+  transient_outage: "aiStudio.errors.transient_outage",
+  auth_error: "aiStudio.errors.auth_error",
+  usage_limit: "aiStudio.errors.usage_limit",
+  sdk_error: "aiStudio.errors.sdk_error",
+  non_success_result: "aiStudio.errors.non_success_result",
+  missing_output: "aiStudio.errors.missing_output",
+  stale_output: "aiStudio.errors.stale_output",
+  interrupted: "aiStudio.errors.interrupted",
+  import_failed: "aiStudio.errors.import_failed",
 };
 
-function scopeOf(job: PipelineJob): string {
-  if (!job.book) return TYPE_LABEL[job.pipeline_type] ?? job.pipeline_type; // article (tw/ta) jobs carry no book/chapter
+function errorCopy(kind: PipelineErrorKind | null, t: TFunction): string {
+  const key = kind ? (ERROR_COPY_KEY[kind] as string | undefined) : undefined;
+  return key ? t(key) : t("aiStudio.unrecognizedError", { kind });
+}
+
+// Human-readable display of the PipelineState enum. The enum values themselves
+// (used in logic and sent to the API) are never translated — only what the
+// user sees.
+const STATE_LABEL_KEY: Record<PipelineState, string> = {
+  queued: "aiStudio.status.queued",
+  dispatching: "aiStudio.status.dispatching",
+  running: "aiStudio.status.running",
+  paused_for_outage: "aiStudio.status.paused_for_outage",
+  paused_for_usage_limit: "aiStudio.status.paused_for_usage_limit",
+  failed: "aiStudio.status.failed",
+  cancelled: "aiStudio.status.cancelled",
+  done: "aiStudio.status.done",
+};
+
+function stateLabel(state: PipelineState, t: TFunction): string {
+  const key = STATE_LABEL_KEY[state] as string | undefined;
+  return key ? t(key) : state;
+}
+
+function scopeOf(job: PipelineJob, t: TFunction): string {
+  if (!job.book) return typeLabel(job.pipeline_type, t); // article (tw/ta) jobs carry no book/chapter
   return job.start_chapter === job.end_chapter
     ? `${job.book} ${job.start_chapter}`
     : `${job.book} ${job.start_chapter}–${job.end_chapter}`;
 }
 
-function timeAgo(unixSeconds: number | null | undefined): string {
+function timeAgo(unixSeconds: number | null | undefined, t: TFunction): string {
   if (!unixSeconds) return "—";
   const deltaMs = Date.now() - unixSeconds * 1000;
   const mins = Math.round(deltaMs / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
+  if (mins < 1) return t("aiStudio.justNow");
+  if (mins < 60) return t("aiStudio.minutesAgo", { count: mins });
   const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs} hr${hrs === 1 ? "" : "s"} ago`;
-  return `${Math.round(hrs / 24)} day(s) ago`;
+  if (hrs < 24) return t("aiStudio.hoursAgo", { count: hrs });
+  return t("aiStudio.daysAgo", { count: Math.round(hrs / 24) });
 }
 
 function stateChipKind(state: PipelineState): "ok" | "warn" | "skip" {
@@ -111,14 +139,17 @@ function stateChipKind(state: PipelineState): "ok" | "warn" | "skip" {
   return "skip"; // queued / dispatching / running / paused_* / cancelled
 }
 
-function progressText(job: PipelineJob): string {
+function progressText(job: PipelineJob, t: TFunction): string {
   if (job.state === "queued") {
-    return job.queue_position != null ? `#${job.queue_position} in line` : "queued";
+    return job.queue_position != null
+      ? t("aiStudio.inLine", { n: job.queue_position })
+      : stateLabel("queued", t);
   }
-  return job.current_status || job.current_skill || job.state;
+  return job.current_status || job.current_skill || stateLabel(job.state, t);
 }
 
 export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const isTabletUp = useMediaQuery(theme.breakpoints.up("tablet")); // >=560: table rather than stacked cards
 
@@ -129,7 +160,7 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
   const cfg = useProjectConfig();
   const eyebrow = cfg
     ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}`
-    : "Workspace";
+    : t("aiStudio.workspace");
 
   const [books, setBooks] = useState<BookListEntry[] | null>(null);
   const [booksError, setBooksError] = useState(false);
@@ -260,15 +291,15 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
         ...(job.book ? { book: job.book, startChapter: job.start_chapter, endChapter: job.end_chapter } : {}),
         sessionKey,
       });
-      setNotice(`Retry queued for ${scopeOf(job)}`);
+      setNotice(t("aiStudio.retryQueuedFor", { scope: scopeOf(job, t) }));
     } catch (e) {
       if (e instanceof ApiError && e.status === 503) {
         setAiDisabled(true);
-        setNotice("AI not configured — retry unavailable");
+        setNotice(t("aiStudio.retryUnavailable"));
       } else if (e instanceof ApiError && e.status === 409) {
-        setNotice("Already running or queued elsewhere");
+        setNotice(t("aiStudio.alreadyRunningElsewhere"));
       } else {
-        setNotice("Could not retry — try again");
+        setNotice(t("aiStudio.retryFailed"));
       }
     } finally {
       setRetrying(null);
@@ -280,11 +311,11 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
     setCancelling(job.job_id);
     try {
       const res = await pipelineStore.cancel(job.job_id);
-      if (!res.ok) setNotice("Couldn't cancel — it already started running.");
+      if (!res.ok) setNotice(t("aiStudio.cancelTooLate"));
     } catch {
       // pipelineStore.cancel only handles 409 itself; 403/404/5xx/network
       // rethrow and must not become an unhandled rejection with a silent no-op.
-      setNotice("Couldn't cancel — try again");
+      setNotice(t("aiStudio.cancelFailed"));
     } finally {
       setCancelling(null);
     }
@@ -307,9 +338,9 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
     return (
       <AdminDesk current="ai">
         <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
-          <AdminPageHeader eyebrow={eyebrow} title="AI studio" />
+          <AdminPageHeader eyebrow={eyebrow} title={t("aiStudio.title")} />
           <Typography color="text.secondary" sx={{ mt: 1 }}>
-            AI pipeline status isn't visible for your role.
+            {t("aiStudio.notVisibleForRole")}
           </Typography>
         </Box>
       </AdminDesk>
@@ -321,19 +352,18 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
       <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2, pb: 8 }}>
         <AdminPageHeader
           eyebrow={eyebrow}
-          title="AI studio"
-          subtitle="Bulk-draft a chapter's ULT/UST, translation notes, or translation questions. A run locks the chapter for editing while it's in progress."
+          title={t("aiStudio.title")}
+          subtitle={t("aiStudio.subtitle")}
         />
 
       <Stack spacing={1} sx={{ mb: 2 }}>
         {aiDisabled && (
           <Alert severity="info" icon={<AutoAwesomeIcon fontSize="small" />}>
-            <Typography sx={{ fontWeight: 700, fontSize: "0.9rem" }}>AI not configured</Typography>
+            <Typography sx={{ fontWeight: 700, fontSize: "0.9rem" }}>{t("aiStudio.notConfiguredTitle")}</Typography>
             <Typography variant="body2" sx={{ mt: 0.25 }}>
-              An admin needs to set <code>BT_API_TOKEN</code> for this workspace before AI pipelines
-              can run. This isn't an error — the feature is simply off until then. Job status reads
-              (Details/Retry below) are disabled too, so those actions are turned off rather than
-              left to fail on click.
+              {t("aiStudio.notConfiguredBodyBefore")}
+              <code>BT_API_TOKEN</code>
+              {t("aiStudio.notConfiguredBodyAfter")}
             </Typography>
           </Alert>
         )}
@@ -348,7 +378,7 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
         )}
         {jobsUnavailable && (
           <Typography variant="caption" color="text.secondary">
-            AI run status isn't visible for your role.
+            {t("aiStudio.runStatusNotVisible")}
           </Typography>
         )}
       </Stack>
@@ -356,7 +386,7 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
       <Stack direction="row" spacing={1.5} alignItems="flex-end" flexWrap="wrap" sx={{ mb: 2.5 }}>
         <Box sx={{ minWidth: 140 }}>
           <Typography variant="caption" component="label" htmlFor="ai-pick-book" sx={{ display: "block", mb: 0.5, color: "text.secondary" }}>
-            Book
+            {t("aiStudio.bookLabel")}
           </Typography>
           {books === null && !booksError ? (
             <Skeleton variant="rounded" width={140} height={40} />
@@ -377,13 +407,13 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
                   </MenuItem>
                 ))
               ) : (
-                <MenuItem value="">{booksError ? "Couldn't load books" : "No books imported"}</MenuItem>
+                <MenuItem value="">{booksError ? t("aiStudio.booksLoadFailed") : t("aiStudio.noBooksImported")}</MenuItem>
               )}
             </Select>
           )}
         </Box>
         <TextField
-          label="Chapter"
+          label={t("aiStudio.chapterLabel")}
           size="small"
           value={chapterInput}
           onChange={(e) => setChapterInput(e.target.value.replace(/[^\d]/g, ""))}
@@ -403,10 +433,10 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
             }}
           />
         ) : (
-          <Tooltip title="Pick a book first">
+          <Tooltip title={t("aiStudio.pickBookFirst")}>
             <span>
               <Button size="small" variant="outlined" startIcon={<AutoAwesomeIcon fontSize="small" />} disabled>
-                AI
+                {t("pipeline.aiButton")}
               </Button>
             </span>
           </Tooltip>
@@ -426,26 +456,23 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
       >
         <Box sx={{ p: 2, borderBottom: 1, borderColor: "divider" }}>
           <Typography variant="h6" sx={{ fontSize: "1rem" }}>
-            Runs — this workspace
+            {t("aiStudio.runsTitle")}
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
-            Single global bot slot — one job runs at a time; the rest queue in priority order.
-            Foreign jobs (started by someone else in this workspace) are read-only here. Other
-            workspaces' runs are never shown — the API scopes jobs to your workspace and this UI
-            does not aggregate across workspaces.
+            {t("aiStudio.runsExplainer")}
           </Typography>
         </Box>
 
         {jobsUnavailable ? (
           <Box sx={{ p: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              AI run status isn't visible for your role.
+              {t("aiStudio.runStatusNotVisible")}
             </Typography>
           </Box>
         ) : jobs.length === 0 ? (
           <Box sx={{ p: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              No runs in this workspace right now.
+              {t("aiStudio.noRuns")}
             </Typography>
           </Box>
         ) : isTabletUp ? (
@@ -453,12 +480,12 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>Type</TableCell>
-                  <TableCell>Scope</TableCell>
-                  <TableCell>State</TableCell>
-                  <TableCell>Progress</TableCell>
-                  <TableCell>Started</TableCell>
-                  <TableCell>Requested by</TableCell>
+                  <TableCell>{t("aiStudio.colType")}</TableCell>
+                  <TableCell>{t("aiStudio.colScope")}</TableCell>
+                  <TableCell>{t("aiStudio.colState")}</TableCell>
+                  <TableCell>{t("aiStudio.colProgress")}</TableCell>
+                  <TableCell>{t("aiStudio.colStarted")}</TableCell>
+                  <TableCell>{t("aiStudio.colRequestedBy")}</TableCell>
                   <TableCell />
                 </TableRow>
               </TableHead>
@@ -506,14 +533,15 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
           <Typography variant="caption" color="text.secondary">
             {jobsUnavailable
               ? ""
-              : `${jobs.length} job${jobs.length === 1 ? "" : "s"}${failedCount ? ` — ${failedCount} needs attention` : ""}`}
+              : t("aiStudio.jobCount", { count: jobs.length }) +
+                (failedCount ? t("aiStudio.needsAttentionSuffix", { count: failedCount }) : "")}
           </Typography>
           <Box sx={{ flex: 1 }} />
           <Button size="small" onClick={() => void handleRefresh()} disabled={jobsUnavailable}>
-            Refresh
+            {t("pipeline.refresh")}
           </Button>
           <Button size="small" onClick={handleDismissAll} disabled={jobsUnavailable || dismissableJobs.length === 0}>
-            Dismiss all
+            {t("pipeline.dismissAll")}
           </Button>
         </Stack>
       </Box>
@@ -530,21 +558,21 @@ export default function AiScreen({ role, me, onNavigate }: AiScreenProps) {
       >
         <Box sx={{ p: 2 }}>
           <Typography variant="h6" sx={{ fontSize: "1rem" }}>
-            API-triggered runs
+            {t("aiStudio.apiRunsTitle")}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            Coming soon: start and query pipelines via API tokens, for automation outside this UI.
+            {t("aiStudio.apiRunsBody")}
           </Typography>
         </Box>
         <Stack direction="row" alignItems="center" spacing={1.5} sx={{ p: 1.5, borderTop: 1, borderColor: "divider" }}>
           <Typography variant="caption" color="text.secondary">
-            Coming soon
+            {t("aiStudio.comingSoon")}
           </Typography>
           <Box sx={{ flex: 1 }} />
-          <Tooltip title="API token management is coming soon">
+          <Tooltip title={t("aiStudio.apiTokensTooltip")}>
             <span>
               <Button size="small" disabled>
-                Manage API tokens
+                {t("aiStudio.manageApiTokens")}
               </Button>
             </span>
           </Tooltip>
@@ -572,23 +600,24 @@ function isMine(job: PipelineJob, me: FlowScreenContext["me"]): boolean {
   return me != null && job.user_id === me.userId;
 }
 
-function requestedByLabel(job: PipelineJob, me: FlowScreenContext["me"]): string {
-  if (isMine(job, me)) return "You";
-  return `requested by ${job.started_by_username || "someone else"}`;
+function requestedByLabel(job: PipelineJob, me: FlowScreenContext["me"], t: TFunction): string {
+  if (isMine(job, me)) return t("aiStudio.you");
+  return t("aiStudio.requestedBy", { name: job.started_by_username || t("aiStudio.someoneElse") });
 }
 
 function JobRow({ job, me, aiDisabled, retrying, cancelling, onRetry, onCancel, onDismiss }: JobRowProps) {
+  const { t } = useTranslation();
   const mine = isMine(job, me);
   return (
     <TableRow hover>
       <TableCell>
         <Typography variant="body2" sx={{ fontWeight: 600 }}>
-          {TYPE_LABEL[job.pipeline_type] ?? job.pipeline_type}
+          {typeLabel(job.pipeline_type, t)}
         </Typography>
       </TableCell>
-      <TableCell>{scopeOf(job)}</TableCell>
+      <TableCell>{scopeOf(job, t)}</TableCell>
       <TableCell>
-        <FlowStatusChip kind={stateChipKind(job.state)} label={job.state} />
+        <FlowStatusChip kind={stateChipKind(job.state)} label={stateLabel(job.state, t)} />
       </TableCell>
       <TableCell sx={{ minWidth: 160 }}>
         {job.state === "failed" ? (
@@ -600,23 +629,23 @@ function JobRow({ job, me, aiDisabled, retrying, cancelling, onRetry, onCancel, 
               {job.error_kind ?? "unknown_error"}
             </Typography>
             <Typography variant="caption" color="warning.main" sx={{ display: "block" }}>
-              {(job.error_kind && ERROR_COPY[job.error_kind]) || `Unrecognized error: ${job.error_kind}`}
+              {errorCopy(job.error_kind, t)}
             </Typography>
           </Box>
         ) : (
           <Typography variant="caption" color="text.secondary">
-            {progressText(job)}
+            {progressText(job, t)}
           </Typography>
         )}
       </TableCell>
       <TableCell>
         <Typography variant="caption" color="text.secondary">
-          {timeAgo(job.created_at)}
+          {timeAgo(job.created_at, t)}
         </Typography>
       </TableCell>
       <TableCell>
         <Typography variant="caption" color="text.secondary">
-          {requestedByLabel(job, me)}
+          {requestedByLabel(job, me, t)}
         </Typography>
       </TableCell>
       <TableCell>
@@ -654,6 +683,7 @@ function JobRowActions({
   onCancel: () => void;
   onDismiss: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <Stack direction="row" spacing={0.75} flexWrap="wrap">
       {job.state === "queued" && mine && (
@@ -663,7 +693,7 @@ function JobRowActions({
           disabled={cancelling}
           startIcon={cancelling ? <CircularProgress size={12} /> : undefined}
         >
-          Cancel
+          {t("common.cancel")}
         </Button>
       )}
       {job.state === "failed" && mine && (
@@ -671,9 +701,9 @@ function JobRowActions({
           <Tooltip
             title={
               aiDisabled
-                ? "AI not configured"
+                ? t("aiStudio.notConfiguredTitle")
                 : job.pipeline_type === "translate"
-                  ? "Can't retry a translate run — the job row doesn't record which resource type (ULT/UST) it drafted"
+                  ? t("aiStudio.cantRetryTranslate")
                   : ""
             }
           >
@@ -684,18 +714,18 @@ function JobRowActions({
                 disabled={aiDisabled || retrying || job.pipeline_type === "translate"}
                 startIcon={retrying ? <CircularProgress size={12} /> : undefined}
               >
-                Retry
+                {t("common.retry")}
               </Button>
             </span>
           </Tooltip>
           <Button size="small" color="inherit" onClick={onDismiss}>
-            Dismiss
+            {t("pipeline.dismiss")}
           </Button>
         </>
       )}
       {(job.state === "cancelled" || job.state === "done") && (
         <Button size="small" color="inherit" onClick={onDismiss}>
-          Dismiss
+          {t("pipeline.dismiss")}
         </Button>
       )}
     </Stack>
@@ -703,28 +733,29 @@ function JobRowActions({
 }
 
 function JobCard({ job, me, aiDisabled, retrying, cancelling, onRetry, onCancel, onDismiss }: JobRowProps) {
+  const { t } = useTranslation();
   const mine = isMine(job, me);
   return (
     <Box sx={{ p: 1.75 }}>
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            {TYPE_LABEL[job.pipeline_type] ?? job.pipeline_type}
+            {typeLabel(job.pipeline_type, t)}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            {scopeOf(job)} · {timeAgo(job.created_at)} · {requestedByLabel(job, me)}
+            {scopeOf(job, t)} · {timeAgo(job.created_at, t)} · {requestedByLabel(job, me, t)}
           </Typography>
         </Box>
-        <FlowStatusChip kind={stateChipKind(job.state)} label={job.state} />
+        <FlowStatusChip kind={stateChipKind(job.state)} label={stateLabel(job.state, t)} />
       </Stack>
       <Box sx={{ mt: 1 }}>
         {job.state === "failed" ? (
           <Typography variant="caption" color="warning.main">
-            {(job.error_kind && ERROR_COPY[job.error_kind]) || `Unrecognized error: ${job.error_kind}`}
+            {errorCopy(job.error_kind, t)}
           </Typography>
         ) : (
           <Typography variant="caption" color="text.secondary">
-            {progressText(job)}
+            {progressText(job, t)}
           </Typography>
         )}
       </Box>

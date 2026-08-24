@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // Tap-to-pair alignment, ported from the #tapView half of
 // docs/flows/ui/t4-align.html and the interaction spec in
 // docs/flows/04-mobile-alignment.md. Phone-first, keyboard-accessible: every
@@ -23,6 +20,7 @@
 //     proposals, so the queue here is real or it is empty.
 
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
@@ -78,6 +76,7 @@ export function AlignTapView({
   ghosts,
   onDismissGhost,
 }: AlignTapViewProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   // >=560 matches AlignScreen's own "tablet" band (docs/flows/04-mobile-alignment):
   // the reporter's stated preference is wrap on tablet/desktop, scroll on phone.
@@ -250,7 +249,7 @@ export function AlignTapView({
               marginBlockEnd: 1,
             }}
           >
-            Suggestion 1 of {queue.length}
+            {t("flowAlign.tap.suggestionOf", { total: queue.length })}
           </Typography>
           <Box
             sx={{
@@ -286,7 +285,7 @@ export function AlignTapView({
               disabled={!canEdit}
               sx={{ flex: 1, minHeight: 44, fontWeight: 700 }}
             >
-              ✓ Accept
+              {t("flowAlign.tap.accept")}
             </Button>
             <Button
               variant="outlined"
@@ -296,7 +295,7 @@ export function AlignTapView({
               }}
               sx={{ flex: 1, minHeight: 44, fontWeight: 700 }}
             >
-              ✗ Skip
+              {t("flowAlign.tap.skip")}
             </Button>
           </Box>
         </Box>
@@ -315,8 +314,8 @@ export function AlignTapView({
           }}
         >
           {ghosts.size === 0
-            ? "No alignment suggestions available for this verse right now — pair the words below by tapping."
-            : "All suggestions reviewed — manual tap-to-pair is below."}
+            ? t("flowAlign.tap.noSuggestions")
+            : t("flowAlign.tap.allReviewed")}
         </Typography>
       )}
 
@@ -343,7 +342,7 @@ export function AlignTapView({
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {alignedCount} of {totalTargets} words aligned
+          {t("flowAlign.tap.alignedOf", { aligned: alignedCount, total: totalTargets })}
         </Box>
         <Button
           onClick={jumpToUnaligned}
@@ -357,16 +356,20 @@ export function AlignTapView({
             fontWeight: 700,
           }}
         >
-          Jump to unaligned ↓
+          {t("flowAlign.tap.jumpToUnaligned")}
         </Button>
       </Box>
 
       {/* ── source ribbon: one card per source word/group, always visible ── */}
       <Box sx={{ display: "flex", justifyContent: "flex-end", marginBlockEnd: 0.5 }}>
-        <Tooltip title={wrapRibbon ? "Scroll word list instead of wrapping" : "Wrap word list instead of scrolling"}>
+        <Tooltip
+          title={
+            wrapRibbon ? t("flowAlign.tap.scrollInstead") : t("flowAlign.tap.wrapInstead")
+          }
+        >
           <IconButton
             size="small"
-            aria-label="Toggle source word list wrapping"
+            aria-label={t("flowAlign.tap.toggleWrapAria")}
             aria-pressed={wrapRibbon}
             onClick={() => setWrapRibbon((v) => !v)}
           >
@@ -387,7 +390,7 @@ export function AlignTapView({
       >
         <Box
           role="list"
-          aria-label="Source word groups"
+          aria-label={t("flowAlign.tap.sourceGroupsAria")}
           sx={{
             display: "flex",
             gap: 1.25,
@@ -454,14 +457,15 @@ export function AlignTapView({
                   sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, minHeight: 30 }}
                 >
                   {card.targets.length === 0 ? (
-                    // UI chrome, always English — pin dir so it doesn't inherit
-                    // the surrounding rtl box's direction (issue #163).
+                    // UI chrome in the UI language — `dir="auto"` so it follows
+                    // its own text rather than inheriting the surrounding
+                    // scripture-direction box (issue #163).
                     <Typography
                       variant="caption"
-                      dir="ltr"
+                      dir="auto"
                       sx={{ color: "text.secondary", fontStyle: "italic", alignSelf: "center", textAlign: "start" }}
                     >
-                      unaligned
+                      {t("flowAlign.tap.unaligned")}
                     </Typography>
                   ) : (
                     card.targets.map((t) => {
@@ -494,7 +498,7 @@ export function AlignTapView({
                       fontWeight: 700,
                     }}
                   >
-                    Split
+                    {t("flowAlign.tap.split")}
                   </Button>
                 )}
               </Box>
@@ -506,7 +510,7 @@ export function AlignTapView({
       {/* ── target pool ───────────────────────────────────────────────── */}
       <Box
         role="list"
-        aria-label="Unaligned target words"
+        aria-label={t("flowAlign.tap.poolAria")}
         dir={targetRtl ? "rtl" : "ltr"}
         sx={{
           display: "flex",
@@ -522,10 +526,11 @@ export function AlignTapView({
         }}
       >
         {pool.length === 0 ? (
-          // UI chrome, always English — pin dir so it doesn't inherit the
-          // surrounding rtl box's direction (issue #163).
-          <Typography variant="body2" dir="ltr" sx={{ color: "text.secondary", fontStyle: "italic", textAlign: "start" }}>
-            All target words are aligned.
+          // UI chrome in the UI language — `dir="auto"` so it follows its own
+          // text rather than inheriting the surrounding scripture-direction
+          // box (issue #163).
+          <Typography variant="body2" dir="auto" sx={{ color: "text.secondary", fontStyle: "italic", textAlign: "start" }}>
+            {t("flowAlign.tap.allAligned")}
           </Typography>
         ) : (
           pool.map((t) => (
@@ -544,7 +549,7 @@ export function AlignTapView({
       {selection.ids.length > 0 && (
         <Box
           role="region"
-          aria-label="Alignment actions"
+          aria-label={t("flowAlign.tap.actionsAria")}
           sx={{
             position: "sticky",
             insetBlockEnd: 0,
@@ -563,13 +568,23 @@ export function AlignTapView({
           }}
         >
           <Typography variant="caption" sx={{ color: "text.secondary" }}>
-            {selection.ids.length} {selection.side} word
-            {selection.ids.length > 1 ? "s" : ""} selected —{" "}
-            {!canEdit
-              ? "view-only access, so pairings can't be changed"
-              : selection.side === "target"
-                ? "tap a source card to attach"
-                : "tap a target word to attach"}
+            {/* The side is part of the sentence, so it gets its own key per
+                side rather than a spliced-in noun — plural agreement and word
+                order differ per language. `selection.side` stays the English
+                identity used in logic; only the sentence is translated. */}
+            {t(
+              selection.side === "target"
+                ? "flowAlign.tap.selectedTarget"
+                : "flowAlign.tap.selectedSource",
+              {
+                count: selection.ids.length,
+                hint: !canEdit
+                  ? t("flowAlign.tap.hintViewOnly")
+                  : selection.side === "target"
+                    ? t("flowAlign.tap.hintTapSource")
+                    : t("flowAlign.tap.hintTapTarget"),
+              },
+            )}
           </Typography>
           <Box sx={{ flex: 1 }} />
           {selection.side === "target" && (
@@ -578,7 +593,7 @@ export function AlignTapView({
               disabled={!canEdit}
               sx={{ minHeight: 44, bgcolor: warn.soft, color: warn.ink, fontWeight: 700 }}
             >
-              Unalign
+              {t("flowAlign.tap.unalign")}
             </Button>
           )}
           {selection.side === "source" && selection.ids.length >= 2 && (
@@ -588,7 +603,7 @@ export function AlignTapView({
               disabled={!canEdit}
               sx={{ minHeight: 44, fontWeight: 700 }}
             >
-              ⧉ Combine
+              {t("flowAlign.tap.combine")}
             </Button>
           )}
           <Button
@@ -596,7 +611,7 @@ export function AlignTapView({
             onClick={() => setSelection(NO_SELECTION)}
             sx={{ minHeight: 44, fontWeight: 700 }}
           >
-            Clear
+            {t("aligner.clear")}
           </Button>
         </Box>
       )}

@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // Status chip shared by the flow screens. Mirrors the .chip-* rules in
 // docs/flows/ui/_tokens.css: pill radius, soft ground, ink text, ~0.75rem
 // semibold. Semantic colors come from theme.palette.flows (D4) — never
@@ -8,6 +5,7 @@
 
 import Chip, { type ChipProps } from "@mui/material/Chip";
 import { useTheme } from "@mui/material/styles";
+import { useTranslation } from "react-i18next";
 
 export type FlowStatusKind =
   | "draft"
@@ -20,23 +18,25 @@ export type FlowStatusKind =
 
 export interface FlowStatusChipProps {
   kind: FlowStatusKind;
-  /** Overrides the default English label for this kind. */
+  /** Overrides the default label for this kind. */
   label?: string;
   size?: ChipProps["size"];
 }
 
-const DEFAULT_LABELS: Record<FlowStatusKind, string> = {
-  draft: "Draft",
-  approved: "Approved",
-  edited: "Edited",
-  trashed: "Trashed",
-  ok: "OK",
-  warn: "Needs attention",
-  skip: "Skipped",
+// Default label keys per kind — translated at render.
+const DEFAULT_LABEL_KEYS: Record<FlowStatusKind, string> = {
+  draft: "flowTranslate.status.draft",
+  approved: "flowTranslate.status.approved",
+  edited: "flowTranslate.status.edited",
+  trashed: "flowTranslate.status.trashed",
+  ok: "flowTranslate.status.ok",
+  warn: "flowTranslate.status.needsAttention",
+  skip: "flowTranslate.status.skipped",
 };
 
 export function FlowStatusChip({ kind, label, size = "small" }: FlowStatusChipProps) {
   const theme = useTheme();
+  const { t } = useTranslation();
   const dark = theme.palette.mode === "dark";
   const { ok, warn, skip } = theme.palette.flows;
 
@@ -73,7 +73,7 @@ export function FlowStatusChip({ kind, label, size = "small" }: FlowStatusChipPr
   return (
     <Chip
       size={size}
-      label={label ?? DEFAULT_LABELS[kind]}
+      label={label ?? t(DEFAULT_LABEL_KEYS[kind])}
       sx={{
         background,
         color,

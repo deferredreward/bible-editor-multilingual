@@ -1,5 +1,5 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
+// i18n: user-visible strings go through t() under the `flowWords` namespace
+// (plus `common.*` for exact shared verbs).
 //
 // TranslateWordsScreen — the per-book "Words & Articles" translation queue,
 // built to the approved "Words & Articles · Titus" artifact and following the
@@ -134,6 +134,8 @@
 // contract ArticlesScreen.tsx:575-586 implements.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   Alert,
   Box,
@@ -257,12 +259,16 @@ function aggregateState(states: ArticleState[]): ArticleState {
   return null;
 }
 
-function chipFor(state: ArticleState, dirty: boolean): { kind: FlowStatusKind; label: string } {
-  if (dirty) return { kind: "edited", label: "Edited" };
-  if (state === "validated") return { kind: "approved", label: "Approved" };
-  if (state === "edited") return { kind: "edited", label: "Edited" };
-  if (state === "ai_draft") return { kind: "draft", label: "AI draft" };
-  return { kind: "draft", label: "Not started" };
+function chipFor(
+  state: ArticleState,
+  dirty: boolean,
+  t: TFunction,
+): { kind: FlowStatusKind; label: string } {
+  if (dirty) return { kind: "edited", label: t("flowWords.chipEdited") };
+  if (state === "validated") return { kind: "approved", label: t("flowWords.chipApproved") };
+  if (state === "edited") return { kind: "edited", label: t("flowWords.chipEdited") };
+  if (state === "ai_draft") return { kind: "draft", label: t("flowWords.chipAiDraft") };
+  return { kind: "draft", label: t("flowWords.chipNotStarted") };
 }
 
 // tA parts order title → sub-title → body; tw is body-only.
@@ -329,6 +335,7 @@ interface BookItem {
 }
 
 export default function TranslateWordsScreen({ role, book }: TranslateWordsScreenProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
   const INSPIRE = "#31ADE3";
@@ -339,7 +346,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
-  const targetLabel = projectConfig?.languageName || "Target";
+  const targetLabel = projectConfig?.languageName || t("flowWords.target");
   const sourceLangLabel = (projectConfig?.translationSource?.languageCode ?? "en").toUpperCase();
   const direction: "ltr" | "rtl" = projectConfig?.direction === "rtl" ? "rtl" : "ltr";
 
@@ -527,7 +534,14 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
   }, [twHook.refetch, taHook.refetch]);
 
   // ── render gates (every hook above this line, unconditionally) ───────────
-  const sub = `${book} · ${sourceLangLabel} to ${targetLabel}`;
+  const sub = t("flowWords.subLine", { book, source: sourceLangLabel, target: targetLabel });
+
+  // One phrasing per resource, shared by the list rows and both detail
+  // variants: "N occurrences in BOOK" (tw) / "linked from N notes in BOOK" (ta).
+  const countLabelOf = (item: { resource: Resource; count: number }) =>
+    item.resource === "tw"
+      ? t("flowWords.occurrencesIn", { count: item.count, book })
+      : t("flowWords.linkedFrom", { count: item.count, book });
 
   const cardSx = {
     bgcolor: "background.paper",
@@ -553,10 +567,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
   if (!translationMode) {
     return (
       <Box sx={{ p: 3, maxWidth: COLUMN_PX, mx: "auto" }}>
-        <Alert severity="info">
-          Words &amp; Articles translation only applies to translation-mode (gateway-language)
-          projects — this workspace authors its resources rather than translating them.
-        </Alert>
+        <Alert severity="info">{t("flowWords.notTranslationMode")}</Alert>
       </Box>
     );
   }
@@ -564,7 +575,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
   if (summaryStatus === "error") {
     return (
       <Box sx={{ p: 3, maxWidth: COLUMN_PX, mx: "auto" }}>
-        <Alert severity="error">Could not load {book}.</Alert>
+        <Alert severity="error">{t("flowWords.loadError", { book })}</Alert>
       </Box>
     );
   }
@@ -579,11 +590,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
           resource={selected.resource}
           articleId={selected.id}
           paths={selectedItem.paths}
-          countLabel={
-            selected.resource === "tw"
-              ? `${selectedItem.count} ${selectedItem.count === 1 ? "occurrence" : "occurrences"} in ${book}`
-              : `linked from ${selectedItem.count} ${selectedItem.count === 1 ? "note" : "notes"} in ${book}`
-          }
+          countLabel={countLabelOf(selectedItem)}
           canEdit={canEdit}
           sourceLangLabel={sourceLangLabel}
           targetLabel={targetLabel}
@@ -628,7 +635,9 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
           variant="caption"
           sx={{ ml: "auto !important", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}
         >
-          {pop.length > 0 ? `${okCount} of ${pop.length} approved` : "none here"}
+          {pop.length > 0
+            ? t("flowWords.approvedOf", { n: okCount, total: pop.length })
+            : t("flowWords.noneHere")}
         </Typography>
       </Stack>
     );
@@ -698,7 +707,9 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
           variant="caption"
           sx={{ ml: "auto", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}
         >
-          {pop.length > 0 ? `${okCount} of ${pop.length} approved` : "none here"}
+          {pop.length > 0
+            ? t("flowWords.approvedOf", { n: okCount, total: pop.length })
+            : t("flowWords.noneHere")}
         </Typography>
       </Box>
     );
@@ -717,17 +728,14 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
   };
 
   const listRow = (item: BookItem) => {
-    const chip = chipFor(item.state, dirtyArticleIds.has(`${item.resource}/${item.id}`));
-    const countText =
-      item.resource === "tw"
-        ? `${item.count} ${item.count === 1 ? "occurrence" : "occurrences"} in ${book}`
-        : `linked from ${item.count} ${item.count === 1 ? "note" : "notes"} in ${book}`;
+    const chip = chipFor(item.state, dirtyArticleIds.has(`${item.resource}/${item.id}`), t);
+    const countText = countLabelOf(item);
     if (!item.populated) {
       return (
         <Box key={`${item.resource}/${item.id}`} sx={{ ...cardSx, opacity: 0.72, paddingBlock: 1.25 }}>
           <Typography sx={{ fontWeight: 600, fontSize: "0.97rem" }}>{item.slug}</Typography>
           <Typography variant="body2" color="text.secondary" noWrap>
-            {item.category} · {countText} · source not populated in this workspace
+            {item.category} · {countText} · {t("flowWords.notPopulated")}
           </Typography>
         </Box>
       );
@@ -769,7 +777,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
         </Box>
         {dirtyArticleIds.has(`${item.resource}/${item.id}`) && (
           <Box
-            aria-label="Unsaved draft"
+            aria-label={t("flowWords.unsavedDraft")}
             sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: "#E59D33", flex: "none" }}
           />
         )}
@@ -794,47 +802,43 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
     <>
       {(twHook.error || taHook.error) && (
         <Alert severity="warning">
-          The article list could not be loaded
-          {twHook.error ? ` (tW: ${twHook.error.message})` : ""}
-          {taHook.error ? ` (tA: ${taHook.error.message})` : ""}.
+          {t("flowWords.listLoadFailed", {
+            details: `${twHook.error ? ` (tW: ${twHook.error.message})` : ""}${
+              taHook.error ? ` (tA: ${taHook.error.message})` : ""
+            }`,
+          })}
         </Alert>
       )}
 
       {scanning && (
         <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0, mt: 0.5 }}>
-          Scanning {book}&rsquo;s chapters for word links and note references —{" "}
-          {chaptersReady} of {chapterTotal} loaded…
+          {t("flowWords.scanning", { book, ready: chaptersReady, total: chapterTotal })}
         </Typography>
       )}
       {chaptersFailed > 0 && (
         <Alert severity="warning">
-          {chaptersFailed} chapter{chaptersFailed === 1 ? "" : "s"} of {book} failed to load, so
-          the lists and occurrence counts below may be incomplete.
+          {t("flowWords.chaptersFailed", { count: chaptersFailed, book })}
         </Alert>
       )}
 
       {nothingYet ? (
-        <Alert severity="info">
-          No translationWords links or translationAcademy references found in {book}.
-        </Alert>
+        <Alert severity="info">{t("flowWords.nothingFound", { book })}</Alert>
       ) : (
         <>
-          {sectionHead("Words", termItems)}
-          {collapsibleHead("kt", "Key terms", ktItems)}
-          {groupRows("kt", ktItems, `No key terms linked in ${book}.`)}
-          {collapsibleHead("names", "Names", namesItems)}
-          {groupRows("names", namesItems, `No names linked in ${book}.`)}
-          {collapsibleHead("other", "Other", otherItems)}
-          {groupRows("other", otherItems, `No other terms linked in ${book}.`)}
+          {sectionHead(t("flowWords.sectionWords"), termItems)}
+          {collapsibleHead("kt", t("flowWords.groupKeyTerms"), ktItems)}
+          {groupRows("kt", ktItems, t("flowWords.emptyKeyTerms", { book }))}
+          {collapsibleHead("names", t("flowWords.groupNames"), namesItems)}
+          {groupRows("names", namesItems, t("flowWords.emptyNames", { book }))}
+          {collapsibleHead("other", t("flowWords.groupOther"), otherItems)}
+          {groupRows("other", otherItems, t("flowWords.emptyOther", { book }))}
 
-          {collapsibleHead("ta", "Academy articles", taItems)}
-          {groupRows("ta", taItems, `No translationAcademy references in ${book}’s notes.`)}
+          {collapsibleHead("ta", t("flowWords.sectionAcademy"), taItems)}
+          {groupRows("ta", taItems, t("flowWords.emptyAcademy", { book }))}
 
           {unpopulatedCount > 0 && (
             <Typography variant="caption" color="text.secondary" component="p" sx={{ mx: 0.25 }}>
-              {unpopulatedCount} of the articles referenced in {book} have no populated source in
-              this workspace, so they can be seen above but not translated here. An admin can
-              populate them from the Articles workspace.
+              {t("flowWords.unpopulatedNote", { count: unpopulatedCount, book })}
             </Typography>
           )}
         </>
@@ -868,7 +872,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
         <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
-              aria-label={`Back to the ${book} package`}
+              aria-label={t("flowWords.backToPackage", { book })}
               onClick={() => {
                 location.hash = `#/package/${book}`;
               }}
@@ -878,7 +882,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
             </IconButton>
             <Box sx={{ minWidth: 0 }}>
               <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
-                Words &amp; Articles
+                {t("flowWords.title")}
               </Typography>
               <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
                 {sub}
@@ -894,7 +898,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
                 whiteSpace: "nowrap",
               }}
             >
-              {approvedCount} of {populated.length} approved
+              {t("flowWords.approvedOf", { n: approvedCount, total: populated.length })}
             </Typography>
           </Stack>
           <Box sx={{ height: 4, borderRadius: "2px", bgcolor: skip.soft, mt: 1.25, overflow: "hidden" }}>
@@ -963,11 +967,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
                 resource={selected.resource}
                 articleId={selected.id}
                 paths={selectedItem.paths}
-                countLabel={
-                  selected.resource === "tw"
-                    ? `${selectedItem.count} ${selectedItem.count === 1 ? "occurrence" : "occurrences"} in ${book}`
-                    : `linked from ${selectedItem.count} ${selectedItem.count === 1 ? "note" : "notes"} in ${book}`
-                }
+                countLabel={countLabelOf(selectedItem)}
                 canEdit={canEdit}
                 sourceLangLabel={sourceLangLabel}
                 targetLabel={targetLabel}
@@ -980,7 +980,7 @@ export default function TranslateWordsScreen({ role, book }: TranslateWordsScree
             ) : (
               <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", p: 4 }}>
                 <Typography variant="body2" color="text.secondary" textAlign="center">
-                  Select a word or article to translate it here.
+                  {t("flowWords.selectPrompt")}
                 </Typography>
               </Stack>
             )}
@@ -1055,6 +1055,7 @@ function ArticleDetail({
   onServerChange,
   onToast,
 }: ArticleDetailProps) {
+  const { t } = useTranslation();
   const pane = variant === "pane";
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
@@ -1232,15 +1233,15 @@ function ArticleDetail({
         if (job.state === "done") {
           setReloadKey((k) => k + 1);
           onServerChange();
-          onToast("New draft ready");
+          onToast(t("flowWords.toastNewDraft"));
         } else {
           setNotice({
-            text: `The AI redraft did not finish (${job.error_message ?? job.state}).`,
+            text: t("flowWords.redoFailed", { error: job.error_message ?? job.state }),
             severity: "warning",
           });
         }
       }),
-    [onServerChange, onToast],
+    [onServerChange, onToast, t],
   );
 
   // ── writes ────────────────────────────────────────────────────────────────
@@ -1271,13 +1272,14 @@ function ArticleDetail({
           persistDraft(fresh, draftsByPath[part.path] ?? "");
         }
         setNotice({
-          text:
-            "Someone else saved part of this article first. Your text is still here — only the version number was refreshed, so saving again will go through.",
+          text: t("flowWords.saveConflict"),
           severity: "warning",
         });
       } else {
         setNotice({
-          text: `Saving failed (${r.reason instanceof ApiError ? r.reason.status : "error"}).`,
+          text: t("flowWords.saveFailed", {
+            error: r.reason instanceof ApiError ? r.reason.status : "error",
+          }),
           severity: "warning",
         });
       }
@@ -1292,7 +1294,7 @@ function ArticleDetail({
     setNotice(null);
     try {
       const fresh = await saveDirtyParts();
-      if (fresh) onToast("Saved");
+      if (fresh) onToast(t("flowWords.toastSaved"));
     } finally {
       setBusy(false);
     }
@@ -1311,7 +1313,7 @@ function ArticleDetail({
       const targets = fresh.filter((p) => (p.translation_state ?? null) !== null);
       if (targets.length === 0) {
         setNotice({
-          text: "Nothing to approve yet — write a draft or run Redo first.",
+          text: t("flowWords.nothingToApprove"),
           severity: "info",
         });
         return;
@@ -1325,14 +1327,16 @@ function ArticleDetail({
         else {
           anyFail = true;
           setNotice({
-            text: `Approve failed (${r.reason instanceof ApiError ? r.reason.status : "error"}).`,
+            text: t("flowWords.approveFailed", {
+              error: r.reason instanceof ApiError ? r.reason.status : "error",
+            }),
             severity: "warning",
           });
         }
       }
       onServerChange();
       if (!anyFail) {
-        onToast("Approved");
+        onToast(t("flowWords.toastApproved"));
         onApproved();
       }
     } finally {
@@ -1351,7 +1355,7 @@ function ArticleDetail({
         translate: { resourceType: resource, articleId },
       });
       setNotice({
-        text: "The AI is redrafting this article in the background — the new draft appears here when it lands.",
+        text: t("flowWords.redoStarted"),
         severity: "info",
       });
     } catch (e) {
@@ -1360,10 +1364,12 @@ function ArticleDetail({
       const code = body?.error ?? "";
       // 503 pipeline_api_disabled = BT_API_TOKEN unset (api/src/pipelines.ts:995).
       if ((e instanceof ApiError && e.status === 503) || code === "pipeline_api_disabled") {
-        setAiUnavailable("AI drafting isn't set up for this workspace yet.");
+        setAiUnavailable(t("flowWords.aiUnavailable"));
       } else {
         setNotice({
-          text: `Couldn't start the AI redraft (${code || (e instanceof ApiError ? e.status : "error")}).`,
+          text: t("flowWords.redoStartFailed", {
+            error: code || (e instanceof ApiError ? e.status : "error"),
+          }),
           severity: "warning",
         });
       }
@@ -1383,27 +1389,31 @@ function ArticleDetail({
       : firstHeading(bodyPart ? draftsByPath[bodyPart.path] : null) ?? "";
 
   const aggregate = aggregateState((parts ?? []).map((p) => p.translation_state ?? null));
-  const chip = chipFor(aggregate, anyDirty);
+  const chip = chipFor(aggregate, anyDirty, t);
   const nothingToApprove =
     parts !== null && !anyDirty && parts.every((p) => (p.translation_state ?? null) === null);
 
   const approveBlockedReason = !canEdit
-    ? "You have view-only access to this project."
+    ? t("flowWords.viewOnlyProject")
     : editingPath !== null
-      ? "Finish editing first (tap Done)."
+      ? t("flowWords.finishEditing")
       : nothingToApprove
-        ? "Nothing to approve yet — write a draft or run Redo first."
+        ? t("flowWords.nothingToApprove")
         : null;
   const redoBlockedReason = aiUnavailable
     ? aiUnavailable
     : !canEdit
-      ? "You have view-only access to this project."
+      ? t("flowWords.viewOnlyProject")
       : editingPath !== null
-        ? "Finish editing first (tap Done)."
+        ? t("flowWords.finishEditing")
         : null;
 
   const partHeading = (part: ArticleUnit): string =>
-    part.part === "title" ? "Title" : part.part === "sub-title" ? "Subtitle" : "Article";
+    part.part === "title"
+      ? t("flowWords.partTitle")
+      : part.part === "sub-title"
+        ? t("flowWords.partSubtitle")
+        : t("flowWords.partArticle");
 
   const langTagSx = {
     display: "block",
@@ -1494,7 +1504,9 @@ function ArticleDetail({
           <MarkdownView markdown={text} dir={direction} />
         ) : (
           <Box component="em" sx={{ color: "text.secondary" }}>
-            Nothing drafted yet{canEdit ? ` — tap to write this in ${targetLabel}.` : "."}
+            {canEdit
+              ? t("flowWords.nothingDraftedTap", { target: targetLabel })
+              : t("flowWords.nothingDrafted")}
           </Box>
         )}
       </Box>
@@ -1532,11 +1544,11 @@ function ArticleDetail({
           <Button
             onClick={() => {
               setEditingPath(null);
-              if (isDirtyPart(part)) onToast("Draft updated");
+              if (isDirtyPart(part)) onToast(t("flowWords.toastDraftUpdated"));
             }}
             sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
           >
-            Done
+            {t("flowWords.done")}
           </Button>
         </Stack>
       </Box>
@@ -1571,8 +1583,7 @@ function ArticleDetail({
           </Box>
           {tgt.trim().length > 0 && (
             <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1 }}>
-              Source and target have different section counts, so they are shown as whole columns
-              rather than paired by section.
+              {t("flowWords.sectionCountMismatch")}
             </Typography>
           )}
         </>
@@ -1624,8 +1635,9 @@ function ArticleDetail({
           </Box>
         ))}
         <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1.5 }}>
-          Sections are paired for reading; tapping a {targetLabel} section edits this whole{" "}
-          {resource === "ta" ? "part" : "article"} — sections aren&rsquo;t saved separately.
+          {resource === "ta"
+            ? t("flowWords.pairedNotePart", { target: targetLabel })
+            : t("flowWords.pairedNoteArticle", { target: targetLabel })}
         </Typography>
       </>
     );
@@ -1676,7 +1688,7 @@ function ArticleDetail({
             <Stack direction="row" alignItems="center" spacing={1.25}>
               {!pane && (
                 <IconButton
-                  aria-label="Back to the list"
+                  aria-label={t("flowWords.backToList")}
                   onClick={onBack}
                   sx={{ bgcolor: skip.soft, width: 34, height: 34, flex: "none" }}
                 >
@@ -1727,19 +1739,13 @@ function ArticleDetail({
         )}
         {staleDraft && (
           <Alert severity="warning" onClose={() => setStaleDraft(false)}>
-            Your unsaved draft here predates a newer server version — saving now would overwrite
-            that newer copy.
+            {t("flowWords.staleDraft")}
           </Alert>
         )}
-        {!canEdit && (
-          <Alert severity="info">
-            You have view-only access to this project — the article can be read but not edited or
-            approved.
-          </Alert>
-        )}
+        {!canEdit && <Alert severity="info">{t("flowWords.viewOnlyArticle")}</Alert>}
 
         {loadError ? (
-          <Alert severity="error">Could not load this article ({loadError}).</Alert>
+          <Alert severity="error">{t("flowWords.articleLoadError", { error: loadError })}</Alert>
         ) : parts === null ? (
           <Stack alignItems="center" sx={{ p: 4 }}>
             <CircularProgress />
@@ -1752,12 +1758,12 @@ function ArticleDetail({
                 direction="row"
                 spacing={0.5}
                 role="group"
-                aria-label="Language"
+                aria-label={t("flowWords.langAria")}
                 sx={{ bgcolor: skip.soft, borderRadius: "10px", p: 0.5 }}
               >
-                {segButton("target", `Target · ${targetLabel}`)}
-                {segButton("source", `Source · ${sourceLangLabel}`)}
-                {segButton("both", "Both")}
+                {segButton("target", t("flowWords.segTarget", { label: targetLabel }))}
+                {segButton("source", t("flowWords.segSource", { label: sourceLangLabel }))}
+                {segButton("both", t("flowWords.segBoth"))}
               </Stack>
             )}
 
@@ -1765,7 +1771,7 @@ function ArticleDetail({
               {/* draft row: chip + honest AI/save affordances */}
               <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
                 {lang === "source" ? (
-                  <FlowStatusChip kind="skip" label="Source · read-only" />
+                  <FlowStatusChip kind="skip" label={t("flowWords.chipSourceReadOnly")} />
                 ) : (
                   <FlowStatusChip kind={chip.kind} label={chip.label} />
                 )}
@@ -1778,7 +1784,7 @@ function ArticleDetail({
                     onClick={() => void handleSave()}
                     sx={{ minHeight: 36, color: ACCENT, fontWeight: 700 }}
                   >
-                    Save
+                    {t("common.save")}
                   </Button>
                 )}
               </Stack>
@@ -1827,7 +1833,7 @@ function ArticleDetail({
 
               {lang !== "source" && editingPath === null && canEdit && (
                 <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1.5 }}>
-                  Tap the {targetLabel} text to edit
+                  {t("flowWords.tapToEdit", { target: targetLabel })}
                 </Typography>
               )}
               {aiUnavailable && (
@@ -1883,10 +1889,7 @@ function ArticleDetail({
             <Button
               variant="outlined"
               disabled={redoBlockedReason !== null || redoing || busy}
-              title={
-                redoBlockedReason ??
-                "Ask the AI for a fresh draft of this article (runs in the background)"
-              }
+              title={redoBlockedReason ?? t("flowWords.redoTitle")}
               onClick={() => void handleRedo()}
               startIcon={
                 <AutoAwesomeIcon
@@ -1910,11 +1913,11 @@ function ArticleDetail({
                 borderWidth: "1.5px",
               }}
             >
-              {redoing ? "Redrafting…" : "Redo"}
+              {redoing ? t("flowWords.redrafting") : t("flowWords.redo")}
             </Button>
             <Button
               disabled={approveBlockedReason !== null || busy || redoing}
-              title={approveBlockedReason ?? "Save any edits, then approve this article"}
+              title={approveBlockedReason ?? t("flowWords.approveTitle")}
               onClick={() => void handleApprove()}
               startIcon={<CheckIcon />}
               sx={{
@@ -1928,7 +1931,7 @@ function ArticleDetail({
                 "&.Mui-disabled": { bgcolor: skip.soft, color: skip.ink },
               }}
             >
-              Approve
+              {t("common.approve")}
             </Button>
           </Stack>
         </Box>

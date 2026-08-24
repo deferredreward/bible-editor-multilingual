@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // The one detail area of the verse fidelity overview, ported from the
 // `#detail` column of docs/mockups/book-package/verse.html. One selection model
 // feeds it: an original word (with its alignment group and morphology) or one
@@ -13,12 +10,14 @@
 // re-implementing (and possibly contradicting) it.
 
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import Link from "@mui/material/Link";
 import Typography from "@mui/material/Typography";
 import { alpha, useTheme } from "@mui/material/styles";
 
 import { FlowStatusChip } from "./FlowStatusChip";
+import { LEXICON_IMPORT_SCRIPT } from "./WordsLexiconStrip";
 import {
   laneTextFor,
   supportRefId,
@@ -107,6 +106,7 @@ function QuoteBlock({
 
 function NotRendered() {
   const theme = useTheme();
+  const { t } = useTranslation();
   return (
     <Box
       component="span"
@@ -120,7 +120,7 @@ function NotRendered() {
         paddingInline: 1,
       }}
     >
-      not rendered
+      {t("flowVerse.notRendered")}
     </Box>
   );
 }
@@ -133,6 +133,10 @@ function inlineNodes(line: string, keyBase: string): ReactNode[] {
     .replace(/\[\[rc:\/\/[^\]]*?\/([^/\]]+)\]\]/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
   const out: ReactNode[] = [];
+  // NOT user-facing chrome: this pattern matches the tN note BODY, which is
+  // authored data. "Alternate translation:" is the literal text stored in the
+  // row, so it must stay English here — translating the pattern would stop it
+  // matching, and the captured label is re-rendered verbatim from the data.
   const re = /\*\*([^*]+)\*\*|(Alternate translation:)\s*\[([^\]]*)\]/g;
   let last = 0;
   let m: RegExpExecArray | null;
@@ -171,10 +175,11 @@ function inlineNodes(line: string, keyBase: string): ReactNode[] {
 }
 
 function NoteBody({ text }: { text: string | null }) {
+  const { t } = useTranslation();
   if (!text || !text.trim()) {
     return (
       <Typography variant="body2" color="text.secondary" sx={{ fontStyle: "italic" }}>
-        This note has no body text.
+        {t("flowVerse.detail.noteNoBody")}
       </Typography>
     );
   }
@@ -249,6 +254,7 @@ function ResourceRowButton({
 // ─── word detail ────────────────────────────────────────────────────────────
 
 function WordCard({ word, entry }: { word: OriginalWord; entry: LexiconEntry | null }) {
+  const { t } = useTranslation();
   return (
     <Box
       sx={{
@@ -289,14 +295,14 @@ function WordCard({ word, entry }: { word: OriginalWord; entry: LexiconEntry | n
       ) : (
         <Typography variant="caption" component="p" color="text.secondary" sx={{ mt: 0.375 }}>
           {word.morph
-            ? "This morphology code is not one the decoder recognises."
-            : "This word carries no x-morph attribute."}
+            ? t("flowVerse.word.morphUnknown")
+            : t("flowVerse.word.noMorph")}
         </Typography>
       )}
 
       {word.decoded?.pronounSuffix && (
         <Typography variant="caption" component="p" sx={{ mt: 0.375 }}>
-          attached pronoun: <b>{word.decoded.pronounSuffix.gloss}</b>{" "}
+          {t("flowVerse.word.attachedPronoun")} <b>{word.decoded.pronounSuffix.gloss}</b>{" "}
           <Box component="span" sx={{ color: "text.secondary" }}>
             ({word.decoded.pronounSuffix.parse})
           </Box>
@@ -309,13 +315,13 @@ function WordCard({ word, entry }: { word: OriginalWord; entry: LexiconEntry | n
         color="text.secondary"
         sx={{ mt: 0.375, fontFamily: "monospace" }}
       >
-        {[word.strong || "(no Strong's)", word.morph].filter(Boolean).join(" · ")}
+        {[word.strong || t("flowVerse.word.noStrongParen"), word.morph].filter(Boolean).join(" · ")}
       </Typography>
 
       <Box sx={{ mt: 0.75, borderBlockStart: "1px dashed", borderColor: "divider", pt: 0.75 }}>
         {!word.strong ? (
           <Typography variant="caption" color="text.secondary">
-            No Strong&rsquo;s number on this word, so no lexicon lookup is possible.
+            {t("flowVerse.word.noStrongNoLookup")}
           </Typography>
         ) : entry ? (
           <>
@@ -336,14 +342,14 @@ function WordCard({ word, entry }: { word: OriginalWord; entry: LexiconEntry | n
             )}
             {!entry.gloss && !entry.definition && (
               <Typography variant="caption" color="text.secondary">
-                Lexicon entry found, but it carries no gloss or definition.
+                {t("flowVerse.word.entryNoGloss")}
               </Typography>
             )}
           </>
         ) : (
           <Typography variant="caption" color="text.secondary">
-            <em>No lexicon entry loaded for {word.strong}.</em> The local lexicon table is empty in
-            some environments — <code>scripts/import-lexicon.mjs</code> populates UHAL/UGL.
+            <em>{t("flowVerse.word.noEntryFor", { strong: word.strong })}</em>{" "}
+            {t("flowVerse.lexicon.emptyTable", { script: LEXICON_IMPORT_SCRIPT })}
           </Typography>
         )}
       </Box>
@@ -368,6 +374,7 @@ export function VerseDetailPane({
   onSelect,
 }: VerseDetailPaneProps) {
   const theme = useTheme();
+  const { t } = useTranslation();
 
   if (!selection) {
     return (
@@ -376,11 +383,10 @@ export function VerseDetailPane({
         color="text.secondary"
         sx={{ paddingBlock: 4, paddingInline: 0.25, textAlign: "start" }}
       >
-        Select a word, a row, a note or a word link.
+        {t("flowVerse.detail.emptyPrompt")}
         <br />
         <br />
-        Everything is anchored to the original words, so a selection anywhere lights up the same
-        place in all three texts.
+        {t("flowVerse.detail.emptyHint")}
       </Typography>
     );
   }
@@ -396,7 +402,7 @@ export function VerseDetailPane({
     if (selected.length === 0) {
       return (
         <Typography variant="body2" color="text.secondary" sx={{ paddingBlock: 4 }}>
-          That word is no longer in this verse.
+          {t("flowVerse.detail.wordGone")}
         </Typography>
       );
     }
@@ -411,37 +417,41 @@ export function VerseDetailPane({
           {topRef}
           <FlowStatusChip
             kind="skip"
-            label={`original word${selected.length > 1 ? "s" : ""}`}
+            label={t("flowVerse.detail.chipOriginalWord", { count: selected.length })}
           />
         </Box>
 
         <Box sx={{ mb: 2.25 }}>
-          <SectionLabel>Morphology · from {originalLabel}</SectionLabel>
+          <SectionLabel>{t("flowVerse.section.morphologyFrom", { label: originalLabel })}</SectionLabel>
           {selected.map((w) => (
             <WordCard key={w.position} word={w} entry={lexicon.get(w.strong) ?? null} />
           ))}
         </Box>
 
         <Box sx={{ mb: 2.25 }}>
-          <SectionLabel>Literal · {litLabel}</SectionLabel>
-          <QuoteBlock>{lit.present ? litText || <NotRendered /> : "This lane has no text in this workspace."}</QuoteBlock>
+          <SectionLabel>{t("flowVerse.section.literal", { label: litLabel })}</SectionLabel>
+          <QuoteBlock>
+            {lit.present ? litText || <NotRendered /> : t("flowVerse.detail.laneNoTextHere")}
+          </QuoteBlock>
         </Box>
 
         <Box sx={{ mb: 2.25 }}>
-          <SectionLabel>Simplified · {simLabel}</SectionLabel>
-          <QuoteBlock>{sim.present ? simText || <NotRendered /> : "This lane has no text in this workspace."}</QuoteBlock>
+          <SectionLabel>{t("flowVerse.section.simplified", { label: simLabel })}</SectionLabel>
+          <QuoteBlock>
+            {sim.present ? simText || <NotRendered /> : t("flowVerse.detail.laneNoTextHere")}
+          </QuoteBlock>
         </Box>
 
         {attached.length > 0 ? (
           <Box>
-            <SectionLabel>Attached here</SectionLabel>
+            <SectionLabel>{t("flowVerse.detail.attachedHere")}</SectionLabel>
             {attached.map((r) => (
               <ResourceRowButton key={r.key} item={r} onSelect={onSelect} />
             ))}
           </Box>
         ) : (
           <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.8rem" }}>
-            No note or word link attaches to this word.
+            {t("flowVerse.detail.noAttachments")}
           </Typography>
         )}
       </Box>
@@ -452,7 +462,7 @@ export function VerseDetailPane({
   if (!item) {
     return (
       <Typography variant="body2" color="text.secondary" sx={{ paddingBlock: 4 }}>
-        That resource is no longer in this verse.
+        {t("flowVerse.detail.resourceGone")}
       </Typography>
     );
   }
@@ -462,19 +472,18 @@ export function VerseDetailPane({
       <Box sx={{ textAlign: "start" }}>
         <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap", mb: 1.5 }}>
           {topRef}
-          <FlowStatusChip kind="skip" label="question" />
+          <FlowStatusChip kind="skip" label={t("flowVerse.detail.chipQuestion")} />
         </Box>
         <Box sx={{ mb: 2.25 }}>
-          <SectionLabel>Question</SectionLabel>
+          <SectionLabel>{t("questions.question")}</SectionLabel>
           <QuoteBlock>{item.tq?.question || "—"}</QuoteBlock>
         </Box>
         <Box sx={{ mb: 2.25 }}>
-          <SectionLabel>Expected answer</SectionLabel>
+          <SectionLabel>{t("flowQuestions.expectedAnswer")}</SectionLabel>
           <QuoteBlock>{item.tq?.response || "—"}</QuoteBlock>
         </Box>
         <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.8rem" }}>
-          A question that cannot be answered from the two renderings above is the clearest sign
-          that something in this verse does not line up.
+          {t("flowVerse.detail.tqHint")}
         </Typography>
       </Box>
     );
@@ -486,15 +495,19 @@ export function VerseDetailPane({
       <Box sx={{ textAlign: "start" }}>
         <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap", mb: 1.5 }}>
           {topRef}
-          <FlowStatusChip kind="edited" label={id || "no tW article linked"} />
+          <FlowStatusChip kind="edited" label={id || t("flowVerse.detail.chipNoTwArticle")} />
           {item.twl?.tags && <FlowStatusChip kind="skip" label={item.twl.tags} />}
           <FlowStatusChip
             kind={item.positions.length ? "ok" : "warn"}
-            label={item.positions.length ? "quote anchored" : "quote not found"}
+            label={
+              item.positions.length
+                ? t("flowVerse.detail.chipQuoteAnchored")
+                : t("flowVerse.detail.chipQuoteNotFound")
+            }
           />
         </Box>
         <Box sx={{ mb: 2.25 }}>
-          <SectionLabel>Linked from</SectionLabel>
+          <SectionLabel>{t("flowVerse.detail.linkedFrom")}</SectionLabel>
           <QuoteBlock original rtl={rtl}>
             {item.twl?.orig_words || "—"}
           </QuoteBlock>
@@ -508,20 +521,20 @@ export function VerseDetailPane({
             mb: 2.25,
           }}
         >
-          <Box sx={{ color: "text.secondary" }}>occurrence</Box>
+          <Box sx={{ color: "text.secondary" }}>{t("words.occurrenceAriaLabel")}</Box>
           <Box>{item.twl?.occurrence ?? 1}</Box>
-          <Box sx={{ color: "text.secondary" }}>link</Box>
+          <Box sx={{ color: "text.secondary" }}>{t("flowVerse.detail.link")}</Box>
           <Box sx={{ fontFamily: "monospace", overflowWrap: "anywhere" }}>
             {item.twl?.tw_link || "—"}
           </Box>
         </Box>
         {id ? (
           <Link href={`#/articles/tw/${encodeURIComponent(id)}`} sx={{ fontSize: "0.84rem" }}>
-            Read the translationWords article →
+            {t("flowVerse.detail.readTwArticle")}
           </Link>
         ) : (
           <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.8rem" }}>
-            This word link has no readable tW article reference.
+            {t("flowVerse.detail.noTwArticleRef")}
           </Typography>
         )}
       </Box>
@@ -538,14 +551,20 @@ export function VerseDetailPane({
         {slug && <FlowStatusChip kind="edited" label={slug} />}
         <FlowStatusChip
           kind={item.positions.length ? "ok" : "warn"}
-          label={item.quote ? (item.positions.length ? "quote anchored" : "quote not found") : "no quote"}
+          label={
+            item.quote
+              ? item.positions.length
+                ? t("flowVerse.detail.chipQuoteAnchored")
+                : t("flowVerse.detail.chipQuoteNotFound")
+              : t("flowVerse.detail.chipNoQuote")
+          }
         />
         {item.tn?.tags && <FlowStatusChip kind="skip" label={item.tn.tags} />}
       </Box>
 
       {item.quote && (
         <Box sx={{ mb: 2.25 }}>
-          <SectionLabel>Quote</SectionLabel>
+          <SectionLabel>{t("words.quote")}</SectionLabel>
           <QuoteBlock original rtl={rtl}>
             {item.quote.replace(/&/g, " … ")}
           </QuoteBlock>
@@ -553,7 +572,7 @@ export function VerseDetailPane({
       )}
 
       <Box sx={{ mb: 2.25 }}>
-        <SectionLabel>Note</SectionLabel>
+        <SectionLabel>{t("flowVerse.detail.note")}</SectionLabel>
         <NoteBody text={item.tn?.note ?? null} />
       </Box>
 
@@ -569,21 +588,19 @@ export function VerseDetailPane({
             padding: 1,
           }}
         >
-          This quote does not resolve against the original text of this verse, so the note cannot
-          be shown against any word. That happens when the quote was written in English, or when
-          the original text has changed since the note was written.
+          {t("flowVerse.detail.quoteUnresolved")}
         </Typography>
       )}
 
       {slug ? (
         <Link href={`#/articles/ta/${encodeURIComponent(short)}`} sx={{ fontSize: "0.84rem" }}>
-          Read the translationAcademy article →
+          {t("flowVerse.detail.readTaArticle")}
         </Link>
       ) : (
         <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.8rem" }}>
           {item.tn?.support_reference
-            ? `Support reference "${item.tn.support_reference}" is not a recognised tA article.`
-            : "This note has no translationAcademy article."}
+            ? t("flowVerse.detail.supportRefNotTa", { ref: item.tn.support_reference })
+            : t("flowVerse.detail.noTaArticle")}
         </Typography>
       )}
     </Box>

@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // The original-language quote strip, after .greek-strip / .quote-chip in
 // docs/flows/ui/t2-review.html — a region of its own above the note body, not
 // a line of the note.
@@ -12,6 +9,7 @@
 // which stylis inverts under an RTL UI.
 
 import type { Ref } from "react";
+import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Tooltip from "@mui/material/Tooltip";
@@ -41,6 +39,7 @@ export function ReviewSourceStrip({
   buildDisabledReason,
   buildButtonRef,
 }: ReviewSourceStripProps) {
+  const { t } = useTranslation();
   return (
     <Box sx={{ mb: 1.5, textAlign: "start" }}>
       <Box sx={{ display: "flex", alignItems: "baseline", gap: 1.25, flexWrap: "wrap" }}>
@@ -77,12 +76,12 @@ export function ReviewSourceStrip({
           </Box>
         ) : (
           <Typography variant="body2" color="text.secondary">
-            No {label} quote on this note.
+            {t("flowReview.source.noQuote", { label })}
           </Typography>
         )}
         {occurrence != null && occurrence !== 1 && (
           <Typography variant="caption" color="text.secondary">
-            occurrence {occurrence}
+            {t("flowReview.source.occurrence", { n: occurrence })}
           </Typography>
         )}
         <Tooltip title={buildDisabledReason ?? ""}>
@@ -95,7 +94,7 @@ export function ReviewSourceStrip({
               disabled={!onBuildFromSource}
               sx={{ borderStyle: "dashed", minHeight: 44 }}
             >
-              Build from source
+              {t("flowReview.source.buildFromSource")}
             </Button>
           </span>
         </Tooltip>

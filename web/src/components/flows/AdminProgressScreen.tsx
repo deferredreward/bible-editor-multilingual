@@ -1,5 +1,5 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
+// i18n: user-visible strings use t() with keys under the `adminPages`
+// namespace (en/ar values pending merge into web/src/i18n/locales/*.json).
 //
 // AdminProgressScreen — #/admin/progress, the Progress section of the
 // redesigned admin desk (rendered inside AdminDesk, which owns the rail
@@ -82,6 +82,8 @@
 // start-end); tables sit inside their own overflow-x wrappers.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import {
   Alert,
   Box,
@@ -289,11 +291,12 @@ interface FeedItem {
 const FEED_LIMIT = 12;
 
 export default function AdminProgressScreen({ role }: AdminProgressScreenProps) {
+  const { t } = useTranslation();
   const isAdmin = role === "admin";
   const cfg = useProjectConfig();
   const eyebrow = cfg
     ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}`
-    : "Workspace";
+    : t("adminPages.common.workspace");
 
   const [books, setBooks] = useState<BookListEntry[] | null>(null);
   const [booksError, setBooksError] = useState<string | null>(null);
@@ -319,7 +322,9 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
         setSummaries(new Map(sorted.map((b) => [b.book, { kind: "loading" } as SummaryState])));
       })
       .catch((err) => {
-        if (!cancelled) setBooksError(err instanceof Error ? err.message : "load failed");
+        // i18n.t (singleton), not the hook's t: t's identity changes per
+        // language and must not refire this fetch via the dep array.
+        if (!cancelled) setBooksError(err instanceof Error ? err.message : i18n.t("adminPages.common.loadFailed"));
       });
     return () => {
       cancelled = true;
@@ -364,11 +369,13 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
         if (!cancelled) setSnapshots(res.snapshots);
       })
       .catch((err) => {
+        // i18n.t (singleton), not the hook's t: t's identity changes per
+        // language and must not refire these fetches via the dep array.
         if (!cancelled)
           setExportsError(
             err instanceof ApiError
               ? `${err.status} ${(err.body as { error?: string } | null)?.error ?? err.message}`
-              : "load failed",
+              : i18n.t("adminPages.common.loadFailed"),
           );
       });
     api
@@ -377,7 +384,7 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
         if (!cancelled) setJobs(res.jobs);
       })
       .catch((err) => {
-        if (!cancelled) setJobsError(err instanceof Error ? err.message : "load failed");
+        if (!cancelled) setJobsError(err instanceof Error ? err.message : i18n.t("adminPages.common.loadFailed"));
       });
     return () => {
       cancelled = true;
@@ -409,7 +416,7 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
   // excluded from a number that claims to be the whole workspace.
   const sumsReady = books !== null && kpis.loaded + kpis.errs === kpis.total;
   const partialCap = (base: string) =>
-    kpis.errs > 0 ? `${base} · ${kpis.errs} ${kpis.errs === 1 ? "book" : "books"} failed to load` : base;
+    kpis.errs > 0 ? `${base} · ${t("adminPages.progress.booksFailedToLoad", { count: kpis.errs })}` : base;
 
   const feed = useMemo<FeedItem[]>(() => {
     const items: FeedItem[] = [];
@@ -418,8 +425,12 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
         key: `exp-${s.id}`,
         at: s.committed_at,
         text: s.error
-          ? `Export ${s.book} · ${s.resource} failed — ${s.error}`
-          : `Nightly export committed ${s.book} · ${s.resource} — ${s.rows_exported} rows`,
+          ? t("adminPages.progress.feedExportFailed", { book: s.book, resource: s.resource, error: s.error })
+          : t("adminPages.progress.feedExportCommitted", {
+              book: s.book,
+              resource: s.resource,
+              count: s.rows_exported,
+            }),
         warn: !!s.error,
       });
     }
@@ -428,24 +439,28 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
       items.push({
         key: `job-${j.job_id}`,
         at: j.updated_at,
-        text: `AI pipeline ${j.pipeline_type} on ${j.book} ${range} — ${j.state.replace(/_/g, " ")}`,
+        text: t("adminPages.progress.feedPipelineJob", {
+          type: j.pipeline_type,
+          book: j.book,
+          range,
+          state: j.state.replace(/_/g, " "),
+        }),
         warn: j.state === "failed" || j.state.startsWith("paused"),
       });
     }
     items.sort((a, b) => b.at - a.at);
     return items.slice(0, FEED_LIMIT);
-  }, [snapshots, jobs]);
+  }, [snapshots, jobs, t]);
 
   // Same honest admin-only convention as ObserveScreen.tsx:551-576.
   if (!isAdmin) {
     return (
       <AdminDesk current="progress">
-        <Panel title="Admin only">
+        <Panel title={t("adminPages.common.adminOnly")}>
           <Box sx={{ paddingBlock: 2, paddingInline: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              Progress shows every imported book package with its content counts,
-              recent export runs, and AI pipeline activity — only an admin can see
-              it. Your role is <strong>{role}</strong>.
+              {t("adminPages.progress.adminOnlyBody")} {t("adminPages.common.yourRoleIs")}{" "}
+              <strong>{role}</strong>.
             </Typography>
             <Button
               variant="outlined"
@@ -454,7 +469,7 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
                 location.hash = "#/books";
               }}
             >
-              Back to books
+              {t("adminPages.progress.backToBooks")}
             </Button>
           </Box>
         </Panel>
@@ -467,8 +482,8 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
       <Stack spacing={2}>
         <AdminPageHeader
           eyebrow={eyebrow}
-          title="Progress"
-          subtitle="Every number here is real: book content counts, export runs, and AI pipeline activity. Approval progress has no book-level endpoint yet, so no percent-complete is shown — a bar with no data behind it would be an invented number."
+          title={t("adminPages.progress.title")}
+          subtitle={t("adminPages.progress.subtitle")}
         />
 
         {/* KPI tiles — content counts, not completion. */}
@@ -480,52 +495,49 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
           }}
         >
           <KpiTile
-            label="Books"
+            label={t("adminPages.progress.kpiBooks")}
             value={booksError ? "—" : books ? books.length : <Skeleton width={36} />}
-            cap="imported in this workspace"
+            cap={t("adminPages.progress.kpiBooksCap")}
           />
           <KpiTile
-            label="Verses"
+            label={t("adminPages.progress.kpiVerses")}
             value={sumsReady ? kpis.verses : booksError ? "—" : <Skeleton width={48} />}
             cap={
               sumsReady || booksError
-                ? partialCap("across all imported books")
-                : `loading ${kpis.loaded} of ${kpis.total} books…`
+                ? partialCap(t("adminPages.progress.kpiVersesCap"))
+                : t("adminPages.progress.kpiLoadingBooks", { loaded: kpis.loaded, total: kpis.total })
             }
           />
           <KpiTile
-            label="Notes"
+            label={t("adminPages.progress.kpiNotes")}
             value={sumsReady ? kpis.tn : booksError ? "—" : <Skeleton width={48} />}
-            cap={partialCap("translationNotes rows")}
+            cap={partialCap(t("adminPages.progress.kpiNotesCap"))}
           />
           <KpiTile
-            label="Word links"
+            label={t("adminPages.progress.kpiWordLinks")}
             value={sumsReady ? kpis.twl : booksError ? "—" : <Skeleton width={48} />}
-            cap={partialCap("translationWords links")}
+            cap={partialCap(t("adminPages.progress.kpiWordLinksCap"))}
           />
           <KpiTile
-            label="Questions"
+            label={t("adminPages.progress.kpiQuestions")}
             value={sumsReady ? kpis.tq : booksError ? "—" : <Skeleton width={48} />}
-            cap={partialCap("translationQuestions rows")}
+            cap={partialCap(t("adminPages.progress.kpiQuestionsCap"))}
           />
         </Box>
 
         {/* Book package board */}
         <Panel
-          title="Book package board"
-          subtitle="One row per imported book, with the counts the API provides. Click a row for the per-chapter breakdown."
+          title={t("adminPages.progress.boardTitle")}
+          subtitle={t("adminPages.progress.boardSubtitle")}
           foot={
             <Typography variant="caption" color="text.secondary">
-              No percent-complete, step, or pair columns: approval state exists
-              only on individual rows inside per-chapter payloads, and workflow
-              stages / pair assignments have no backend. See this file&apos;s
-              header for the endpoint that would unlock each.
+              {t("adminPages.progress.boardFoot")}
             </Typography>
           }
         >
           {booksError && (
             <Alert severity="error" sx={{ m: 2 }}>
-              Could not load the workspace book list: {booksError}
+              {t("adminPages.progress.bookListLoadError", { error: booksError })}
             </Alert>
           )}
           {!booksError && books === null && (
@@ -535,7 +547,7 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
           )}
           {!booksError && books !== null && books.length === 0 && (
             <Typography variant="body2" color="text.secondary" sx={{ paddingBlock: 2, paddingInline: 2 }}>
-              No books imported into this workspace yet.
+              {t("adminPages.progress.noBooksImported")}
             </Typography>
           )}
           {!booksError && books !== null && books.length > 0 && (
@@ -543,13 +555,13 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
               <Table size="small" sx={{ minWidth: 640 }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ textAlign: "start" }}>Package</TableCell>
-                    <TableCell sx={{ textAlign: "start" }}>Imported</TableCell>
-                    <TableCell sx={NUM_CELL_SX}>Chapters</TableCell>
-                    <TableCell sx={NUM_CELL_SX}>Verses</TableCell>
-                    <TableCell sx={NUM_CELL_SX}>Notes</TableCell>
-                    <TableCell sx={NUM_CELL_SX}>Word links</TableCell>
-                    <TableCell sx={NUM_CELL_SX}>Questions</TableCell>
+                    <TableCell sx={{ textAlign: "start" }}>{t("adminPages.progress.colPackage")}</TableCell>
+                    <TableCell sx={{ textAlign: "start" }}>{t("adminPages.progress.colImported")}</TableCell>
+                    <TableCell sx={NUM_CELL_SX}>{t("adminPages.progress.colChapters")}</TableCell>
+                    <TableCell sx={NUM_CELL_SX}>{t("adminPages.progress.kpiVerses")}</TableCell>
+                    <TableCell sx={NUM_CELL_SX}>{t("adminPages.progress.kpiNotes")}</TableCell>
+                    <TableCell sx={NUM_CELL_SX}>{t("adminPages.progress.kpiWordLinks")}</TableCell>
+                    <TableCell sx={NUM_CELL_SX}>{t("adminPages.progress.kpiQuestions")}</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -586,25 +598,31 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
 
         {/* Activity — the two real feeds (file header). */}
         <Panel
-          title="Activity"
-          subtitle="Export runs and AI pipeline jobs — the two activity feeds the API records."
+          title={t("adminPages.progress.activityTitle")}
+          subtitle={t("adminPages.progress.activitySubtitle")}
           foot={
             <Typography variant="caption" color="text.secondary">
-              Human editing activity is audited in edit_log server-side but has
-              no list endpoint yet — a GET /api/activity would unlock a
-              who-edited-what feed here.
+              {t("adminPages.progress.activityFoot")}
             </Typography>
           }
         >
           <Box sx={{ paddingBlock: 1, paddingInline: 2 }}>
-            {exportsError && <Alert severity="error" sx={{ marginBlock: 1 }}>Export runs failed to load: {exportsError}</Alert>}
-            {jobsError && <Alert severity="error" sx={{ marginBlock: 1 }}>Pipeline jobs failed to load: {jobsError}</Alert>}
+            {exportsError && (
+              <Alert severity="error" sx={{ marginBlock: 1 }}>
+                {t("adminPages.progress.exportRunsLoadError", { error: exportsError })}
+              </Alert>
+            )}
+            {jobsError && (
+              <Alert severity="error" sx={{ marginBlock: 1 }}>
+                {t("adminPages.progress.pipelineJobsLoadError", { error: jobsError })}
+              </Alert>
+            )}
             {!exportsError && !jobsError && snapshots === null && jobs === null && (
               <Skeleton variant="rounded" height={80} sx={{ marginBlock: 1 }} />
             )}
             {feed.length === 0 && (snapshots !== null || jobs !== null) && (
               <Typography variant="body2" color="text.secondary" sx={{ paddingBlock: 1 }}>
-                No export runs or pipeline jobs recorded yet.
+                {t("adminPages.progress.noActivityYet")}
               </Typography>
             )}
             {feed.map((f, i) => (
@@ -628,7 +646,7 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
                 <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }}>
                   {f.text}
                 </Typography>
-                {f.warn && <FlowStatusChip kind="warn" label="needs attention" />}
+                {f.warn && <FlowStatusChip kind="warn" label={t("adminPages.progress.needsAttention")} />}
               </Stack>
             ))}
           </Box>
@@ -637,9 +655,7 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
         {/* Honest absence — sections the artifact designs that have no data
             source today. Stated once, quietly, instead of faked. */}
         <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0, paddingInline: 0.5 }}>
-          Not shown (no endpoint yet): per-package completion bars, workflow
-          step and pair columns, the chapter checkoff board, and the waiting-on
-          queue. Each unlock is recorded in this screen&apos;s source header.
+          {t("adminPages.progress.notShownNote")}
         </Typography>
       </Stack>
     </AdminDesk>
@@ -661,6 +677,7 @@ function BookRowGroup({
   onToggle: () => void;
   cells: ReactNode;
 }) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const name = bookName(entry.book);
   const expandable = state?.kind === "ready";
@@ -699,7 +716,7 @@ function BookRowGroup({
           {state?.kind === "error" && (
             <Chip
               size="small"
-              label="counts failed to load"
+              label={t("adminPages.progress.countsFailedToLoad")}
               sx={{
                 marginInlineStart: 1,
                 bgcolor: theme.palette.flows.warn.soft,
@@ -729,23 +746,25 @@ function BookRowGroup({
                 marginBlockEnd: 1,
               }}
             >
-              {name} — per chapter
+              {t("adminPages.progress.perChapterHeading", { book: name })}
             </Typography>
             <Box sx={{ overflowX: "auto" }}>
               <Table size="small" sx={{ minWidth: 420 }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ textAlign: "start" }}>Chapter</TableCell>
-                    <TableCell sx={NUM_CELL_SX}>Verses</TableCell>
-                    <TableCell sx={NUM_CELL_SX}>Notes</TableCell>
-                    <TableCell sx={NUM_CELL_SX}>Word links</TableCell>
-                    <TableCell sx={NUM_CELL_SX}>Questions</TableCell>
+                    <TableCell sx={{ textAlign: "start" }}>{t("adminPages.progress.colChapter")}</TableCell>
+                    <TableCell sx={NUM_CELL_SX}>{t("adminPages.progress.kpiVerses")}</TableCell>
+                    <TableCell sx={NUM_CELL_SX}>{t("adminPages.progress.kpiNotes")}</TableCell>
+                    <TableCell sx={NUM_CELL_SX}>{t("adminPages.progress.kpiWordLinks")}</TableCell>
+                    <TableCell sx={NUM_CELL_SX}>{t("adminPages.progress.kpiQuestions")}</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {realChapters(state.data).map((c) => (
                     <TableRow key={c.chapter}>
-                      <TableCell sx={{ textAlign: "start", fontWeight: 600 }}>Chapter {c.chapter}</TableCell>
+                      <TableCell sx={{ textAlign: "start", fontWeight: 600 }}>
+                        {t("adminPages.progress.chapterN", { chapter: c.chapter })}
+                      </TableCell>
                       <TableCell sx={NUM_CELL_SX}>{c.verses}</TableCell>
                       <TableCell sx={NUM_CELL_SX}>{c.tn}</TableCell>
                       <TableCell sx={NUM_CELL_SX}>{c.twl}</TableCell>

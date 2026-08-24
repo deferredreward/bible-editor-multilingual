@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // TranslateQuestionsScreen — the translationQuestions queue, built to the
 // approved "Translate Questions — Titus 1" mockup and following the patterns
 // TranslateNotesScreen established (drafts store, save-then-validate, frozen
@@ -71,6 +68,7 @@
 // another editor changed the row, with a reload affordance.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Box,
@@ -186,6 +184,7 @@ function QaPair({
   onStartEdit,
   onDone,
 }: QaPairProps) {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // Entering edit mode focuses the textarea without letting the browser's own
@@ -253,9 +252,9 @@ function QaPair({
           <Typography variant="body2" color="text.secondary">
             {translationMode
               ? hasSourceProjection
-                ? "No published source for this question — it may have been added here rather than translated."
-                : "No source repository is configured for questions, so there is nothing to compare against."
-              : "This workspace authors questions rather than translating them, so there is no separate source."}
+                ? t("flowQuestions.noSourceForQuestion")
+                : t("flowQuestions.noSourceRepo")
+              : t("flowQuestions.authoringNoSource")}
           </Typography>
         )}
       </Box>
@@ -301,7 +300,7 @@ function QaPair({
                 onClick={onDone}
                 sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
               >
-                Done
+                {t("flowQuestions.done")}
               </Button>
             </Stack>
           </>
@@ -337,12 +336,12 @@ function QaPair({
                 value
               ) : (
                 <Box component="em" sx={{ color: "text.secondary" }}>
-                  Nothing drafted yet — tap to write this in {targetLabel}.
+                  {t("flowQuestions.nothingDrafted", { target: targetLabel })}
                 </Box>
               )}
             </Box>
             <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1 }}>
-              Tap the text to edit
+              {t("flowQuestions.tapToEdit")}
             </Typography>
           </>
         )}
@@ -363,6 +362,7 @@ interface LaneProps {
 // same remount-on-every-render risk as the QaPair hoist above — `theme` is
 // now an explicit `labelFontFamily` prop instead of a closed-over value.
 function Lane({ label, text, labelFontFamily }: LaneProps) {
+  const { t } = useTranslation();
   return (
     <Box
       sx={{
@@ -387,8 +387,7 @@ function Lane({ label, text, labelFontFamily }: LaneProps) {
         </Box>
       ) : (
         <Box component="em" sx={{ color: "text.secondary", fontSize: "0.875rem" }}>
-          No {label} text exists for this verse in this workspace. That is normal in a
-          translation-mode workspace whose target lanes have not been drafted yet.
+          {t("flowQuestions.noLaneText", { label })}
         </Box>
       )}
     </Box>
@@ -399,6 +398,7 @@ export default function TranslateQuestionsScreen({
   book,
   chapter,
 }: TranslateQuestionsScreenProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
   // --hl from docs/flows/ui/_tokens.css: the ground the "Edited" chip and the
@@ -420,7 +420,7 @@ export default function TranslateQuestionsScreen({
 
   const projectConfig = useProjectConfig();
   const translationMode = isTranslationProject(projectConfig);
-  const targetLabel = projectConfig?.languageName || "Target";
+  const targetLabel = projectConfig?.languageName || t("flowQuestions.targetFallback");
   // Reading direction of the TARGET text — what swipe paging follows (the
   // content being paged, not the UI chrome; ScriptureColumn's targetRtl idiom).
   const targetRtl = projectConfig?.direction === "rtl";
@@ -675,12 +675,10 @@ export default function TranslateQuestionsScreen({
         // Only a settled conflict is a question for the user: the outbox
         // auto-heals the healable ones and still notifies listeners.
         if (result.kind === "conflict" && op.status === "conflict") {
-          setConflictNotice(
-            "Another editor changed this question while you were working on it. Your version was not saved.",
-          );
+          setConflictNotice(t("flowQuestions.conflict"));
         }
       }),
-    [book],
+    [book, t],
   );
 
   // ── scripture context ────────────────────────────────────────────────────
@@ -748,19 +746,17 @@ export default function TranslateQuestionsScreen({
     const op = await outbox.enqueueRow("tq", target.id, target.version, patch, { book, baseline });
     const result = await waitForOp(op.id);
     if (result === null) {
-      say("Your edit is queued but the server hasn't confirmed it yet — it was not approved.");
+      say(t("flowQuestions.editQueued"));
       return false;
     }
     if (result.kind !== "ok") {
       if (result.kind === "conflict") {
-        setConflictNotice(
-          "Another editor changed this question while you were working on it. Your version was not saved.",
-        );
+        setConflictNotice(t("flowQuestions.conflict"));
       } else if (result.kind === "locked") {
         setChapterLock(result.lockBody);
-        say("An AI run is rewriting this chapter — your edit was dropped rather than overwritten.");
+        say(t("flowQuestions.aiRunDropped"));
       } else {
-        say(`Saving this question failed (${result.reason}). It was not approved.`);
+        say(t("flowQuestions.saveFailed", { reason: result.reason }));
       }
       return false;
     }
@@ -779,13 +775,17 @@ export default function TranslateQuestionsScreen({
       applyLocalRowReplacement("tq", updated);
       setStatuses((prev) => ({ ...prev, [row.id]: "approved" }));
       setEditingField(null);
-      setToast("Approved");
+      setToast(t("translation.stateApproved"));
       advanceAfter(row.id, "approved");
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
-        say("Approve needs a draft first — this question hasn't been through the AI pipeline yet.");
+        say(t("flowQuestions.approveNeedsDraft"));
       } else {
-        say(`Approve failed (${err instanceof ApiError ? err.status : "error"}).`);
+        say(
+          t("flowQuestions.approveFailed", {
+            status: err instanceof ApiError ? err.status : t("flowQuestions.genericError"),
+          }),
+        );
       }
     } finally {
       setBusy(false);
@@ -802,7 +802,7 @@ export default function TranslateQuestionsScreen({
     return (
       <Box sx={{ p: 3, maxWidth: COLUMN_PX, mx: "auto" }}>
         <Alert severity="error">
-          Could not load {book} {chapter}.
+          {t("flowQuestions.loadError", { book, chapter })}
         </Alert>
       </Box>
     );
@@ -829,23 +829,28 @@ export default function TranslateQuestionsScreen({
   // the row and not about a field.
   function chipFor(id: string, rowForChip: TqRow | null, dirty: boolean) {
     const s = statuses[id];
-    if (s === "approved") return { kind: "approved" as FlowStatusKind, label: "Approved" };
+    if (s === "approved") return { kind: "approved" as FlowStatusKind, label: t("translation.stateApproved") };
     if (dirty || rowForChip?.translation_state === "edited" || editedIds.has(id)) {
-      return { kind: "edited" as FlowStatusKind, label: "Edited" };
+      return { kind: "edited" as FlowStatusKind, label: t("translation.stateEdited") };
     }
     const aiDrafted =
       rowForChip?.translation_state === "ai_draft" || rowForChip?.latest_source === "ai_pipeline";
-    return { kind: "draft" as FlowStatusKind, label: aiDrafted ? "AI draft" : "Draft" };
+    return {
+      kind: "draft" as FlowStatusKind,
+      label: aiDrafted ? t("translation.stateAiDraft") : t("translation.draftLabel"),
+    };
   }
 
-  const chip = row ? chipFor(row.id, row, hasDiff) : { kind: "draft" as FlowStatusKind, label: "Draft" };
+  const chip = row
+    ? chipFor(row.id, row, hasDiff)
+    : { kind: "draft" as FlowStatusKind, label: t("translation.draftLabel") };
 
   const nextChapter = chapter + 1;
   const hasNextChapter = chapterCount === null ? true : nextChapter <= chapterCount;
 
   const sub = translationMode
-    ? `${book} ${chapter} · ${sourceLangLabel} to ${targetLabel}`
-    : `${book} ${chapter} · ${targetLabel}`;
+    ? t("flowQuestions.subTranslation", { book, chapter, source: sourceLangLabel, target: targetLabel })
+    : t("flowQuestions.subAuthoring", { book, chapter, target: targetLabel });
 
   const cardSx = {
     bgcolor: "background.paper",
@@ -913,7 +918,7 @@ export default function TranslateQuestionsScreen({
           <Typography sx={{ fontWeight: 600, fontSize: "0.97rem" }}>
             {r
               ? r.verse === 0
-                ? `${book} ${chapter} intro`
+                ? t("flowQuestions.introRef", { book, chapter })
                 : `${book} ${chapter}:${r.verse}`
               : id}
           </Typography>
@@ -995,7 +1000,7 @@ export default function TranslateQuestionsScreen({
               "&:hover": { bgcolor: ok.main, filter: "brightness(0.95)" },
             }}
           >
-            Approve
+            {t("common.approve")}
           </Button>
         </Stack>
       </Box>
@@ -1017,7 +1022,7 @@ export default function TranslateQuestionsScreen({
             severity="warning"
             action={
               <Button color="inherit" size="small" onClick={reloadRow}>
-                Reload question
+                {t("flowQuestions.reloadQuestion")}
               </Button>
             }
           >
@@ -1032,7 +1037,7 @@ export default function TranslateQuestionsScreen({
         )}
 
         {total === 0 ? (
-          <Alert severity="info">No translation questions in {`${book} ${chapter}`}.</Alert>
+          <Alert severity="info">{t("flowQuestions.noQuestions", { book, chapter })}</Alert>
         ) : done ? (
           <>
             <Box sx={{ ...cardSx, textAlign: "center", paddingBlock: 4.5 }}>
@@ -1056,18 +1061,18 @@ export default function TranslateQuestionsScreen({
                 />
               </Box>
               <Typography component="h2" sx={{ fontSize: "1.375rem", fontWeight: 700, mt: 1.5 }}>
-                {book} {chapter} questions reviewed
+                {t("flowQuestions.reviewedHeading", { book, chapter })}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                All {total} questions are approved.
+                {t("flowQuestions.allApproved", { count: total })}
               </Typography>
             </Box>
 
             <Stack direction="row" spacing={1.25}>
               {[
-                { n: approvedCount, label: "Approved as-is", color: ok.main },
-                { n: editedCount, label: "Edited", color: ACCENT },
-                { n: total, label: "Total", color: theme.palette.text.secondary },
+                { n: approvedCount, label: t("flowQuestions.approvedAsIs"), color: ok.main },
+                { n: editedCount, label: t("translation.stateEdited"), color: ACCENT },
+                { n: total, label: t("flowQuestions.total"), color: theme.palette.text.secondary },
               ].map((s) => (
                 <Box key={s.label} sx={{ ...cardSx, flex: 1, textAlign: "center", paddingInline: 0.75 }}>
                   <Typography
@@ -1122,7 +1127,11 @@ export default function TranslateQuestionsScreen({
                   >
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Typography sx={{ fontWeight: 600, fontSize: "0.97rem" }}>
-                        {r ? (r.verse === 0 ? `${book} ${chapter} intro` : `${book} ${chapter}:${r.verse}`) : id}
+                        {r
+                          ? r.verse === 0
+                            ? t("flowQuestions.introRef", { book, chapter })
+                            : `${book} ${chapter}:${r.verse}`
+                          : id}
                       </Typography>
                       <Typography
                         variant="body2"
@@ -1156,8 +1165,8 @@ export default function TranslateQuestionsScreen({
                 }}
               >
                 {hasNextChapter
-                  ? `Continue to chapter ${nextChapter}`
-                  : `${book} is complete — no chapter ${nextChapter}`}
+                  ? t("flowQuestions.continueToChapter", { chapter: nextChapter })
+                  : t("flowQuestions.bookComplete", { book, chapter: nextChapter })}
               </Button>
               <Button
                 onClick={() => {
@@ -1167,21 +1176,21 @@ export default function TranslateQuestionsScreen({
                 }}
                 sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
               >
-                Review again
+                {t("flowQuestions.reviewAgain")}
               </Button>
             </Stack>
           </>
         ) : !row ? (
           <Box sx={cardSx}>
             <Typography variant="body2" color="text.secondary">
-              This question is no longer in the chapter — another editor may have removed it.
+              {t("flowQuestions.rowGone")}
             </Typography>
             <Button
               sx={{ mt: 1 }}
               onClick={() => setCursor((c) => Math.min(c + 1, total - 1))}
               disabled={cursor >= total - 1}
             >
-              Next question
+              {t("flowQuestions.nextQuestion")}
             </Button>
           </Box>
         ) : (
@@ -1190,7 +1199,7 @@ export default function TranslateQuestionsScreen({
             <Box sx={cardSx}>
               <Typography sx={{ fontSize: "0.875rem", fontWeight: 700, color: REF_COLOR, mb: 0.75 }}>
                 {row.verse === 0
-                  ? `${book} ${row.chapter} intro`
+                  ? t("flowQuestions.introRef", { book, chapter: row.chapter })
                   : `${book} ${row.chapter}:${row.verse}`}
               </Typography>
               <Lane label={litLabel} text={ultText} labelFontFamily={theme.typography.fontFamily} />
@@ -1204,7 +1213,7 @@ export default function TranslateQuestionsScreen({
                   component="span"
                   sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: INSPIRE }}
                 />
-                Question
+                {t("questions.question")}
               </Typography>
               <QaPair
                 field="question"
@@ -1224,7 +1233,9 @@ export default function TranslateQuestionsScreen({
                 onStartEdit={() => setEditingField("question")}
                 onDone={() => {
                   setEditingField(null);
-                  if (values.question !== baselineRef.current.question) setToast("Draft updated");
+                  if (values.question !== baselineRef.current.question) {
+                    setToast(t("flowQuestions.draftUpdated"));
+                  }
                 }}
               />
             </Box>
@@ -1236,7 +1247,7 @@ export default function TranslateQuestionsScreen({
                   component="span"
                   sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: INSPIRE }}
                 />
-                Expected answer
+                {t("flowQuestions.expectedAnswer")}
               </Typography>
               <QaPair
                 field="response"
@@ -1256,7 +1267,9 @@ export default function TranslateQuestionsScreen({
                 onStartEdit={() => setEditingField("response")}
                 onDone={() => {
                   setEditingField(null);
-                  if (values.response !== baselineRef.current.response) setToast("Draft updated");
+                  if (values.response !== baselineRef.current.response) {
+                    setToast(t("flowQuestions.draftUpdated"));
+                  }
                 }}
               />
             </Box>
@@ -1271,7 +1284,7 @@ export default function TranslateQuestionsScreen({
                   onClick={() => setCursor((c) => Math.max(0, c - 1))}
                   sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                 >
-                  Previous
+                  {t("flowQuestions.previous")}
                 </Button>
                 <Button
                   endIcon={<ChevronRightIcon />}
@@ -1279,7 +1292,7 @@ export default function TranslateQuestionsScreen({
                   onClick={() => setCursor((c) => Math.min(total - 1, c + 1))}
                   sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                 >
-                  Next
+                  {t("flowQuestions.next")}
                 </Button>
               </Stack>
             )}
@@ -1317,7 +1330,7 @@ export default function TranslateQuestionsScreen({
         <Box sx={{ maxWidth: wide ? 1440 : COLUMN_PX, mx: "auto", paddingInline: 2, paddingBlock: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
             <IconButton
-              aria-label={`Back to the ${book} package`}
+              aria-label={t("flowQuestions.backToPackage", { book })}
               onClick={() => {
                 location.hash = `#/package/${book}`;
               }}
@@ -1327,7 +1340,7 @@ export default function TranslateQuestionsScreen({
             </IconButton>
             <Box sx={{ minWidth: 0 }}>
               <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
-                Translation Questions
+                {t("flowQuestions.title")}
               </Typography>
               <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
                 {sub}
@@ -1343,13 +1356,15 @@ export default function TranslateQuestionsScreen({
                 whiteSpace: "nowrap",
               }}
             >
-              {done ? `${total} of ${total}` : `${Math.min(cursor + 1, total)} of ${total}`}
+              {done
+                ? t("flowQuestions.pagerCount", { current: total, total })
+                : t("flowQuestions.pagerCount", { current: Math.min(cursor + 1, total), total })}
             </Typography>
             {/* compact prev/next — the same cursor and disabled logic as the
                 bottom Previous/Next buttons */}
             <Stack direction="row" spacing={0.25} sx={{ flex: "none" }}>
               <IconButton
-                aria-label="Previous question"
+                aria-label={t("flowQuestions.previousQuestion")}
                 size="small"
                 disabled={done || cursor === 0}
                 onClick={() => setCursor((c) => Math.max(0, c - 1))}
@@ -1357,7 +1372,7 @@ export default function TranslateQuestionsScreen({
                 <ChevronLeftIcon fontSize="small" sx={chevronFlip} />
               </IconButton>
               <IconButton
-                aria-label="Next question"
+                aria-label={t("flowQuestions.nextQuestion")}
                 size="small"
                 disabled={done || cursor >= total - 1}
                 onClick={() => setCursor((c) => Math.min(total - 1, c + 1))}

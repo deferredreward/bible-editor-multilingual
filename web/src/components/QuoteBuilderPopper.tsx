@@ -15,6 +15,7 @@
 // inside zaln(בַחֹדֶשׁ) > zaln(הָרִאשׁוֹן) toggles both Hebrew words at once.
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Popper,
   Paper,
@@ -80,6 +81,7 @@ export function QuoteBuilderPopper({
   onCancel,
   onCommit,
 }: Props) {
+  const { t } = useTranslation();
   const uhbTokens = useMemo(() => collectUhbWords(uhbVerseObjects), [uhbVerseObjects]);
   const ultTokens = useMemo(() => collectTargetTokens(ultVerseObjects), [ultVerseObjects]);
   const ustTokens = useMemo(() => collectTargetTokens(ustVerseObjects), [ustVerseObjects]);
@@ -197,13 +199,13 @@ export function QuoteBuilderPopper({
               variant="caption"
               sx={{ fontFamily: "monospace", color: "primary.main", fontWeight: 700 }}
             >
-              Build quote · {book} {chapter}:{verse}
+              {t("dialogs.quoteBuilder.header", { book, chapter, verse })}
             </Typography>
             <Box sx={{ flex: 1 }} />
             <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
-              shift-click for a range
+              {t("dialogs.quoteBuilder.shiftHint")}
             </Typography>
-            <IconButton size="small" onClick={onCancel} aria-label="close">
+            <IconButton size="small" onClick={onCancel} aria-label={t("dialogs.common.close")}>
               <CloseIcon fontSize="small" />
             </IconButton>
           </Stack>
@@ -211,7 +213,7 @@ export function QuoteBuilderPopper({
           {/* Source row — UHB or UGNT */}
           <Section label={sourceLabel} rtl={sourceIsHebrew}>
             {uhbTokens.length === 0 ? (
-              <EmptyHint>no source words for this verse</EmptyHint>
+              <EmptyHint>{t("dialogs.quoteBuilder.noSourceWords")}</EmptyHint>
             ) : (
               uhbTokens.map((tok, i) => {
                 // Always use nfc-normalized keys — UHB \w text drifts from
@@ -251,7 +253,7 @@ export function QuoteBuilderPopper({
           {/* ULT row */}
           <Section label={versionLabel(projectConfig, "ULT")}>
             {ultTokens.length === 0 ? (
-              <EmptyHint>no ULT alignment for this verse</EmptyHint>
+              <EmptyHint>{t("dialogs.quoteBuilder.noUltAlignment")}</EmptyHint>
             ) : (
               ultTokens.map((tok, i) => (
                 <TargetChip
@@ -263,7 +265,7 @@ export function QuoteBuilderPopper({
                   onClick={(e) => handleTargetClick("ult", ultTokens, i, e)}
                   tooltip={
                     tok.sources.length === 0
-                      ? "no Hebrew alignment for this word"
+                      ? t("dialogs.quoteBuilder.noHebrewAlignment")
                       : tok.sources.map((s) => s.content).join(" › ")
                   }
                 />
@@ -274,7 +276,7 @@ export function QuoteBuilderPopper({
           {/* UST row */}
           <Section label={versionLabel(projectConfig, "UST")}>
             {ustTokens.length === 0 ? (
-              <EmptyHint>no UST alignment for this verse</EmptyHint>
+              <EmptyHint>{t("dialogs.quoteBuilder.noUstAlignment")}</EmptyHint>
             ) : (
               ustTokens.map((tok, i) => (
                 <TargetChip
@@ -286,7 +288,7 @@ export function QuoteBuilderPopper({
                   onClick={(e) => handleTargetClick("ust", ustTokens, i, e)}
                   tooltip={
                     tok.sources.length === 0
-                      ? "no Hebrew alignment for this word"
+                      ? t("dialogs.quoteBuilder.noHebrewAlignment")
                       : tok.sources.map((s) => s.content).join(" › ")
                   }
                 />
@@ -305,7 +307,7 @@ export function QuoteBuilderPopper({
           >
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                Preview
+                {t("dialogs.quoteBuilder.preview")}
               </Typography>
               <Typography
                 dir={sourceIsHebrew ? "rtl" : "ltr"}
@@ -321,12 +323,12 @@ export function QuoteBuilderPopper({
               </Typography>
               {preview && preview.occurrence > 1 && (
                 <Typography variant="caption" color="text.secondary">
-                  occurrence {preview.occurrence}
+                  {t("dialogs.quoteBuilder.occurrence", { n: preview.occurrence })}
                 </Typography>
               )}
             </Box>
             <Button size="small" onClick={onCancel}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               size="small"
@@ -334,7 +336,7 @@ export function QuoteBuilderPopper({
               disabled={!preview}
               onClick={onCommit}
             >
-              Use selection
+              {t("dialogs.quoteBuilder.useSelection")}
             </Button>
           </Stack>
         </Paper>
@@ -410,6 +412,7 @@ function SourceChip({
   // the scripture column's HebrewLine uses — strong/lemma/morph/gloss.
   lexiconBody?: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   const chip = (
     <Chip
       label={text}
@@ -427,7 +430,11 @@ function SourceChip({
         userSelect: "none",
         "& .MuiChip-label": { px: 1 },
       }}
-      title={!lexiconBody && occurrence > 1 ? `occurrence ${occurrence}` : undefined}
+      title={
+        !lexiconBody && occurrence > 1
+          ? t("dialogs.quoteBuilder.occurrence", { n: occurrence })
+          : undefined
+      }
     />
   );
   if (!lexiconBody) return chip;
@@ -458,6 +465,7 @@ function TargetChip({
   onClick: (e: React.MouseEvent) => void;
   tooltip: string;
 }) {
+  const { t } = useTranslation();
   const chip = (
     <Chip
       label={text}
@@ -481,7 +489,9 @@ function TargetChip({
       title={
         <Box sx={{ fontFamily: 'monospace', fontSize: 11 }}>
           {tooltip}
-          {occurrence > 1 && <Box>occurrence {occurrence}</Box>}
+          {occurrence > 1 && (
+            <Box>{t("dialogs.quoteBuilder.occurrence", { n: occurrence })}</Box>
+          )}
         </Box>
       }
       arrow

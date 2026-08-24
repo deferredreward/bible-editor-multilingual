@@ -5,6 +5,7 @@
 // gathered at click time, not on every render.
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { IconButton, Tooltip } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import CheckIcon from "@mui/icons-material/Check";
@@ -18,6 +19,8 @@ interface Props {
 }
 
 export function CopyChapterButton({ book, chapter, blocks }: Props) {
+  const { t } = useTranslation();
+  // `state` stays an English identity union — it is switched on, never shown.
   const [state, setState] = useState<"idle" | "copied" | "error">("idle");
 
   const handle = async (): Promise<void> => {
@@ -34,11 +37,19 @@ export function CopyChapterButton({ book, chapter, blocks }: Props) {
   };
 
   const title =
-    state === "copied" ? "Copied!" : state === "error" ? "Copy failed" : "Copy chapter (for Word)";
+    state === "copied"
+      ? t("widgets.copyChapter.copied")
+      : state === "error"
+        ? t("widgets.copyChapter.failed")
+        : t("widgets.copyChapter.tooltip");
 
   return (
     <Tooltip title={title}>
-      <IconButton size="small" aria-label="copy chapter" onClick={() => void handle()}>
+      <IconButton
+        size="small"
+        aria-label={t("widgets.copyChapter.ariaLabel")}
+        onClick={() => void handle()}
+      >
         {state === "copied" ? (
           <CheckIcon fontSize="small" color="success" />
         ) : state === "error" ? (

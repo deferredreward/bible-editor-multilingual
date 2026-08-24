@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // a2-import: All roles — the default landing screen. Port of docs/flows/ui/a2-import.html.
 //
 // 2026-08-11 (Benjamin): this screen is the redesign's top-level entry, and two
@@ -29,6 +27,7 @@
 // below `md`.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Accordion,
   AccordionDetails,
@@ -99,7 +98,9 @@ const OT = BOOKS.slice(0, OT_COUNT).map((b) => b.code);
 const NT = BOOKS.slice(OT_COUNT).map((b) => b.code);
 
 // Canonical sub-groups for the phone accordion tree (the tile grid stays
-// OT/NT only). Same set as the mockup's CANON_GROUPS.
+// OT/NT only). Same set as the mockup's CANON_GROUPS. The `title` / `name`
+// strings double as stable accordion state keys; display labels come from
+// CANON_LABEL_KEYS via t().
 const CANON_GROUPS: Array<{
   title: string;
   groups: Array<{ name: string | null; books: string[] }>;
@@ -135,6 +136,20 @@ const CANON_GROUPS: Array<{
   },
 ];
 
+// Display-label i18n keys for the stable CANON_GROUPS ids above.
+const CANON_LABEL_KEYS: Record<string, string> = {
+  "Old Testament": "flowBooks.canon.oldTestament",
+  "New Testament": "flowBooks.canon.newTestament",
+  Law: "flowBooks.canon.law",
+  History: "flowBooks.canon.history",
+  "Wisdom & Poetry": "flowBooks.canon.wisdomPoetry",
+  "Major Prophets": "flowBooks.canon.majorProphets",
+  "Minor Prophets": "flowBooks.canon.minorProphets",
+  "Gospels & Acts": "flowBooks.canon.gospelsActs",
+  "Pauline Epistles": "flowBooks.canon.paulineEpistles",
+  "General Epistles": "flowBooks.canon.generalEpistles",
+};
+
 function matchesQuery(code: string, query: string): boolean {
   if (!query) return true;
   const q = query.trim().toLowerCase();
@@ -160,6 +175,7 @@ function BookTile({
   selected: boolean;
   onSelect: (code: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <Box
       component="button"
@@ -192,7 +208,10 @@ function BookTile({
       <Box component="span" sx={{ fontSize: "0.72rem", color: "text.secondary" }}>
         {bookName(code)}
       </Box>
-      <FlowStatusChip kind={imported ? "approved" : "draft"} label={imported ? "Imported" : "Not imported"} />
+      <FlowStatusChip
+        kind={imported ? "approved" : "draft"}
+        label={imported ? t("import.imported") : t("import.notImported")}
+      />
     </Box>
   );
 }
@@ -208,6 +227,7 @@ function BookRow({
   selected: boolean;
   onSelect: (code: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <Box
       component="button"
@@ -240,12 +260,16 @@ function BookRow({
       <Box component="span" sx={{ flex: 1, minWidth: 0, color: "text.secondary", fontSize: "0.8125rem" }}>
         {bookName(code)}
       </Box>
-      <FlowStatusChip kind={imported ? "approved" : "draft"} label={imported ? "Imported" : "Not imported"} />
+      <FlowStatusChip
+        kind={imported ? "approved" : "draft"}
+        label={imported ? t("import.imported") : t("import.notImported")}
+      />
     </Box>
   );
 }
 
 function LintBadge({ book }: { book: string }) {
+  const { t } = useTranslation();
   const [report, setReport] = useState<BookLintReport | null>(null);
   const [failed, setFailed] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -267,8 +291,8 @@ function LintBadge({ book }: { book: string }) {
     };
   }, [book]);
 
-  if (failed) return <FlowStatusChip kind="skip" label="Lint unavailable" />;
-  if (!report) return <FlowStatusChip kind="draft" label="Lint …" />;
+  if (failed) return <FlowStatusChip kind="skip" label={t("flowBooks.lint.unavailable")} />;
+  if (!report) return <FlowStatusChip kind="draft" label={t("flowBooks.lint.loading")} />;
 
   const total = report.flagCount + report.escalateCount;
   return (
@@ -289,7 +313,7 @@ function LintBadge({ book }: { book: string }) {
           minHeight: 24,
         }}
       >
-        <FlowStatusChip kind={total ? "warn" : "approved"} label={`⚑ Lint ${total}`} />
+        <FlowStatusChip kind={total ? "warn" : "approved"} label={t("flowBooks.lint.badge", { n: total })} />
       </Box>
       <Popover
         open={Boolean(anchor)}
@@ -310,21 +334,26 @@ function LintBadge({ book }: { book: string }) {
               mb: 0.75,
             }}
           >
-            Lint findings — {book} ({report.flagCount} flag, {report.escalateCount} escalate)
+            {t("flowBooks.lint.findingsTitle", {
+              book,
+              flags: report.flagCount,
+              escalates: report.escalateCount,
+            })}
           </Typography>
           {report.issues.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
-              No issues found.
+              {t("flowBooks.lint.noIssues")}
             </Typography>
           ) : (
             <Box component="ul" sx={{ m: 0, paddingInlineStart: 2.25, fontSize: "0.78rem", color: "text.secondary" }}>
               {report.issues.slice(0, 40).map((i, n) => (
                 <Box component="li" key={`${i.check}-${i.ref}-${n}`} sx={{ mb: 0.5 }}>
-                  {i.bucket === "escalate" ? "Escalate" : "Flag"} — {i.ref} ({i.resource}) {i.message}
+                  {i.bucket === "escalate" ? t("flowBooks.lint.escalate") : t("flowBooks.lint.flag")} — {i.ref} (
+                  {i.resource}) {i.message}
                 </Box>
               ))}
               {report.issues.length > 40 && (
-                <Box component="li">…and {report.issues.length - 40} more.</Box>
+                <Box component="li">{t("flowBooks.lint.andMore", { n: report.issues.length - 40 })}</Box>
               )}
             </Box>
           )}
@@ -347,6 +376,7 @@ function BookDetailPanel({
   onImported: () => Promise<void> | void;
   onOpenBook: (book: string) => void;
 }) {
+  const { t } = useTranslation();
   const isAdmin = role === "admin";
   const cfg = useProjectConfig();
   const isTranslation = isTranslationProject(cfg);
@@ -389,8 +419,8 @@ function BookDetailPanel({
       const sources = importedSourceRepos(res.sources);
       setMessage(
         sources.length
-          ? `Imported ${book} from ${sources.join(", ")}.`
-          : `Imported ${book}.`,
+          ? t("flowBooks.detail.importedFrom", { book, sources: sources.join(", ") })
+          : t("flowBooks.detail.importedBook", { book }),
       );
       setJustImported(true);
       await onImported();
@@ -400,14 +430,18 @@ function BookDetailPanel({
         const body = e.body as Partial<ImportHasLocalEditsBody> | undefined;
         if (body?.error === "has_local_edits") {
           setError(
-            `${book} already carries local edits (${body.tn ?? 0} tN, ${body.tq ?? 0} tQ, ` +
-              `${body.twl ?? 0} TWL, ${body.verses ?? 0} verses). A destructive re-import would ` +
-              `discard them, so it is not offered here.`,
+            t("flowBooks.detail.hasLocalEdits", {
+              book,
+              tn: body.tn ?? 0,
+              tq: body.tq ?? 0,
+              twl: body.twl ?? 0,
+              verses: body.verses ?? 0,
+            }),
           );
           return;
         }
       }
-      setError(`Import of ${book} failed: ${errorText(e)}`);
+      setError(t("flowBooks.detail.importFailed", { book, error: errorText(e) }));
     } finally {
       setBusy(false);
     }
@@ -420,7 +454,7 @@ function BookDetailPanel({
       chapters = realChapterNumbers(fresh);
     }
     if (chapters.length === 0) {
-      setMessage("Nothing to translate — this book has no chapters loaded.");
+      setMessage(t("flowBooks.detail.nothingToTranslate"));
       return;
     }
     setAiBusy(true);
@@ -430,14 +464,14 @@ function BookDetailPanel({
       const res = await startBookAiTranslate(book, chapters);
       const verdict = classifyAiTranslateResult(res);
       if (verdict === "failed") {
-        setError(
-          "No AI runs started. The pipeline is often unavailable in this environment (503 pipeline_api_disabled when no bot token is configured).",
-        );
+        setError(t("flowBooks.detail.aiNoneStarted"));
       } else if (verdict === "partial") {
-        setWarning(`${res.started} run(s) started, ${res.failed} failed to start.`);
+        setWarning(t("flowBooks.detail.aiPartial", { started: res.started, failed: res.failed }));
       } else {
         setMessage(
-          `${res.started} AI run(s) started${res.skipped ? `, ${res.skipped} already running` : ""}.`,
+          res.skipped
+            ? t("flowBooks.detail.aiStartedSkipped", { started: res.started, skipped: res.skipped })
+            : t("flowBooks.detail.aiStarted", { count: res.started }),
         );
       }
     } finally {
@@ -459,15 +493,15 @@ function BookDetailPanel({
             <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
               <FlowStatusChip
                 kind={effectiveImported ? "approved" : "draft"}
-                label={effectiveImported ? "Imported" : "Not imported"}
+                label={effectiveImported ? t("import.imported") : t("import.notImported")}
               />
               {effectiveImported && <LintBadge book={book} />}
             </Stack>
           }
           sub={
             effectiveImported
-              ? `${chapterCount} chapter(s) loaded · ${tnTotal} notes · ${tqTotal} questions`
-              : "This book has no content in the editor yet."
+              ? t("flowBooks.detail.summary", { chapters: chapterCount, notes: tnTotal, questions: tqTotal })
+              : t("flowBooks.detail.noContent")
           }
         />
         <PanelBody>
@@ -475,12 +509,12 @@ function BookDetailPanel({
             effectiveImported ? (
               <Stack direction="row" spacing={1.5} sx={{ flexWrap: "wrap", rowGap: 1 }}>
                 <Button variant="contained" onClick={() => onOpenBook(book)} sx={{ minHeight: 40 }}>
-                  Open {book}
+                  {t("flowBooks.detail.openBook", { book })}
                 </Button>
               </Stack>
             ) : (
               <Typography variant="body2" color="text.secondary">
-                Nothing to open yet — an administrator brings books into the editor.
+                {t("flowBooks.detail.nothingToOpen")}
               </Typography>
             )
           ) : (
@@ -496,7 +530,7 @@ function BookDetailPanel({
                   mb: 0.75,
                 }}
               >
-                Intent
+                {t("flowBooks.detail.intent")}
               </Typography>
               <ToggleButtonGroup
                 exclusive
@@ -508,10 +542,10 @@ function BookDetailPanel({
                 sx={{ flexWrap: "wrap" }}
               >
                 <ToggleButton value="translate" sx={{ textTransform: "none", px: 2, minHeight: 36 }}>
-                  Translate a new book
+                  {t("import.intentTranslate")}
                 </ToggleButton>
                 <ToggleButton value="load" sx={{ textTransform: "none", px: 2, minHeight: 36 }}>
-                  Load my existing work
+                  {t("import.intentLoad")}
                 </ToggleButton>
               </ToggleButtonGroup>
 
@@ -524,15 +558,15 @@ function BookDetailPanel({
                     startIcon={busy ? <CircularProgress size={16} color="inherit" /> : undefined}
                     sx={{ minHeight: 40 }}
                   >
-                    {busy ? `Importing ${book}…` : `Import ${book}`}
+                    {busy ? t("flowBooks.detail.importingBook", { book }) : t("flowBooks.detail.importBook", { book })}
                   </Button>
                 ) : (
                   <>
                     <Button variant="contained" onClick={() => onOpenBook(book)} sx={{ minHeight: 40 }}>
-                      Open {book}
+                      {t("flowBooks.detail.openBook", { book })}
                     </Button>
                     <Button variant="outlined" onClick={() => setRepullOpen(true)} sx={{ minHeight: 40 }}>
-                      Re-pull…
+                      {t("flowBooks.detail.repull")}
                     </Button>
                   </>
                 )}
@@ -545,28 +579,27 @@ function BookDetailPanel({
                     startIcon={aiBusy ? <CircularProgress size={16} color="inherit" /> : undefined}
                     sx={{ minHeight: 40 }}
                   >
-                    AI Translate whole book
+                    {t("flowBooks.detail.aiTranslateWholeBook")}
                   </Button>
                 )}
               </Stack>
 
               {busy && (
                 <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-                  Importing a book runs server-side and can take up to a minute for a large book. Leaving
-                  this screen does not cancel it.
+                  {t("flowBooks.detail.importRunsServerSide")}
                 </Typography>
               )}
 
               <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
-                Import pulls ULT/UST/tN/tQ/TWL from this project's configured source. A fresh, unedited
-                book is safe to re-pull; a populated one carries more risk on the nightly re-import.
+                {t("flowBooks.detail.importInfo")}
               </Alert>
 
               {/* 2026-08-11: the per-book source-overrides editor that used to sit
                   here (duplicated with the admin Setup screen) now lives on
                   Admin → Setup only. */}
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 2 }}>
-                Source overrides moved to <Link href="#/admin/setup">Admin → Setup</Link>.
+                {t("flowBooks.detail.sourceOverridesMovedPrefix")}{" "}
+                <Link href="#/admin/setup">{t("flowBooks.detail.adminSetup")}</Link>.
               </Typography>
             </>
           )}
@@ -587,7 +620,7 @@ function BookDetailPanel({
             </Alert>
           )}
         </PanelBody>
-        <PanelFoot state={effectiveImported ? "Imported" : "Not yet imported"} />
+        <PanelFoot state={effectiveImported ? t("import.imported") : t("flowBooks.detail.notYetImported")} />
       </Panel>
 
       {isAdmin && <BooksActivityPanel book={book} />}
@@ -611,6 +644,7 @@ function BookDetailPanel({
 }
 
 export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScreenProps) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const { skip } = theme.palette.flows;
   const gridView = useMediaQuery(theme.breakpoints.up("tablet"));
@@ -707,18 +741,18 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
         <Stack direction="row" alignItems="center" spacing={1.25}>
           <Box sx={{ minWidth: 0 }}>
             <Typography component="h1" sx={{ fontSize: "1.0625rem", fontWeight: 700, m: 0 }}>
-              Books
+              {t("flowBooks.title")}
             </Typography>
             <Typography variant="caption" color="text.secondary" component="p" sx={{ m: 0 }}>
               {projectConfig
                 ? `${projectConfig.org} · ${projectConfig.languageName}`
-                : "Import and manage books"}
+                : t("flowBooks.subFallback")}
             </Typography>
           </Box>
           <Box sx={{ flex: 1 }} />
           <IconButton
-            aria-label="Open the books menu"
-            title="Menu"
+            aria-label={t("flowBooks.menu.open")}
+            title={t("flowBooks.menu.label")}
             aria-haspopup="menu"
             aria-expanded={Boolean(menuAnchor)}
             aria-controls={menuAnchor ? "books-screen-menu" : undefined}
@@ -745,7 +779,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
               <ListItemIcon>
                 <MenuBookIcon fontSize="small" />
               </ListItemIcon>
-              <ListItemText>Classic editor</ListItemText>
+              <ListItemText>{t("flowBooks.menu.classicEditor")}</ListItemText>
             </MenuItem>
             {role === "admin" && (
               <MenuItem
@@ -757,7 +791,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                 <ListItemIcon>
                   <AdminPanelSettingsIcon fontSize="small" />
                 </ListItemIcon>
-                <ListItemText>Admin</ListItemText>
+                <ListItemText>{t("flowBooks.menu.admin")}</ListItemText>
               </MenuItem>
             )}
           </Menu>
@@ -770,25 +804,24 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
     booksStatus === "loading" ? (
       <Stack direction="row" spacing={1} alignItems="center">
         <CircularProgress size={18} />
-        <Typography variant="body2">Loading book list…</Typography>
+        <Typography variant="body2">{t("flowBooks.list.loading")}</Typography>
       </Stack>
     ) : booksStatus === "error" ? (
       <Alert
         severity="error"
         action={
           <Button color="inherit" size="small" onClick={() => void refetchBooks()}>
-            Retry
+            {t("common.retry")}
           </Button>
         }
       >
-        Could not load the book list ({listError}). Import status is unknown, so no books are shown —
-        an empty list here would wrongly read as "nothing imported".
+        {t("flowBooks.list.loadError", { error: listError })}
       </Alert>
     ) : gridView ? (
       <Stack spacing={2}>
         {[
-          { title: `Old Testament (${OT.length})`, codes: OT },
-          { title: `New Testament (${NT.length})`, codes: NT },
+          { title: t("flowBooks.canon.oldTestamentCount", { n: OT.length }), codes: OT },
+          { title: t("flowBooks.canon.newTestamentCount", { n: NT.length }), codes: NT },
         ].map((group) => {
           const visible = group.codes.filter((c) => matchesQuery(c, query));
           if (visible.length === 0) return null;
@@ -846,7 +879,9 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
               sx={{ border: 1, borderColor: "divider", mb: 1.25, "&:before": { display: "none" } }}
             >
               <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ minHeight: 44 }}>
-                <Typography sx={{ fontWeight: 700, fontSize: "0.875rem" }}>{testament.title}</Typography>
+                <Typography sx={{ fontWeight: 700, fontSize: "0.875rem" }}>
+                  {t(CANON_LABEL_KEYS[testament.title] ?? testament.title)}
+                </Typography>
               </AccordionSummary>
               <AccordionDetails sx={{ p: 1 }}>
                 {testament.groups.map((group) => {
@@ -873,7 +908,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                     >
                       <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ minHeight: 44 }}>
                         <Typography sx={{ fontWeight: 600, fontSize: "0.8125rem" }}>
-                          {group.name}{" "}
+                          {t(CANON_LABEL_KEYS[group.name] ?? group.name)}{" "}
                           <Box component="span" sx={{ color: "text.secondary", fontWeight: 400 }}>
                             ({group.books.length})
                           </Box>
@@ -898,7 +933,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
           <PanelBody>
             <Stack direction="row" spacing={1} alignItems="center">
               <CircularProgress size={18} />
-              <Typography variant="body2">Checking import status…</Typography>
+              <Typography variant="body2">{t("flowBooks.detail.checkingStatus")}</Typography>
             </Stack>
           </PanelBody>
         </Panel>
@@ -912,11 +947,11 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
               severity="error"
               action={
                 <Button color="inherit" size="small" onClick={() => void refetchBooks()}>
-                  Retry
+                  {t("common.retry")}
                 </Button>
               }
             >
-              Import status is unknown until the book list loads, so no import action is offered.
+              {t("flowBooks.detail.statusUnknown")}
             </Alert>
           </PanelBody>
         </Panel>
@@ -959,7 +994,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                   component="h2"
                   sx={{ fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.06em", color: "text.secondary" }}
                 >
-                  CONTINUE
+                  {t("flowBooks.continueLabel")}
                 </Typography>
                 <Typography sx={{ fontSize: "1rem", fontWeight: 600 }}>
                   {`${bookName(resolvedLastPosition.book)} ${resolvedLastPosition.chapter}:${resolvedLastPosition.verse}`}
@@ -972,7 +1007,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                   location.hash = `#/package/${resolvedLastPosition.book}`;
                 }}
               >
-                Open {resolvedLastPosition.book}
+                {t("flowBooks.detail.openBook", { book: resolvedLastPosition.book })}
               </Button>
               <Button
                 variant="outlined"
@@ -987,7 +1022,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                   location.hash = `#/notes/${resolvedLastPosition.book}/${resolvedLastPosition.chapter}/${resolvedLastPosition.verse}`;
                 }}
               >
-                Notes
+                {t("flowBooks.notes")}
               </Button>
             </Stack>
           </Panel>
@@ -1006,22 +1041,22 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                 color: "primary.main",
               }}
             >
-              Bundle B · Bring in a book
+              {t("flowBooks.header.kicker")}
             </Typography>
             <Typography variant="h5" sx={{ fontSize: "1.5rem", letterSpacing: "-0.02em" }}>
-              Import
+              {t("flowBooks.header.import")}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               {booksStatus === "loaded"
-                ? `${books.length}/${BOOKS.length} imported`
+                ? t("import.importedCount", { n: books.length, total: BOOKS.length })
                 : booksStatus === "error"
-                  ? "Import counts unavailable — the book list failed to load."
-                  : "Counting imported books…"}
+                  ? t("flowBooks.header.countsUnavailable")
+                  : t("flowBooks.header.counting")}
             </Typography>
           </>
         ) : (
           <Typography variant="h5" sx={{ fontSize: "1.5rem", letterSpacing: "-0.02em" }}>
-            Browse books
+            {t("flowBooks.header.browse")}
           </Typography>
         )}
       </Box>
@@ -1035,17 +1070,14 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
         }}
       >
         <Panel>
-          <PanelTop
-            title="Books"
-            sub="The whole 66-book canon, grouped Old/New Testament. A failed list load shows an explicit error — it never silently falls back to “not imported”."
-          />
+          <PanelTop title={t("flowBooks.title")} sub={t("flowBooks.list.sub")} />
           <PanelBody>
             <TextField
               size="small"
               fullWidth
               type="search"
-              placeholder="Search books…"
-              aria-label="Search books"
+              placeholder={t("flowBooks.list.searchPlaceholder")}
+              aria-label={t("import.searchPlaceholder")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               sx={{ mb: 1.5 }}
@@ -1055,14 +1087,14 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
           <PanelFoot
             state={
               booksStatus === "loaded"
-                ? `${books.length} book(s) imported of ${BOOKS.length}`
+                ? t("flowBooks.list.importedOf", { count: books.length, total: BOOKS.length })
                 : booksStatus === "error"
-                  ? "Load failed"
-                  : "Loading…"
+                  ? t("flowBooks.loadFailed")
+                  : t("common.loading")
             }
           >
             <Button size="small" sx={{ minHeight: 36 }} onClick={() => void refetchBooks()}>
-              Retry list
+              {t("flowBooks.list.retryList")}
             </Button>
           </PanelFoot>
         </Panel>

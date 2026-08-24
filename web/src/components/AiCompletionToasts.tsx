@@ -6,6 +6,7 @@
 // that an editor can fire-and-forget the AI call.
 
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { Alert, IconButton, Stack, Button, Box } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function AiCompletionToasts({ notifications, onDismiss, onView }: Props) {
+  const { t } = useTranslation();
   // Auto-dismiss errors after a delay. Track which we've already armed so
   // we don't reset the timer on every re-render.
   const armed = useRef<Set<string>>(new Set());
@@ -77,21 +79,23 @@ export function AiCompletionToasts({ notifications, onDismiss, onView }: Props) 
                     }}
                     sx={{ fontWeight: 600 }}
                   >
-                    View
+                    {t("widgets.toasts.view")}
                   </Button>
                 )}
                 <IconButton
                   size="small"
                   color="inherit"
                   onClick={() => onDismiss(n.id)}
-                  aria-label="dismiss"
+                  aria-label={t("widgets.toasts.dismiss")}
                 >
                   <CloseIcon fontSize="small" />
                 </IconButton>
               </>
             }
           >
-            {n.kind === "success" ? `AI draft ready · v${n.verse}` : n.message}
+            {n.kind === "success"
+              ? t("widgets.toasts.aiDraftReady", { verse: n.verse })
+              : n.message}
           </Alert>
         ))}
       </Stack>
