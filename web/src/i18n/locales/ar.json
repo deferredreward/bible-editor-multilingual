@@ -1082,6 +1082,9 @@
     "back": "← رجوع",
     "spanMultiple": "امتداد عبر عدة آيات…",
     "defaultTemplate": "افتراضي",
+    "discardConfirmTitle": "تجاهل التعديلات غير المحفوظة؟",
+    "discardConfirmBody": "سيعيد هذا الاقتباس والملاحظة إلى آخر نسخة محفوظة، ويُسقط كل تغيير أجريته منذ ذلك الحين. لا يمكن التراجع عن هذا.",
+    "discardConfirmAction": "تجاهل",
     "openArticle": "افتح مقالة translationAcademy الخاصة بهذا المرجع الداعم"
   },
   "aligner": {
