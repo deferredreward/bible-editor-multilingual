@@ -3052,7 +3052,16 @@
       "approvingProgress": "Approving {{done}} of {{total}}…",
       "adding": "Adding…",
       "badgeNote": "N",
-      "badgeQuestion": "Q"
+      "badgeQuestion": "Q",
+      "filterHeading": "Filter",
+      "statusAll": "All statuses",
+      "statusPending": "Pending",
+      "typeAll": "All types",
+      "statusFilterAriaNotes": "Filter notes by status",
+      "statusFilterAriaQuestions": "Filter questions by status",
+      "typeFilterAria": "Filter notes by type",
+      "noNotesFiltered": "No notes match the current filters.",
+      "noQuestionsFiltered": "No questions match the current filters."
     },
     "grid": {
       "heading": "Questions — dense grid (English authoring)",

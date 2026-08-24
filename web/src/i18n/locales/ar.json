@@ -3308,7 +3308,16 @@
       "approvingProgress": "جارٍ اعتماد {{done}} من {{total}}…",
       "adding": "جارٍ الإضافة…",
       "badgeNote": "م",
-      "badgeQuestion": "س"
+      "badgeQuestion": "س",
+      "filterHeading": "تصفية",
+      "statusAll": "كل الحالات",
+      "statusPending": "بانتظار المراجعة",
+      "typeAll": "كل الأنواع",
+      "statusFilterAriaNotes": "تصفية الملاحظات حسب الحالة",
+      "statusFilterAriaQuestions": "تصفية الأسئلة حسب الحالة",
+      "typeFilterAria": "تصفية الملاحظات حسب النوع",
+      "noNotesFiltered": "لا توجد ملاحظات مطابقة للمرشحات الحالية.",
+      "noQuestionsFiltered": "لا توجد أسئلة مطابقة للمرشحات الحالية."
     },
     "grid": {
       "heading": "الأسئلة — جدول مكثّف (التأليف بالإنجليزية)",
