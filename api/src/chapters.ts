@@ -358,6 +358,11 @@ chapters.patch("/:book/:chapter/lanes/:lane/bulk", requireEditor, async (c) => {
 });
 
 // Book-level summary: chapter list + row counts. Useful for the timeline.
+// Also the book-level review rollup (docs/ux-simplification.md A2): each
+// chapter additionally reports tnValidated / tqValidated (live rows with
+// translation_state='validated' — the 0037/0038 partial indexes keep these
+// cheap) and versesDone (verse_statuses.done, the flag setVerseDone writes).
+// Additive fields — existing consumers are unaffected.
 chapters.get("/:book", async (c) => {
   const book = c.req.param("book").toUpperCase();
   const db = c.env.DB;
@@ -371,7 +376,10 @@ chapters.get("/:book", async (c) => {
               SUM(CASE WHEN kind='verse' THEN 1 ELSE 0 END) AS verses,
               SUM(CASE WHEN kind='tn' THEN 1 ELSE 0 END) AS tn,
               SUM(CASE WHEN kind='tq' THEN 1 ELSE 0 END) AS tq,
-              SUM(CASE WHEN kind='twl' THEN 1 ELSE 0 END) AS twl
+              SUM(CASE WHEN kind='twl' THEN 1 ELSE 0 END) AS twl,
+              SUM(CASE WHEN kind='tn_validated' THEN 1 ELSE 0 END) AS tnValidated,
+              SUM(CASE WHEN kind='tq_validated' THEN 1 ELSE 0 END) AS tqValidated,
+              SUM(CASE WHEN kind='verse_done' THEN 1 ELSE 0 END) AS versesDone
        FROM (
          SELECT chapter, 'verse' AS kind FROM verses WHERE book = ?1 AND bible_version = 'ULT' AND source_generation = ?2 AND verse > 0
          UNION ALL
@@ -380,10 +388,25 @@ chapters.get("/:book", async (c) => {
          SELECT chapter, 'tq' FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL
          UNION ALL
          SELECT chapter, 'twl' FROM twl_rows WHERE book = ?1 AND deleted_at IS NULL
+         UNION ALL
+         SELECT chapter, 'tn_validated' FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL AND translation_state = 'validated'
+         UNION ALL
+         SELECT chapter, 'tq_validated' FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL AND translation_state = 'validated'
+         UNION ALL
+         SELECT chapter, 'verse_done' FROM verse_statuses WHERE book = ?1 AND done = 1 AND verse > 0
        )
        GROUP BY chapter ORDER BY chapter`,
     )
     .bind(book, litGen)
-    .all<{ chapter: number; verses: number; tn: number; tq: number; twl: number }>();
+    .all<{
+      chapter: number;
+      verses: number;
+      tn: number;
+      tq: number;
+      twl: number;
+      tnValidated: number;
+      tqValidated: number;
+      versesDone: number;
+    }>();
   return c.json({ book, chapters: summary.results });
 });
