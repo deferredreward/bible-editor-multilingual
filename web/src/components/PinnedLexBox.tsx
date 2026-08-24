@@ -6,6 +6,7 @@
 // aligner's UHB strip (UhbStrip).
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Popover, IconButton, Tooltip } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
@@ -27,6 +28,7 @@ export function PinnedLexBox({
   twHint: string | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const lemma = lex?.lemma || source.lemma || "";
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -61,10 +63,10 @@ export function PinnedLexBox({
       }}
     >
       {lemma && (
-        <Tooltip title={copied ? "copied" : "copy lexical form"}>
+        <Tooltip title={copied ? t("sync.copied") : t("widgets.lexBox.copyLemma")}>
           <IconButton
             size="small"
-            aria-label="copy lexical form"
+            aria-label={t("widgets.lexBox.copyLemma")}
             onClick={copy}
             sx={{ position: "absolute", top: 2, left: 2, color: "rgba(255,255,255,0.7)" }}
           >
@@ -78,7 +80,7 @@ export function PinnedLexBox({
       )}
       <IconButton
         size="small"
-        aria-label="close"
+        aria-label={t("widgets.lexBox.close")}
         onClick={onClose}
         sx={{ position: "absolute", top: 2, right: 2, color: "rgba(255,255,255,0.7)" }}
       >

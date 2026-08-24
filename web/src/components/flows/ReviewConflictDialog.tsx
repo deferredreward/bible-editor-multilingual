@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // 409 version_mismatch merge prompt, after the #conflictBackdrop dialog in
 // docs/flows/ui/t2-review.html.
 //
@@ -32,6 +29,8 @@
 // the server's full note — a fabricated comparison.
 
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import CircularProgress from "@mui/material/CircularProgress";
@@ -46,8 +45,13 @@ import Typography from "@mui/material/Typography";
 export interface ConflictFieldView {
   /** Raw patch key, e.g. "quote", "sort_order". */
   field: string;
-  /** Human label, e.g. "Quote". */
+  /** Human label, already localized by the owner, e.g. "Quote". */
   label: string;
+  /**
+   * The same label in the sentence-inline form ("quote"). Supplied rather than
+   * lower-cased here: casing a translated string is not a portable operation.
+   */
+  labelLower: string;
   /** What this browser tried to save, rendered as text. */
   mine: string;
   /**
@@ -81,25 +85,28 @@ export interface ReviewConflictDialogProps {
 
 // ", 2 min ago" from unix seconds; "" when absent or implausible, so the
 // heading degrades to a bare "Theirs (v6)" rather than showing a lie.
-function agoSuffix(updatedAt: number | null): string {
+function agoSuffix(t: TFunction, updatedAt: number | null): string {
   if (updatedAt == null || !Number.isFinite(updatedAt)) return "";
   const secs = Math.floor(Date.now() / 1000) - updatedAt;
   if (secs < 0) return "";
-  if (secs < 60) return ", just now";
+  if (secs < 60) return t("flowReview.conflict.agoJustNow");
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `, ${mins} min ago`;
+  if (mins < 60) return t("flowReview.conflict.agoMinutes", { count: mins });
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return hrs === 1 ? ", 1 hour ago" : `, ${hrs} hours ago`;
+  if (hrs < 24) return t("flowReview.conflict.agoHours", { count: hrs });
   const days = Math.floor(hrs / 24);
-  return days === 1 ? ", 1 day ago" : `, ${days} days ago`;
+  return t("flowReview.conflict.agoDays", { count: days });
 }
 
 // "quote", "quote and occurrence", "verse, reference and order" — used only to
 // name what actually conflicted, never to characterise the change itself.
-function joinLabels(labels: string[]): string {
+function joinLabels(t: TFunction, labels: string[]): string {
   if (labels.length === 0) return "";
   if (labels.length === 1) return labels[0];
-  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+  return t("flowReview.common.listAnd", {
+    list: labels.slice(0, -1).join(t("flowReview.common.listSeparator")),
+    last: labels[labels.length - 1],
+  });
 }
 
 function ColumnShell({ heading, children }: { heading: string; children: ReactNode }) {
@@ -148,24 +155,35 @@ export function ReviewConflictDialog({
   onKeepTheirs,
   onClose,
 }: ReviewConflictDialogProps) {
+  const { t } = useTranslation();
   const theirsMeta =
-    theirsVersion == null ? null : `v${theirsVersion}${agoSuffix(theirsUpdatedAt)}`;
-  const theirsHeading = theirsMeta == null ? "Theirs" : `Theirs (${theirsMeta})`;
+    theirsVersion == null
+      ? null
+      : `v${theirsVersion}${agoSuffix(t, theirsUpdatedAt)}`;
+  const theirsHeading =
+    theirsMeta == null
+      ? t("flowReview.conflict.theirs")
+      : t("flowReview.conflict.theirsWithMeta", { meta: theirsMeta });
 
   const canKeepTheirs = !loadingTheirs && theirsError == null && theirsLoaded;
   const keepTheirsReason = loadingTheirs
-    ? "Still loading the other editor's version"
+    ? t("flowReview.conflict.stillLoadingTheirs")
     : !canKeepTheirs
-      ? "The other editor's version couldn't be read, so it can't be adopted"
+      ? t("flowReview.conflict.theirsUnreadable")
       : "";
 
   const title = textual
-    ? `Someone else saved this ${kind === "tn" ? "note" : "question"} first`
+    ? kind === "tn"
+      ? t("flowReview.conflict.titleNote")
+      : t("flowReview.conflict.titleQuestion")
     : fields.length > 0
-      ? `Someone else changed this row's ${joinLabels(
-          fields.map((f) => f.label.toLowerCase()),
-        )} first`
-      : "Someone else changed this row first";
+      ? t("flowReview.conflict.titleFields", {
+          fields: joinLabels(
+            t,
+            fields.map((f) => f.labelLower),
+          ),
+        })
+      : t("flowReview.conflict.titleRow");
 
   // Rendered inside a ColumnShell: real text, an explicit "(empty)", or the
   // honest reason there is nothing to show. Never a blank box.
@@ -175,7 +193,7 @@ export function ReviewConflictDialog({
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <CircularProgress size={16} />
           <Typography variant="caption" color="text.secondary">
-            Loading their version…
+            {t("flowReview.conflict.loadingTheirs")}
           </Typography>
         </Box>
       );
@@ -190,11 +208,11 @@ export function ReviewConflictDialog({
     if (value == null) {
       return (
         <Typography variant="caption" color="text.secondary">
-          Their version could not be read.
+          {t("flowReview.conflict.theirsUnavailable")}
         </Typography>
       );
     }
-    return value === "" ? <Box component="em">(empty)</Box> : value;
+    return value === "" ? <Box component="em">{t("flowReview.conflict.empty")}</Box> : value;
   }
 
   const twoColumn = {
@@ -209,13 +227,13 @@ export function ReviewConflictDialog({
       <DialogContent dividers>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, textAlign: "start" }}>
           {textual
-            ? "Another editor saved a change while you were editing. Choose which version to keep — the other is discarded."
-            : "Another editor changed this row while your change was queued. Discarding yours affects only the change listed below — anything unsaved in the draft box stays where it is."}
+            ? t("flowReview.conflict.bodyTextual")
+            : t("flowReview.conflict.bodyFields")}
         </Typography>
         {textual ? (
           <Box sx={twoColumn}>
-            <ColumnShell heading="Mine">
-              {fields[0]?.mine || <Box component="em">(empty)</Box>}
+            <ColumnShell heading={t("flowReview.conflict.mine")}>
+              {fields[0]?.mine || <Box component="em">{t("flowReview.conflict.empty")}</Box>}
             </ColumnShell>
             <ColumnShell heading={theirsHeading}>
               {theirsBody(fields[0]?.theirs ?? null)}
@@ -223,12 +241,14 @@ export function ReviewConflictDialog({
           </Box>
         ) : fields.length === 0 ? (
           <Typography variant="caption" color="text.secondary">
-            The change that conflicted could not be identified.
+            {t("flowReview.conflict.unidentified")}
           </Typography>
         ) : (
           <Box sx={{ display: "grid", gap: 1.5 }}>
             <Typography variant="caption" color="text.secondary" sx={{ textAlign: "start" }}>
-              Their version: {theirsMeta ?? "unknown"}
+              {t("flowReview.conflict.theirVersionLine", {
+                meta: theirsMeta ?? t("flowReview.conflict.unknownVersion"),
+              })}
             </Typography>
             {fields.map((f) => (
               <Box key={f.field}>
@@ -240,10 +260,12 @@ export function ReviewConflictDialog({
                   {f.label}
                 </Typography>
                 <Box sx={twoColumn}>
-                  <ColumnShell heading="Mine">
-                    {f.mine || <Box component="em">(empty)</Box>}
+                  <ColumnShell heading={t("flowReview.conflict.mine")}>
+                    {f.mine || <Box component="em">{t("flowReview.conflict.empty")}</Box>}
                   </ColumnShell>
-                  <ColumnShell heading="Theirs">{theirsBody(f.theirs)}</ColumnShell>
+                  <ColumnShell heading={t("flowReview.conflict.theirs")}>
+                    {theirsBody(f.theirs)}
+                  </ColumnShell>
                 </Box>
               </Box>
             ))}
@@ -259,11 +281,15 @@ export function ReviewConflictDialog({
               disabled={!canKeepTheirs}
               sx={{ minHeight: 44 }}
             >
-              {textual ? "Keep theirs" : "Discard my change"}
+              {textual
+                ? t("flowReview.conflict.keepTheirs")
+                : t("flowReview.conflict.discardMine")}
             </Button>
           </span>
         </Tooltip>
-        <Tooltip title={theirsVersion == null ? "No server version to re-send against" : ""}>
+        <Tooltip
+          title={theirsVersion == null ? t("flowReview.conflict.noServerVersion") : ""}
+        >
           <span>
             <Button
               variant="contained"
@@ -272,7 +298,7 @@ export function ReviewConflictDialog({
               disabled={theirsVersion == null}
               sx={{ minHeight: 44 }}
             >
-              Keep mine
+              {t("flowReview.conflict.keepMine")}
             </Button>
           </span>
         </Tooltip>

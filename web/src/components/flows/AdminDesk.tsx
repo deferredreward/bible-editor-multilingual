@@ -16,6 +16,7 @@
 // like every other selected row in the redesign. Screens render inside as
 // children — this file owns ONLY the chrome, never data.
 import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Box,
   Button,
@@ -50,26 +51,29 @@ export type AdminSection =
   | "templates"
   | "observe";
 
-type NavItem = { key: AdminSection; label: string; icon: ReactNode; hash: string };
+// Labels are i18n keys, translated at render time — the nav identities (key,
+// hash) stay untouched for the adminSurfaceMap guard.
+type NavItem = { key: AdminSection; labelKey: string; icon: ReactNode; hash: string };
 
 const SECTIONS: NavItem[] = [
-  { key: "progress", label: "Progress", icon: <InsightsIcon fontSize="small" />, hash: "#/admin/progress" },
-  { key: "workflow", label: "Workflow", icon: <AccountTreeIcon fontSize="small" />, hash: "#/admin/workflow" },
-  { key: "team", label: "Team & roles", icon: <GroupsIcon fontSize="small" />, hash: "#/admin/team" },
-  { key: "setup", label: "Setup", icon: <TuneIcon fontSize="small" />, hash: "#/admin/setup" },
+  { key: "progress", labelKey: "adminDesk.nav.progress", icon: <InsightsIcon fontSize="small" />, hash: "#/admin/progress" },
+  { key: "workflow", labelKey: "adminDesk.nav.workflow", icon: <AccountTreeIcon fontSize="small" />, hash: "#/admin/workflow" },
+  { key: "team", labelKey: "adminDesk.nav.team", icon: <GroupsIcon fontSize="small" />, hash: "#/admin/team" },
+  { key: "setup", labelKey: "adminDesk.nav.setup", icon: <TuneIcon fontSize="small" />, hash: "#/admin/setup" },
 ];
 
 // More-tools sections — same first-class treatment as SECTIONS above, but each
 // keeps its own pre-existing hash (#/ai etc.) rather than the #/admin/{key}
 // pattern, so bookmarks and links into these pages keep working (#186).
 const TOOLS: NavItem[] = [
-  { key: "ai", label: "AI studio", icon: <AutoAwesomeIcon fontSize="small" />, hash: "#/ai" },
-  { key: "style", label: "Style", icon: <PaletteIcon fontSize="small" />, hash: "#/style" },
-  { key: "templates", label: "Templates", icon: <ArticleIcon fontSize="small" />, hash: "#/curate" },
-  { key: "observe", label: "Observe", icon: <VisibilityIcon fontSize="small" />, hash: "#/observe" },
+  { key: "ai", labelKey: "adminDesk.nav.ai", icon: <AutoAwesomeIcon fontSize="small" />, hash: "#/ai" },
+  { key: "style", labelKey: "adminDesk.nav.style", icon: <PaletteIcon fontSize="small" />, hash: "#/style" },
+  { key: "templates", labelKey: "adminDesk.nav.templates", icon: <ArticleIcon fontSize="small" />, hash: "#/curate" },
+  { key: "observe", labelKey: "adminDesk.nav.observe", icon: <VisibilityIcon fontSize="small" />, hash: "#/observe" },
 ];
 
 export function AdminDesk({ current, children }: { current: AdminSection; children: ReactNode }) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
   const wide = useMediaQuery(theme.breakpoints.up("md"));
@@ -122,7 +126,7 @@ export function AdminDesk({ current, children }: { current: AdminSection; childr
         }}
       >
         {item.icon}
-        {item.label}
+        {t(item.labelKey)}
       </ButtonBase>
     );
   };
@@ -152,7 +156,7 @@ export function AdminDesk({ current, children }: { current: AdminSection; childr
         fontSize="small"
         sx={theme.direction === "rtl" ? { transform: "scaleX(-1)" } : undefined}
       />
-      Books
+      {t("adminDesk.nav.books")}
     </ButtonBase>
   );
 
@@ -160,7 +164,7 @@ export function AdminDesk({ current, children }: { current: AdminSection; childr
   const rail = (
     <Box
       component="nav"
-      aria-label="Admin sections"
+      aria-label={t("adminDesk.a11y.adminSections")}
       sx={{
         bgcolor: "background.paper",
         border: "1px solid",
@@ -176,16 +180,17 @@ export function AdminDesk({ current, children }: { current: AdminSection; childr
       }}
     >
       {booksExit}
-      {groupHeader("Admin")}
+      {groupHeader(t("adminDesk.groups.admin"))}
       {SECTIONS.map(railItem)}
-      {groupHeader("More tools", 0.5)}
+      {groupHeader(t("adminDesk.groups.moreTools"), 0.5)}
       {TOOLS.map(railItem)}
     </Box>
   );
 
   // Narrow: a compact bar with the Books exit and a tap-to-open menu showing
   // the current section — collapses rather than scrolls (Benjamin 2026-08-17).
-  const currentLabel = [...SECTIONS, ...TOOLS].find((i) => i.key === current)?.label ?? "Admin";
+  const currentLabelKey =
+    [...SECTIONS, ...TOOLS].find((i) => i.key === current)?.labelKey ?? "adminDesk.groups.admin";
   const menuItem = (item: NavItem) => {
     const active = item.key === current;
     return (
@@ -197,14 +202,14 @@ export function AdminDesk({ current, children }: { current: AdminSection; childr
         sx={{ minHeight: 44, gap: 1.25 }}
       >
         {item.icon}
-        {item.label}
+        {t(item.labelKey)}
       </MenuItem>
     );
   };
   const collapsedNav = (
     <Box
       component="nav"
-      aria-label="Admin sections"
+      aria-label={t("adminDesk.a11y.adminSections")}
       sx={{
         display: "flex",
         alignItems: "center",
@@ -231,12 +236,12 @@ export function AdminDesk({ current, children }: { current: AdminSection; childr
           fontWeight: 600,
         }}
       >
-        {currentLabel}
+        {t(currentLabelKey)}
       </Button>
       <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)}>
-        <ListSubheader disableSticky>Admin</ListSubheader>
+        <ListSubheader disableSticky>{t("adminDesk.groups.admin")}</ListSubheader>
         {SECTIONS.map(menuItem)}
-        <ListSubheader disableSticky>More tools</ListSubheader>
+        <ListSubheader disableSticky>{t("adminDesk.groups.moreTools")}</ListSubheader>
         {TOOLS.map(menuItem)}
       </Menu>
     </Box>

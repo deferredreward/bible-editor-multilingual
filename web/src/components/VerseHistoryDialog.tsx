@@ -18,8 +18,11 @@ import {
   ToggleButtonGroup,
   Tooltip,
 } from "@mui/material";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { api, type VerseHistoryEntry } from "../sync/api";
 import { diffWords } from "../lib/wordDiff";
+import { formatEpochSecondsDateTime } from "../lib/formatDate";
 
 interface Props {
   open: boolean;
@@ -37,17 +40,18 @@ interface Props {
   onUseVersion: (content: unknown, plainText: string | null) => void;
 }
 
-const fmtTime = (epochSec: number) => new Date(epochSec * 1000).toLocaleString();
+const fmtTime = (epochSec: number) => formatEpochSecondsDateTime(epochSec);
 
-const userLabel = (e: VerseHistoryEntry) => {
-  if (!e.user) return "unknown";
-  return e.user.full_name || e.user.username || `user #${e.user.id}`;
+const userLabel = (e: VerseHistoryEntry, t: TFunction) => {
+  if (!e.user) return t("dialogs.history.unknownUser");
+  return e.user.full_name || e.user.username || t("dialogs.history.userNumber", { id: e.user.id });
 };
 
 // edit_log.source → a short human label. AI sub-sources collapse to "AI".
-const sourceChip = (source: string | null): string | null => {
-  if (source === "ai_pipeline" || source === "hint_expansion") return "AI";
-  if (source === "dcs_reimport") return "re-import";
+// Switches on the stored source id (never on the translated label).
+const sourceChip = (source: string | null, t: TFunction): string | null => {
+  if (source === "ai_pipeline" || source === "hint_expansion") return t("dialogs.verseHistory.sourceAi");
+  if (source === "dcs_reimport") return t("dialogs.verseHistory.sourceReimport");
   return null;
 };
 
@@ -63,6 +67,7 @@ export function VerseHistoryDialog({
   onClose,
   onUseVersion,
 }: Props) {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<VerseHistoryEntry[]>([]);
@@ -124,7 +129,7 @@ export function VerseHistoryDialog({
       <DialogTitle>
         <Stack direction="row" alignItems="center" spacing={1}>
           <Typography variant="h6" component="span">
-            Verse history
+            {t("dialogs.verseHistory.title")}
           </Typography>
           <Chip
             label={`${bibleVersion} ${chapter}:${verseNum}`}
@@ -134,7 +139,7 @@ export function VerseHistoryDialog({
           />
           <Box sx={{ flex: 1 }} />
           <Typography variant="caption" color="text.secondary">
-            current: v{currentVersion}
+            {t("dialogs.history.currentVersion", { version: currentVersion })}
           </Typography>
         </Stack>
       </DialogTitle>
@@ -145,7 +150,7 @@ export function VerseHistoryDialog({
           </Box>
         ) : error ? (
           <Box sx={{ p: 2 }}>
-            <Alert severity="error">failed to load history: {error}</Alert>
+            <Alert severity="error">{t("dialogs.history.loadFailed", { error })}</Alert>
           </Box>
         ) : (
           <Stack direction="row" sx={{ minHeight: 360 }}>
@@ -160,7 +165,7 @@ export function VerseHistoryDialog({
             >
               <List dense disablePadding>
                 {ordered.map((e) => {
-                  const src = sourceChip(e.source);
+                  const src = sourceChip(e.source, t);
                   return (
                     <ListItemButton
                       key={e.version}
@@ -174,23 +179,23 @@ export function VerseHistoryDialog({
                               variant="body2"
                               sx={{ fontFamily: "monospace", fontWeight: 600 }}
                             >
-                              v{e.version}
+                              {t("aligner.versionChip", { version: e.version })}
                             </Typography>
                             {e.current && (
-                              <Chip label="current" size="small" color="primary" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                              <Chip label={t("dialogs.history.current")} size="small" color="primary" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
                             )}
                             {e.action === "imported" && (
-                              <Chip label="imported" size="small" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                              <Chip label={t("dialogs.history.imported")} size="small" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
                             )}
                             {e.action === "baseline" && (
-                              <Chip label="pre-AI" size="small" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                              <Chip label={t("dialogs.verseHistory.preAi")} size="small" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
                             )}
                             {src && (
                               <Chip label={src} size="small" variant="outlined" color="secondary" sx={{ height: 18, fontSize: 10 }} />
                             )}
                             {!e.restorable && (
-                              <Tooltip title="alignment wasn't stored for this version — can't restore it">
-                                <Chip label="text only" size="small" variant="outlined" color="warning" sx={{ height: 18, fontSize: 10 }} />
+                              <Tooltip title={t("dialogs.verseHistory.textOnlyTooltip")}>
+                                <Chip label={t("dialogs.verseHistory.textOnly")} size="small" variant="outlined" color="warning" sx={{ height: 18, fontSize: 10 }} />
                               </Tooltip>
                             )}
                           </Stack>
@@ -201,7 +206,7 @@ export function VerseHistoryDialog({
                               {fmtTime(e.created_at)}
                             </Typography>
                             <Typography variant="caption" color="text.secondary" component="div">
-                              {userLabel(e)}
+                              {userLabel(e, t)}
                             </Typography>
                           </>
                         }
@@ -217,8 +222,11 @@ export function VerseHistoryDialog({
                   <Stack direction="row" alignItems="center" spacing={1}>
                     <Typography variant="caption" color="text.secondary">
                       {viewMode === "diff" && canDiff
-                        ? `diff: v${selected.version} → v${currentVersion}`
-                        : `preview of v${selected.version}`}
+                        ? t("dialogs.history.diffHeading", {
+                            from: selected.version,
+                            to: currentVersion,
+                          })
+                        : t("dialogs.history.previewHeading", { version: selected.version })}
                     </Typography>
                     <Box sx={{ flex: 1 }} />
                     <ToggleButtonGroup
@@ -230,9 +238,11 @@ export function VerseHistoryDialog({
                       }}
                       sx={{ "& .MuiToggleButton-root": { py: 0.25, px: 1 } }}
                     >
-                      <ToggleButton value="snapshot">snapshot</ToggleButton>
+                      <ToggleButton value="snapshot">
+                        {t("dialogs.history.snapshot")}
+                      </ToggleButton>
                       <ToggleButton value="diff" disabled={!canDiff}>
-                        diff vs current
+                        {t("dialogs.history.diffVsCurrent")}
                       </ToggleButton>
                     </ToggleButtonGroup>
                   </Stack>
@@ -243,14 +253,13 @@ export function VerseHistoryDialog({
                   )}
                   {!selected.restorable && !isCurrent && (
                     <Alert severity="info" sx={{ py: 0 }}>
-                      This point in history kept only the verse text, not its word
-                      alignment, so it can be viewed but not restored.
+                      {t("dialogs.verseHistory.textOnlyNotice")}
                     </Alert>
                   )}
                 </Stack>
               ) : (
                 <Typography variant="body2" color="text.secondary">
-                  pick a version on the left to preview.
+                  {t("dialogs.history.pickVersion")}
                 </Typography>
               )}
             </Box>
@@ -259,11 +268,10 @@ export function VerseHistoryDialog({
       </DialogContent>
       <DialogActions sx={{ justifyContent: "space-between" }}>
         <Typography variant="caption" color="text.secondary" sx={{ pl: 1 }}>
-          History begins at the first saved edit; the original imported text may
-          not be retained.
+          {t("dialogs.verseHistory.footerNote")}
         </Typography>
         <Box>
-          <Button onClick={onClose}>Close</Button>
+          <Button onClick={onClose}>{t("common.close")}</Button>
           <Button
             variant="contained"
             disabled={!canRestore || loading}
@@ -274,10 +282,10 @@ export function VerseHistoryDialog({
             }}
           >
             {isCurrent
-              ? "Already current"
+              ? t("dialogs.history.alreadyCurrent")
               : selected
-                ? `Switch to v${selected.version}`
-                : "Switch"}
+                ? t("dialogs.history.switchTo", { version: selected.version })
+                : t("dialogs.history.switch")}
           </Button>
         </Box>
       </DialogActions>
@@ -286,6 +294,7 @@ export function VerseHistoryDialog({
 }
 
 function TextPreview({ value }: { value: string | null }) {
+  const { t } = useTranslation();
   return (
     <Box
       sx={{
@@ -301,12 +310,13 @@ function TextPreview({ value }: { value: string | null }) {
         color: value ? "text.primary" : "text.disabled",
       }}
     >
-      {value || "(empty)"}
+      {value || t("dialogs.history.empty")}
     </Box>
   );
 }
 
 function TextDiff({ from, to }: { from: string | null; to: string | null }) {
+  const { t } = useTranslation();
   const fromStr = from ?? "";
   const toStr = to ?? "";
   const ops = useMemo(() => diffWords(fromStr, toStr), [fromStr, toStr]);
@@ -327,7 +337,7 @@ function TextDiff({ from, to }: { from: string | null; to: string | null }) {
     >
       {identical && fromStr === "" && toStr === "" ? (
         <Box component="span" sx={{ color: "text.disabled" }}>
-          (empty)
+          {t("dialogs.history.empty")}
         </Box>
       ) : identical ? (
         <Box component="span">{fromStr}</Box>

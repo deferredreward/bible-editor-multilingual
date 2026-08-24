@@ -30,6 +30,7 @@ import type { PipelineJobRow, PipelineState } from "../sync/api";
 import { pipelineStore } from "../sync/pipelineStore";
 import { currentPipelineUserId } from "../sync/pipelineSession";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 // A job requested by another user. The shared queue shows everyone's active /
 // queued runs, but only the owner can cancel one, and its requester is
@@ -166,33 +167,28 @@ function shortJobId(jobId: string): string {
   return jobId.length > 8 ? `…${jobId.slice(-6)}` : jobId;
 }
 
-function relativeTime(seconds: number): string {
+function relativeTime(seconds: number, t: TFunction): string {
   const diff = Math.floor(Date.now() / 1000) - seconds;
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+  if (diff < 60) return t("appShell.time.secondsAgo", { n: diff });
+  if (diff < 3600) return t("appShell.time.minutesShortAgo", { n: Math.floor(diff / 60) });
+  if (diff < 86400) return t("appShell.time.hoursAgo", { n: Math.floor(diff / 3600) });
+  return t("appShell.time.daysAgo", { n: Math.floor(diff / 86400) });
 }
 
-function stateLabel(state: PipelineState): string {
-  switch (state) {
-    case "queued":
-      return "queued";
-    case "dispatching":
-      return "starting…";
-    case "running":
-      return "running";
-    case "paused_for_outage":
-      return "paused (outage)";
-    case "paused_for_usage_limit":
-      return "paused (daily budget)";
-    case "failed":
-      return "failed";
-    case "cancelled":
-      return "cancelled";
-    case "done":
-      return "done";
-  }
+// Key names, not text — translated at render so a language switch repaints.
+const STATE_LABEL: Record<PipelineState, string> = {
+  queued: "appShell.pipelineState.queued",
+  dispatching: "appShell.pipelineState.dispatching",
+  running: "appShell.pipelineState.running",
+  paused_for_outage: "appShell.pipelineState.pausedOutage",
+  paused_for_usage_limit: "appShell.pipelineState.pausedUsageLimit",
+  failed: "appShell.pipelineState.failed",
+  cancelled: "appShell.pipelineState.cancelled",
+  done: "appShell.pipelineState.done",
+};
+
+function stateLabel(state: PipelineState, t: TFunction): string {
+  return t(STATE_LABEL[state]);
 }
 
 function StateIcon({ state }: { state: PipelineState }) {
@@ -412,7 +408,7 @@ export function PipelineStatusBar({ toast, onToastClear, hideChip }: Props = {})
               {queueSummary.activeJob.started_by_username ?? t("pipeline.someone")} ·{" "}
               {t(TYPE_LABEL[queueSummary.activeJob.pipeline_type])}{" "}
               {queueSummary.activeJob.book} {queueSummary.activeJob.start_chapter}
-              {` (${relativeTime(queueSummary.activeJob.updated_at)})`}
+              {` (${relativeTime(queueSummary.activeJob.updated_at, t)})`}
             </Typography>
           )}
           <Stack spacing={1} sx={{ mt: 1 }}>
@@ -437,14 +433,14 @@ export function PipelineStatusBar({ toast, onToastClear, hideChip }: Props = {})
                       {job.end_chapter !== job.start_chapter ? `–${job.end_chapter}` : ""}
                     </Typography>
                     <Typography variant="caption" color="text.secondary" display="block">
-                      {stateLabel(job.state)}
+                      {stateLabel(job.state, t)}
                       {job.state === "queued" && job.queue_position
                         ? t("pipeline.queuePositionInLine", { position: job.queue_position })
                         : ""}
                       {job.current_skill && !STAGES[job.pipeline_type]?.includes(job.current_skill)
                         ? ` · ${job.current_skill}`
                         : ""}
-                      {` · updated ${relativeTime(job.updated_at)}`}
+                      {t("appShell.pipeline.updatedSuffix", { time: relativeTime(job.updated_at, t) })}
                     </Typography>
                     {isForeign(job) && (
                       <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: "italic" }}>

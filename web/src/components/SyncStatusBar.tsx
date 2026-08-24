@@ -7,6 +7,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Divider, IconButton, ListItemText, Menu, MenuItem, Stack, Tooltip, Typography } from "@mui/material";
 import CloudDoneIcon from "@mui/icons-material/CloudDone";
 import CloudQueueIcon from "@mui/icons-material/CloudQueue";
@@ -36,18 +37,29 @@ function isFreshRow(x: unknown): x is FreshRow {
 // Short label for the failed-ops drawer. Doesn't need to be unique — the
 // op.id key handles React reconciliation — just needs to be readable enough
 // that the translator can recognize which row didn't save.
-function formatTarget(t: OpTarget): string {
-  if (t.kind === "row") return `${t.rowKind.toUpperCase()} ${t.book} · ${t.id}`;
-  if (t.kind === "verse_status") return `status ${t.book} ${t.chapter}:${t.verse}`;
-  if (t.kind === "lane_check") return `${t.lane} check ${t.book} ${t.chapter}:${t.verse}`;
-  return `${t.bibleVersion} ${t.book} ${t.chapter}:${t.verse}`;
+function formatTarget(target: OpTarget, t: TFunction): string {
+  if (target.kind === "row") return `${target.rowKind.toUpperCase()} ${target.book} · ${target.id}`;
+  if (target.kind === "verse_status") {
+    return t("appShell.sync.targetVerseStatus", {
+      ref: `${target.book} ${target.chapter}:${target.verse}`,
+    });
+  }
+  if (target.kind === "lane_check") {
+    return t("appShell.sync.targetLaneCheck", {
+      lane: target.lane,
+      ref: `${target.book} ${target.chapter}:${target.verse}`,
+    });
+  }
+  return `${target.bibleVersion} ${target.book} ${target.chapter}:${target.verse}`;
 }
 
 // Label for the confirm-before-discard dialogs and their clipboard copy — one
 // definition so what the user reads on screen always matches what they paste.
 // A delete op carries no content (patch is {}), so say what the intent was.
-function formatOpLabel(op: OutboxOp): string {
-  return `${formatTarget(op.target)}${op.action === "delete" ? " (delete)" : ""}`;
+function formatOpLabel(op: OutboxOp, t: TFunction): string {
+  return `${formatTarget(op.target, t)}${
+    op.action === "delete" ? t("appShell.sync.deleteSuffix") : ""
+  }`;
 }
 
 // Clipboard write for a discard dialog's "copy" button. This is the user's
@@ -261,7 +273,7 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRo
 
   const copyUnresolvable = async () => {
     const text = liveUnresolvable
-      .map((op) => `${formatOpLabel(op)}\n${JSON.stringify(op.patch, null, 2)}`)
+      .map((op) => `${formatOpLabel(op, t)}\n${JSON.stringify(op.patch, null, 2)}`)
       .join("\n\n");
     if (await copyToClipboard(text)) setCopiedUnresolvable(true);
   };
@@ -580,7 +592,7 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRo
                           fontFamily: "monospace",
                         }}
                       >
-                        {formatTarget(op.target)}
+                        {formatTarget(op.target, t)}
                       </Typography>
                       {op.lastError && (
                         <Typography
@@ -786,13 +798,13 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRo
                 variant="caption"
                 sx={{ fontFamily: "monospace", display: "block", mt: 1 }}
               >
-                {formatOpLabel(liveDropOp)}
+                {formatOpLabel(liveDropOp, t)}
               </Typography>
             </DialogContent>
             <DialogActions>
               <Button
                 onClick={async () => {
-                  const text = `${formatOpLabel(liveDropOp)}\n${JSON.stringify(liveDropOp.patch, null, 2)}`;
+                  const text = `${formatOpLabel(liveDropOp, t)}\n${JSON.stringify(liveDropOp.patch, null, 2)}`;
                   if (await copyToClipboard(text)) setCopiedDropOp(true);
                 }}
               >
@@ -851,7 +863,7 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRo
                 variant="caption"
                 sx={{ fontFamily: "monospace", display: "block" }}
               >
-                {formatOpLabel(op)}
+                {formatOpLabel(op, t)}
               </Typography>
             ))}
           </Stack>

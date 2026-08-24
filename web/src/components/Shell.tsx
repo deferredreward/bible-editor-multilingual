@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   Box,
   Typography,
@@ -883,7 +884,7 @@ export function Shell({
           updated_at: updated.updated_at,
         });
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "unknown error";
+        const msg = e instanceof Error ? e.message : t("appShell.common.unknownError");
         pushPipelineToast(t("shell.couldntUpdatePreserve", { message: msg }), "error");
       }
     },
@@ -902,7 +903,7 @@ export function Shell({
         // Prefer the server's human-readable message (e.g. the note_required
         // 400) over the bare "HTTP 400" the ApiError carries as its message.
         const serverMsg = (e as { body?: { message?: string } } | null)?.body?.message;
-        const msg = (typeof serverMsg === "string" && serverMsg) || (e instanceof Error ? e.message : "unknown error");
+        const msg = (typeof serverMsg === "string" && serverMsg) || (e instanceof Error ? e.message : t("appShell.common.unknownError"));
         pushPipelineToast(t("shell.couldntUpdateHint", { message: msg }), "error");
       }
     },
@@ -918,7 +919,7 @@ export function Shell({
         const updated = await api.validateNote(id, book, value);
         applyLocalRowReplacement("tn", updated);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "unknown error";
+        const msg = e instanceof Error ? e.message : t("appShell.common.unknownError");
         pushPipelineToast(t("shell.couldntApproveNote", { message: msg }), "error");
       }
     },
@@ -948,7 +949,7 @@ export function Shell({
           return next;
         });
         const body = (e as { body?: { error?: string } } | null)?.body;
-        const msg = body?.error ?? (e instanceof Error ? e.message : "unknown error");
+        const msg = body?.error ?? (e instanceof Error ? e.message : t("appShell.common.unknownError"));
         pushPipelineToast(t("shell.couldntTranslateNote", { message: msg }), "error");
       }
     },
@@ -962,7 +963,7 @@ export function Shell({
         const updated = await api.validateQuestion(id, book, value);
         applyLocalRowReplacement("tq", updated);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "unknown error";
+        const msg = e instanceof Error ? e.message : t("appShell.common.unknownError");
         pushPipelineToast(t("shell.couldntApproveNote", { message: msg }), "error");
       }
     },
@@ -990,7 +991,7 @@ export function Shell({
           return next;
         });
         const body = (e as { body?: { error?: string } } | null)?.body;
-        const msg = body?.error ?? (e instanceof Error ? e.message : "unknown error");
+        const msg = body?.error ?? (e instanceof Error ? e.message : t("appShell.common.unknownError"));
         pushPipelineToast(t("shell.couldntTranslateNote", { message: msg }), "error");
       }
     },
@@ -1015,7 +1016,7 @@ export function Shell({
         scheduleLintRefetch();
       } catch (e) {
         applyLocalRowPatch("tn", id, { trashed_at: null });
-        const msg = e instanceof Error ? e.message : "unknown error";
+        const msg = e instanceof Error ? e.message : t("appShell.common.unknownError");
         pushPipelineToast(t("shell.couldntDeleteNote", { message: msg }), "error");
       }
     },
@@ -1033,7 +1034,7 @@ export function Shell({
         scheduleLintRefetch();
       } catch (e) {
         applyLocalRowPatch("tn", id, { trashed_at: Math.floor(Date.now() / 1000) });
-        const msg = e instanceof Error ? e.message : "unknown error";
+        const msg = e instanceof Error ? e.message : t("appShell.common.unknownError");
         pushPipelineToast(t("shell.couldntRestoreNote", { message: msg }), "error");
       }
     },
@@ -3015,12 +3016,12 @@ export function Shell({
         // user-actionable message.
         const message =
           built.error.reason === "missing_ult_verse"
-            ? "ULT verse text unavailable for this verse."
+            ? t("appShell.shell.aiMissingUlt")
             : built.error.reason === "missing_ust_verse"
-              ? "UST verse text unavailable for this verse."
+              ? t("appShell.shell.aiMissingUst")
               : built.error.reason === "hebrew_not_found"
-                ? "Couldn't match this English to the ULT alignment — copy the support phrase exactly from ULT."
-                : "AI prerequisites missing.";
+                ? t("appShell.shell.aiHebrewNotFound")
+                : t("appShell.shell.aiPrereqMissing");
         aiDrafts.pushError(aiRow, message);
         return;
       }
@@ -3510,7 +3511,7 @@ export function Shell({
         // TODO follow-on PRs: articleList / alignment panels.
         return (
           <Box sx={{ m: 2, p: 2, border: "1px dashed", borderColor: "divider", borderRadius: 1, color: "text.secondary" }}>
-            <Typography variant="body2">{panel.type} — panel coming in a later pass</Typography>
+            <Typography variant="body2">{t("appShell.shell.panelComingLater", { type: panel.type })}</Typography>
           </Box>
         );
     }
@@ -3862,7 +3863,7 @@ export function Shell({
             pipelineType: chapterLock.pipelineType,
             book,
             chapter,
-            started: formatRelative(chapterLock.startedAt),
+            started: formatRelative(chapterLock.startedAt, t),
           })}
         </Alert>
       )}
@@ -4136,12 +4137,12 @@ export function Shell({
 
 type Sortable = { id: string; verse: number; sort_order: number | null };
 
-function formatRelative(unixSeconds: number): string {
+function formatRelative(unixSeconds: number, t: TFunction): string {
   const diff = Math.floor(Date.now() / 1000) - unixSeconds;
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+  if (diff < 60) return t("appShell.time.secondsAgo", { n: diff });
+  if (diff < 3600) return t("appShell.time.minutesAgo", { n: Math.floor(diff / 60) });
+  if (diff < 86400) return t("appShell.time.hoursAgo", { n: Math.floor(diff / 3600) });
+  return t("appShell.time.daysAgo", { n: Math.floor(diff / 86400) });
 }
 
 function sortedForVerse<T extends Sortable>(rows: T[], verse: number): T[] {

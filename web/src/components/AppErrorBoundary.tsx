@@ -13,6 +13,12 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button, Stack, Typography } from "@mui/material";
+// Error boundaries must be class components, so the useTranslation hook is not
+// available here. The i18n singleton is read at render time instead — that is
+// the least invasive option and leaves the catch/reload behaviour untouched.
+// (A language switch while the fallback is on screen won't repaint it; the
+// fallback's only action is a full reload, which re-reads the language anyway.)
+import i18n from "../i18n";
 
 // Vite/Rollup surface a dynamic-import failure as a TypeError whose message
 // names the failed module URL; some browsers tag it "ChunkLoadError". Two
@@ -80,14 +86,16 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, State> 
         sx={{ height: "100vh", "@supports (height: 100dvh)": { height: "100dvh" }, px: 4 }}
         spacing={2}
       >
-        <Typography variant="h6">{chunk ? "Update needed" : "Something went wrong"}</Typography>
+        <Typography variant="h6">
+          {i18n.t(
+            chunk ? "widgets.errorBoundary.updateNeeded" : "widgets.errorBoundary.somethingWrong",
+          )}
+        </Typography>
         <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ maxWidth: 480 }}>
-          {chunk
-            ? "A newer version of the editor has been deployed. Reload to load it — your queued edits are saved in this browser and will sync after reload."
-            : "The editor hit an unexpected error. Your queued edits are saved in this browser. Reload to continue."}
+          {i18n.t(chunk ? "widgets.errorBoundary.chunkBody" : "widgets.errorBoundary.genericBody")}
         </Typography>
         <Button variant="contained" onClick={() => location.reload()}>
-          Reload
+          {i18n.t("widgets.errorBoundary.reload")}
         </Button>
       </Stack>
     );

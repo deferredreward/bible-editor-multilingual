@@ -52,7 +52,9 @@ import { shortSupport } from "../lib/supportReference";
 import { taShort, parseTaRef } from "../lib/taArticle";
 import { TCM, buildSH } from "../lib/noteTemplates";
 import { getLockUnapprovedDrafts } from "../lib/editorPrefs";
+import { formatEpochSecondsDateTime } from "../lib/formatDate";
 import { drafts, rowKey, draftDirtyBorderSx } from "../sync/drafts";
+import { isAquiferDraftRow } from "./flows/translateShared";
 
 const NoteHistoryDialog = lazy(() =>
   import("./NoteHistoryDialog").then((m) => ({ default: m.NoteHistoryDialog })),
@@ -456,15 +458,7 @@ function NoteCardInner({
   const translationState = translationMode ? (row.translation_state ?? null) : null;
   // Distinct provenance: an ai_draft sourced from Aquifer (not the AI bot). Kept
   // in draft_meta_json so it survives the round-trip; drives a distinct badge.
-  const isAquiferDraft =
-    translationState === "ai_draft" &&
-    (() => {
-      try {
-        return JSON.parse(row.draft_meta_json ?? "null")?.source === "aquifer";
-      } catch {
-        return false;
-      }
-    })();
+  const isAquiferDraft = translationState === "ai_draft" && isAquiferDraftRow(row);
   const isDraftState = translationState === "ai_draft" || translationState === "edited";
   const isValidated = translationState === "validated";
   // A GL-project row the translate pipeline never touched AND with no target
@@ -1264,13 +1258,13 @@ function NoteCardInner({
                   restored: row.restored_from_version,
                   unsaved: hasRowDiff ? t("noteCard.unsavedEditsSuffix") : "",
                   version: row.version,
-                  date: new Date(row.updated_at * 1000).toLocaleString(),
+                  date: formatEpochSecondsDateTime(row.updated_at),
                 })
               : t("noteCard.versionTooltip", {
                   version: row.version,
                   unsaved: hasRowDiff ? t("noteCard.unsavedEditsSuffix") : "",
                   saved: t("noteCard.timesSaved", { count: row.version - 1 }),
-                  date: new Date(row.updated_at * 1000).toLocaleString(),
+                  date: formatEpochSecondsDateTime(row.updated_at),
                 })
           }
         >

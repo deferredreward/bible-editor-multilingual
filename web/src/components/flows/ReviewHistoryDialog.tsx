@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // Kind-aware row history for the review queue, after the #histBackdrop dialog
 // in docs/flows/ui/t2-review.html.
 //
@@ -12,6 +9,8 @@
 // rule — is the same contract.
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -22,6 +21,8 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import Typography from "@mui/material/Typography";
 import { api, ApiError, type RowHistoryEntry } from "../../sync/api";
+import i18n from "../../i18n";
+import { formatEpochSecondsDateTime } from "../../lib/formatDate";
 
 export interface ReviewHistoryDialogProps {
   open: boolean;
@@ -43,11 +44,11 @@ export interface ReviewHistoryDialogProps {
   onUseVersion: (text: string, fromVersion: number) => void;
 }
 
-const fmtTime = (epochSec: number) => new Date(epochSec * 1000).toLocaleString();
+const fmtTime = (epochSec: number) => formatEpochSecondsDateTime(epochSec);
 
-function userLabel(e: RowHistoryEntry): string {
-  if (!e.user) return "system";
-  return e.user.full_name || e.user.username || `user #${e.user.id}`;
+function userLabel(t: TFunction, e: RowHistoryEntry): string {
+  if (!e.user) return t("flowReview.history.systemUser");
+  return e.user.full_name || e.user.username || t("flowReview.history.userNum", { id: e.user.id });
 }
 
 export function ReviewHistoryDialog({
@@ -61,6 +62,7 @@ export function ReviewHistoryDialog({
   onRestoreFromTrash,
   onUseVersion,
 }: ReviewHistoryDialogProps) {
+  const { t } = useTranslation();
   const [entries, setEntries] = useState<RowHistoryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -77,7 +79,13 @@ export function ReviewHistoryDialog({
       })
       .catch((e) => {
         if (cancelled) return;
-        setError(`Could not load history (${e instanceof ApiError ? e.status : "error"}).`);
+        // i18n.t, not the hook's `t`: adding `t` to this effect's deps would
+        // re-run the history FETCH on every UI-language change.
+        setError(
+          i18n.t("flowReview.history.loadFailed", {
+            status: e instanceof ApiError ? e.status : i18n.t("flowReview.common.errorWord"),
+          }),
+        );
       });
     return () => {
       cancelled = true;
@@ -91,7 +99,9 @@ export function ReviewHistoryDialog({
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>{kind === "tn" ? "Note history" : "Question history"}</DialogTitle>
+      <DialogTitle>
+        {kind === "tn" ? t("flowReview.history.titleNote") : t("flowReview.history.titleQuestion")}
+      </DialogTitle>
       <DialogContent dividers>
         {trashed && (
           <Alert
@@ -100,12 +110,12 @@ export function ReviewHistoryDialog({
             action={
               onRestoreFromTrash ? (
                 <Button size="small" onClick={onRestoreFromTrash}>
-                  Restore
+                  {t("flowReview.history.restore")}
                 </Button>
               ) : undefined
             }
           >
-            This note is in the trash.
+            {t("flowReview.history.inTrash")}
           </Alert>
         )}
         {error && <Alert severity="warning">{error}</Alert>}
@@ -116,7 +126,7 @@ export function ReviewHistoryDialog({
         )}
         {entries !== null && shown.length === 0 && !error && (
           <Typography variant="body2" color="text.secondary">
-            No recorded versions for this row.
+            {t("flowReview.history.noVersions")}
           </Typography>
         )}
         {shown
@@ -145,7 +155,7 @@ export function ReviewHistoryDialog({
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                   <Typography variant="body2">{e.action}</Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {userLabel(e)} · {fmtTime(e.created_at)}
+                    {userLabel(t, e)} · {fmtTime(e.created_at)}
                   </Typography>
                 </Box>
                 {restorable && (
@@ -155,7 +165,7 @@ export function ReviewHistoryDialog({
                     sx={{ flex: "none", minHeight: 44 }}
                     onClick={() => onUseVersion(snapshotText as string, e.version)}
                   >
-                    Switch to v{e.version}
+                    {t("flowReview.history.switchTo", { version: e.version })}
                   </Button>
                 )}
               </Box>
@@ -163,13 +173,20 @@ export function ReviewHistoryDialog({
           })}
         {shown.length > 0 && (
           <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1.5 }}>
-            Switching restores this version&apos;s {field} text only — quote, support
-            reference and flags stay as they are now.
+            {t("flowReview.history.switchExplains", {
+              // The sentence names the column that travels; these two keys are
+              // the display words for it, kept apart from the conflict dialog's
+              // field labels because that surface calls `response` "Answer".
+              field:
+                field === "note"
+                  ? t("flowReview.history.fieldNote")
+                  : t("flowReview.history.fieldResponse"),
+            })}
           </Typography>
         )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Close</Button>
+        <Button onClick={onClose}>{t("common.close")}</Button>
       </DialogActions>
     </Dialog>
   );

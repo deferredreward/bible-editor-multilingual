@@ -1,3 +1,4 @@
+import i18n from "../i18n";
 import { resolveBook } from "./bookNames";
 
 // Parse a free-form scripture reference like:
@@ -26,11 +27,15 @@ export type ParseRefResult =
 // being rejected by the pattern before it's even tried.
 const PATTERN = /^(?:((?:[123]|i{1,3})\s*[\p{L}]+|[\p{L}]+)\s+)?(\d+)(?:\s*:\s*(\d+))?$/iu;
 
+// `error` is DISPLAY ONLY — TopBar shows it in the go-to-reference tooltip and
+// branches on `ok`, never on the text. Translated per call (never at module
+// load) so a UI-language switch repaints it. The unresolved book token is
+// interpolated verbatim, never translated.
 export function parseReference(input: string): ParseRefResult {
   const trimmed = input.trim();
-  if (!trimmed) return { ok: false, error: "empty" };
+  if (!trimmed) return { ok: false, error: i18n.t("messages.reference.empty") };
   const m = PATTERN.exec(trimmed);
-  if (!m) return { ok: false, error: "format: 5 | 5:5 | zec 5:5" };
+  if (!m) return { ok: false, error: i18n.t("messages.reference.format") };
   const bookTok = m[1];
   const n1 = parseInt(m[2], 10);
   const n2 = m[3] !== undefined ? parseInt(m[3], 10) : null;
@@ -38,7 +43,9 @@ export function parseReference(input: string): ParseRefResult {
   let book: string | null = null;
   if (bookTok) {
     book = resolveBook(bookTok);
-    if (!book) return { ok: false, error: `unknown book: "${bookTok.trim()}"` };
+    if (!book) {
+      return { ok: false, error: i18n.t("messages.reference.unknownBook", { book: bookTok.trim() }) };
+    }
   }
 
   if (book) {

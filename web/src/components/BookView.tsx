@@ -10,6 +10,7 @@
 // comparison readable when the scroll spans an entire book.
 
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Box, Typography, IconButton, Tooltip, CircularProgress } from "@mui/material";
 import SaveIcon from "@mui/icons-material/Save";
 import UndoIcon from "@mui/icons-material/Undo";
@@ -137,6 +138,7 @@ export function BookView({
   textLockedVersions,
   textCheck,
 }: Props) {
+  const { t } = useTranslation();
   const projectConfig = useProjectConfig();
   const emptyLocked = useMemo(() => new Set<string>(), []);
   const lockedVersions = textLockedVersions ?? emptyLocked;
@@ -246,7 +248,7 @@ export function BookView({
                 letterSpacing: 0.5,
               }}
             >
-              {versionLabel(projectConfig, v)}{isReadOnly ? " (ro)" : ""}
+              {versionLabel(projectConfig, v)}{isReadOnly ? t("widgets.bookView.roSuffix") : ""}
             </Typography>
           );
         })}
@@ -367,6 +369,7 @@ const ChapterBlock = memo(function ChapterBlock({
   textLockedVersions: Set<string>;
   textCheck?: TextLaneCheck;
 }) {
+  const { t } = useTranslation();
   // Sentinel observed by IntersectionObserver — fires loadChapter when the
   // chapter is near (within ~one viewport of) the visible area.
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -426,7 +429,9 @@ const ChapterBlock = memo(function ChapterBlock({
       >
         {state.kind === "loading" ? <CircularProgress size={14} /> : null}
         <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
-          chapter {chapter} {state.kind === "loading" ? "loading…" : "(scroll to load)"}
+          {state.kind === "loading"
+            ? t("widgets.bookView.chapterLoading", { chapter })
+            : t("widgets.bookView.chapterScrollToLoad", { chapter })}
         </Typography>
       </Box>
     );
@@ -444,7 +449,9 @@ const ChapterBlock = memo(function ChapterBlock({
           my: 1,
         }}
       >
-        <Typography variant="caption">chapter {chapter} failed to load: {state.error}</Typography>
+        <Typography variant="caption">
+          {t("widgets.bookView.chapterFailed", { chapter, error: state.error })}
+        </Typography>
       </Box>
     );
   }
@@ -472,7 +479,9 @@ const ChapterBlock = memo(function ChapterBlock({
           variant="subtitle2"
           sx={{ fontFamily: "monospace", color: "primary.main", fontWeight: 700, letterSpacing: 0.5, flex: 1 }}
         >
-          {book} {chapter === 0 ? "front" : `chapter ${chapter}`}
+          {chapter === 0
+            ? t("widgets.bookView.bookFront", { book })
+            : t("widgets.bookView.bookChapter", { book, chapter })}
         </Typography>
         {chapter !== 0 && (
           <CopyChapterButton
@@ -708,6 +717,7 @@ const VerseCell = memo(function VerseCell({
   textLockedVersions: Set<string>;
   textCheck?: TextLaneCheck;
 }) {
+  const { t } = useTranslation();
   const projectConfig = useProjectConfig();
   const readOnly = READ_ONLY.has(bibleVersion) || locked || textLockedVersions.has(bibleVersion);
   const isSource = bibleVersion === "UHB" || bibleVersion === "UGNT";
@@ -928,13 +938,13 @@ const VerseCell = memo(function VerseCell({
             textShade !== "open" ? `2px solid ${LANE_FILL[textShade].bg}` : undefined,
         }}
       >
-        {verseNum === 0 ? "intro" : `${chapter}:${formatVerseLabel(dto)}`}
+        {verseNum === 0 ? t("shell.intro") : `${chapter}:${formatVerseLabel(dto)}`}
       </Typography>
       {!readOnly && (
         <AlignLinkButton
           targetContent={dto.content}
           sourceContent={sourceContent}
-          tooltip={`align verse ${verseNum}`}
+          tooltip={t("widgets.verse.alignVerse", { verse: verseNum })}
           iconSize={14}
           sx={{ p: 0.25, verticalAlign: "-3px" }}
           onClick={(e) => {
@@ -944,7 +954,9 @@ const VerseCell = memo(function VerseCell({
         />
       )}
       {showTextCheck && (
-        <Tooltip title={`Text — ${textCheck!.attribution(verseNum)}`}>
+        <Tooltip
+          title={t("widgets.verse.textCheck", { attribution: textCheck!.attribution(verseNum) })}
+        >
           <IconButton
             onClick={(e) => {
               e.stopPropagation();
@@ -969,7 +981,7 @@ const VerseCell = memo(function VerseCell({
         </Tooltip>
       )}
       {!readOnly && hasDraft && (
-        <Tooltip title={`undo edits to verse ${verseNum}`}>
+        <Tooltip title={t("widgets.verse.undoVerse", { verse: verseNum })}>
           <IconButton
             onClick={(e) => {
               e.stopPropagation();
@@ -1000,7 +1012,7 @@ const VerseCell = memo(function VerseCell({
         </Tooltip>
       )}
       {!readOnly && hasDraft && dto && (
-        <Tooltip title={`save verse ${verseNum}`}>
+        <Tooltip title={t("widgets.verse.saveVerse", { verse: verseNum })}>
           <IconButton
             onClick={(e) => {
               e.stopPropagation();

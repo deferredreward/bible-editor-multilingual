@@ -1,5 +1,3 @@
-// TODO(i18n) — flow screens ship English literals until the i18n sweep.
-//
 // l2-style: "Teach the AI our style" (Lead). Port of docs/flows/ui/l2-style.html.
 //
 // The memory sections (Brief / Instructions / Common issues / Terminology /
@@ -26,6 +24,7 @@ import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import { alpha } from "@mui/material/styles";
+import { useTranslation } from "react-i18next";
 import SaveIcon from "@mui/icons-material/Save";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 
@@ -52,22 +51,23 @@ import {
 import { MarkdownView } from "../MarkdownView";
 import { TerminologySection } from "../TerminologySection";
 import { bookName } from "../../lib/bookNames";
+import { formatNumber } from "../../lib/formatDate";
 
 export interface StyleScreenProps extends FlowScreenContext {}
 
 type SectionKey = "brief" | "instructions" | "commonIssues" | "terminology" | "examples" | "qa" | "templates";
 
-const MEMORY_SECTION_LABELS: Array<{ key: SectionKey; label: string }> = [
-  { key: "brief", label: "Brief" },
-  { key: "instructions", label: "Instructions" },
-  { key: "commonIssues", label: "Common issues" },
-  { key: "terminology", label: "Terminology" },
-  { key: "examples", label: "Examples" },
+const MEMORY_SECTION_LABELS: Array<{ key: SectionKey; labelKey: string }> = [
+  { key: "brief", labelKey: "moreTools.style.sectionBrief" },
+  { key: "instructions", labelKey: "moreTools.style.sectionInstructions" },
+  { key: "commonIssues", labelKey: "moreTools.style.sectionCommonIssues" },
+  { key: "terminology", labelKey: "moreTools.style.sectionTerminology" },
+  { key: "examples", labelKey: "moreTools.style.sectionExamples" },
 ];
 
-const ALWAYS_SECTION_LABELS: Array<{ key: SectionKey; label: string }> = [
-  { key: "qa", label: "QA rules" },
-  { key: "templates", label: "Templates" },
+const ALWAYS_SECTION_LABELS: Array<{ key: SectionKey; labelKey: string }> = [
+  { key: "qa", labelKey: "moreTools.style.sectionQaRules" },
+  { key: "templates", labelKey: "moreTools.style.sectionTemplates" },
 ];
 
 // Per-panel save feedback, mirror of useSaveState (PreferencesWorkspace.tsx
@@ -80,17 +80,17 @@ function useSaveState() {
 
 type PrefsState = ReturnType<typeof useTranslationPrefs>;
 
-// Server-reported export states, spelled out in plain English. Anything not in
-// this map is shown verbatim rather than being smoothed into a friendly lie.
-const EXPORT_STATUS_LABELS: Record<string, string> = {
-  success: "ready",
-  never: "never generated",
-  queued: "queued",
-  running: "running",
-  failed: "last run failed",
-  shrink_refused: "refused by the shrink guard",
-  no_content: "nothing to export",
-  dry_run: "dry run only (nothing committed)",
+// Server-reported export states, spelled out in plain language. Anything not
+// in this map is shown verbatim rather than being smoothed into a friendly lie.
+const EXPORT_STATUS_LABEL_KEYS: Record<string, string> = {
+  success: "moreTools.style.exportStatus.success",
+  never: "moreTools.style.exportStatus.never",
+  queued: "moreTools.style.exportStatus.queued",
+  running: "moreTools.style.exportStatus.running",
+  failed: "moreTools.style.exportStatus.failed",
+  shrink_refused: "moreTools.style.exportStatus.shrinkRefused",
+  no_content: "moreTools.style.exportStatus.noContent",
+  dry_run: "moreTools.style.exportStatus.dryRun",
 };
 
 function scrollToSection(key: SectionKey) {
@@ -169,6 +169,7 @@ function Panel({
 // register / script_notes / notes — instructions/assisted omitted so the
 // server merges them), same 409/403 handling.
 function BriefPanel({ prefsState }: { prefsState: PrefsState }) {
+  const { t } = useTranslation();
   const { prefs, loading, apply, refetch } = prefsState;
   const [draft, setDraft] = useState<TranslationPrefs | null>(null);
   const save = useSaveState();
@@ -192,7 +193,7 @@ function BriefPanel({ prefsState }: { prefsState: PrefsState }) {
         notes: draft.notes,
       });
       apply(res.prefs);
-      save.setMsg("Saved.");
+      save.setMsg(t("moreTools.style.saved"));
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         // Someone else saved first. Adopt the fresh row from the 409 body so
@@ -200,11 +201,11 @@ function BriefPanel({ prefsState }: { prefsState: PrefsState }) {
         const current = currentPrefsFromConflict(e.body);
         if (current) apply(current);
         else refetch();
-        save.setMsg("Someone else saved first — your edits are kept; save again to apply them.");
+        save.setMsg(t("moreTools.style.saveConflict"));
       } else if (e instanceof ApiError && e.status === 403) {
-        save.setMsg("Only an admin can save preferences.");
+        save.setMsg(t("moreTools.style.saveAdminOnly"));
       } else {
-        save.setMsg("Save failed — check your connection and try again.");
+        save.setMsg(t("moreTools.style.saveFailed"));
       }
     } finally {
       save.setSaving(false);
@@ -214,9 +215,9 @@ function BriefPanel({ prefsState }: { prefsState: PrefsState }) {
   return (
     <Panel
       id="brief"
-      title="Brief"
-      intro="Sets the audience and tone every AI draft is written for."
-      footState={prefs ? `Version ${prefs.version}` : undefined}
+      title={t("moreTools.style.sectionBrief")}
+      intro={t("moreTools.style.briefIntro")}
+      footState={prefs ? t("moreTools.style.version", { version: prefs.version }) : undefined}
       footActions={
         <Button
           variant="contained"
@@ -225,7 +226,7 @@ function BriefPanel({ prefsState }: { prefsState: PrefsState }) {
           onClick={onSave}
           disabled={save.saving || !draft}
         >
-          Save
+          {t("common.save")}
         </Button>
       }
     >
@@ -234,7 +235,7 @@ function BriefPanel({ prefsState }: { prefsState: PrefsState }) {
       ) : !draft ? null : (
         <Stack spacing={2}>
           <TextField
-            label="Audience"
+            label={t("moreTools.style.audience")}
             value={draft.audience ?? ""}
             onChange={(e) => setDraft({ ...draft, audience: e.target.value || null })}
             multiline
@@ -243,7 +244,7 @@ function BriefPanel({ prefsState }: { prefsState: PrefsState }) {
             size="small"
           />
           <TextField
-            label="Purpose"
+            label={t("moreTools.style.purpose")}
             value={draft.purpose ?? ""}
             onChange={(e) => setDraft({ ...draft, purpose: e.target.value || null })}
             multiline
@@ -253,21 +254,25 @@ function BriefPanel({ prefsState }: { prefsState: PrefsState }) {
           />
           <TextField
             select
-            label="Register"
+            label={t("moreTools.style.register")}
             value={draft.register}
             onChange={(e) => setDraft({ ...draft, register: e.target.value as Register })}
             sx={{ maxWidth: 240 }}
             size="small"
-            helperText="The level of formality AI drafts aim for."
+            helperText={t("moreTools.style.registerHelper")}
           >
             {REGISTERS.map((r) => (
               <MenuItem key={r} value={r}>
-                {r === "default" ? "Default (auto)" : r === "formal" ? "Formal" : "Informal"}
+                {r === "default"
+                  ? t("moreTools.style.registerDefault")
+                  : r === "formal"
+                    ? t("moreTools.style.registerFormal")
+                    : t("moreTools.style.registerInformal")}
               </MenuItem>
             ))}
           </TextField>
           <TextField
-            label="Script / direction notes"
+            label={t("moreTools.style.scriptNotes")}
             value={draft.script_notes ?? ""}
             onChange={(e) => setDraft({ ...draft, script_notes: e.target.value || null })}
             multiline
@@ -303,6 +308,7 @@ function MarkdownPrefPanel({
   maxChars: number;
   prefsState: PrefsState;
 }) {
+  const { t } = useTranslation();
   const { prefs, error, apply, refetch } = prefsState;
   // null = not yet seeded (loading gate below). Seed ONLY once prefs actually
   // loaded — coalescing null prefs into "" would render empty over saved
@@ -324,19 +330,19 @@ function MarkdownPrefPanel({
     try {
       const res = await api.putTranslationPrefs(prefs.version, { [field]: value || null });
       apply(res.prefs);
-      save.setMsg("Saved.");
+      save.setMsg(t("moreTools.style.saved"));
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         const current = currentPrefsFromConflict(e.body);
         if (current) apply(current);
         else refetch();
-        save.setMsg("Someone else saved first — your edits are kept; save again to apply them.");
+        save.setMsg(t("moreTools.style.saveConflict"));
       } else if (e instanceof ApiError && e.status === 403) {
-        save.setMsg("Only an admin can save preferences.");
+        save.setMsg(t("moreTools.style.saveAdminOnly"));
       } else if (e instanceof ApiError && e.status === 400) {
-        save.setMsg("Too long — trim the text under the character limit and save again.");
+        save.setMsg(t("moreTools.style.saveTooLong"));
       } else {
-        save.setMsg("Save failed — check your connection and try again.");
+        save.setMsg(t("moreTools.style.saveFailed"));
       }
     } finally {
       save.setSaving(false);
@@ -352,8 +358,14 @@ function MarkdownPrefPanel({
         value === null
           ? undefined
           : overLimit
-            ? `${value.length.toLocaleString()} / ${maxChars.toLocaleString()} characters — over the limit`
-            : `${value.length.toLocaleString()} / ${maxChars.toLocaleString()} characters`
+            ? t("moreTools.style.charCountOver", {
+                used: formatNumber(value.length),
+                max: formatNumber(maxChars),
+              })
+            : t("moreTools.style.charCount", {
+                used: formatNumber(value.length),
+                max: formatNumber(maxChars),
+              })
       }
       footActions={
         <Button
@@ -363,13 +375,13 @@ function MarkdownPrefPanel({
           onClick={onSave}
           disabled={save.saving || overLimit || value === null}
         >
-          Save
+          {t("common.save")}
         </Button>
       }
     >
       {value === null ? (
         error ? (
-          <Alert severity="error">Couldn't load preferences — reload to try again.</Alert>
+          <Alert severity="error">{t("moreTools.style.prefsLoadFailed")}</Alert>
         ) : (
           <CircularProgress size={22} />
         )
@@ -384,12 +396,12 @@ function MarkdownPrefPanel({
               sx={{ textTransform: "none", py: 0.25 }}
             >
               <VisibilityIcon fontSize="small" sx={{ marginInlineEnd: 0.5 }} />
-              Preview
+              {t("moreTools.common.preview")}
             </ToggleButton>
           </Box>
           {preview ? (
             <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 2, minHeight: 180 }}>
-              <MarkdownView markdown={value || "_Empty._"} />
+              <MarkdownView markdown={value || t("moreTools.style.emptyMarkdown")} />
             </Box>
           ) : (
             <TextField
@@ -418,6 +430,7 @@ function ExamplesPanel({
   enabled: boolean;
   status: ContextExportStatus | null;
 }) {
+  const { t } = useTranslation();
   const [resource, setResource] = useState<"tn" | "tq">("tn");
   const [query, setQuery] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -443,7 +456,7 @@ function ExamplesPanel({
       else await api.validateQuestion(id, book, false);
       refetch();
     } catch {
-      save.setMsg("Couldn't revoke — try again.");
+      save.setMsg(t("moreTools.style.revokeFailed"));
     } finally {
       setBusyId(null);
     }
@@ -454,13 +467,13 @@ function ExamplesPanel({
   return (
     <Panel
       id="examples"
-      title="Examples"
-      intro="Validated notes and questions the AI is shown as style references. Revoking returns an item to the edited state."
-      footState={`${examples.length} validated example${examples.length === 1 ? "" : "s"}`}
+      title={t("moreTools.style.sectionExamples")}
+      intro={t("moreTools.style.examplesIntro")}
+      footState={t("moreTools.style.validatedExamples", { count: examples.length })}
       footActions={
         <Chip
           size="small"
-          label={feedingAi ? "Feeding AI drafts" : "Not feeding AI yet"}
+          label={feedingAi ? t("moreTools.style.feedingAi") : t("moreTools.style.notFeedingAi")}
           color={feedingAi ? "success" : "default"}
           variant="outlined"
           sx={{ height: 18, fontSize: 10, fontWeight: 600 }}
@@ -471,15 +484,15 @@ function ExamplesPanel({
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
           <ToggleButtonGroup size="small" exclusive value={resource} onChange={(_, v) => v && setResource(v)}>
             <ToggleButton value="tn" sx={{ textTransform: "none", py: 0.25 }}>
-              Notes
+              {t("moreTools.style.notesToggle")}
             </ToggleButton>
             <ToggleButton value="tq" sx={{ textTransform: "none", py: 0.25 }}>
-              Questions
+              {t("moreTools.style.questionsToggle")}
             </ToggleButton>
           </ToggleButtonGroup>
           <TextField
             size="small"
-            placeholder="Search…"
+            placeholder={t("moreTools.style.searchPlaceholder")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             sx={{ minWidth: 220 }}
@@ -490,7 +503,7 @@ function ExamplesPanel({
           <CircularProgress size={22} />
         ) : examples.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            No validated examples yet — validate notes or questions in the editor to feed the AI.
+            {t("moreTools.style.noExamples")}
           </Typography>
         ) : (
           <Stack spacing={1}>
@@ -524,7 +537,7 @@ function ExamplesPanel({
                     onClick={() => revoke(ex.id, ex.book)}
                     disabled={busyId === `${ex.book}:${ex.id}`}
                   >
-                    Revoke
+                    {t("moreTools.style.revoke")}
                   </Button>
                 </Stack>
                 <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: "pre-wrap" }}>
@@ -542,6 +555,7 @@ function ExamplesPanel({
 
 // ── Screen ──────────────────────────────────────────────────────────────────
 export default function StyleScreen({ role, me }: StyleScreenProps) {
+  const { t } = useTranslation();
   const cfg = useProjectConfig();
   const admin = role === "admin";
   const isTranslation = isTranslationProject(cfg);
@@ -562,14 +576,14 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
 
   const [current, setCurrent] = useState<SectionKey>("qa");
 
-  const sectionLabels: Array<{ key: SectionKey; label: string }> = [
+  const sectionLabels: Array<{ key: SectionKey; labelKey: string }> = [
     ...(memoryAvailable ? MEMORY_SECTION_LABELS : []),
     ...ALWAYS_SECTION_LABELS,
   ];
 
   const eyebrow = cfg
     ? `${cfg.languageTitle || cfg.languageName || cfg.languageCode} · ${cfg.org}`
-    : "Workspace";
+    : t("moreTools.common.workspace");
 
   return (
     <AdminDesk current="style">
@@ -577,8 +591,8 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
       <Box sx={{ maxWidth: 1180, marginInline: "auto", px: 2, pt: 2 }}>
         <AdminPageHeader
           eyebrow={eyebrow}
-          title="Style"
-          subtitle="Teach the AI our style — context pack and QA rules every AI draft is written against."
+          title={t("moreTools.style.title")}
+          subtitle={t("moreTools.style.subtitle")}
         />
         <PackStatusBar
           role={role}
@@ -599,7 +613,7 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
           {/* Rail: sticky column at ≥900px, horizontally scrollable strip below. */}
           <Box
             component="nav"
-            aria-label="Preference sections"
+            aria-label={t("moreTools.style.sectionsNav")}
             sx={{
               position: { xs: "static", md: "sticky" },
               insetBlockStart: { md: 16 },
@@ -614,7 +628,7 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
               borderRadius: 1.5,
             }}
           >
-            {sectionLabels.map(({ key, label }) => {
+            {sectionLabels.map(({ key, labelKey }) => {
               const selected = key === current;
               return (
                 <Box
@@ -647,7 +661,7 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
                     "&:hover": { bgcolor: "action.hover", color: "text.primary" },
                   }}
                 >
-                  {label}
+                  {t(labelKey)}
                 </Box>
               );
             })}
@@ -658,12 +672,11 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
               <CircularProgress size={22} />
             ) : !isTranslation ? (
               <Alert severity="info" variant="outlined">
-                Translation preferences (brief, instructions, terminology, examples) apply to
-                translation projects only — this workspace is a source project.
+                {t("moreTools.style.sourceProjectOnly")}
               </Alert>
             ) : !memoryAvailable ? (
               <Alert severity="info" variant="outlined">
-                This workspace is read-only here, so translation preferences can't be edited.
+                {t("moreTools.style.readOnlyHere")}
               </Alert>
             ) : (
               <>
@@ -671,25 +684,25 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
                 <MarkdownPrefPanel
                   id="instructions"
                   field="instructions_md"
-                  title="Instructions"
-                  sub="Free markdown, injected into every AI drafting and checking prompt for this project."
-                  placeholder="e.g. Prefer clause-first word order; keep second-person plural distinct…"
+                  title={t("moreTools.style.sectionInstructions")}
+                  sub={t("moreTools.style.instructionsSub")}
+                  placeholder={t("moreTools.style.instructionsPlaceholder")}
                   maxChars={20000}
                   prefsState={prefsState}
                 />
                 <MarkdownPrefPanel
                   id="commonIssues"
                   field="common_issues_md"
-                  title="Common issues"
-                  sub="Free markdown describing recurring problems reviewers keep flagging."
-                  placeholder="e.g. - Translators default to a forbidden rendering for…"
+                  title={t("moreTools.style.sectionCommonIssues")}
+                  sub={t("moreTools.style.commonIssuesSub")}
+                  placeholder={t("moreTools.style.commonIssuesPlaceholder")}
                   maxChars={50000}
                   prefsState={prefsState}
                 />
                 <Panel
                   id="terminology"
-                  title="Terminology"
-                  intro="Concept-level term decisions every AI draft and reviewer check must respect."
+                  title={t("moreTools.style.sectionTerminology")}
+                  intro={t("moreTools.style.terminologyIntro")}
                   flush
                 >
                   <TerminologySection direction={cfg?.direction ?? "ltr"} />
@@ -703,7 +716,7 @@ export default function StyleScreen({ role, me }: StyleScreenProps) {
 
             {me?.workspace && (
               <Typography variant="caption" color="text.secondary">
-                Workspace: {me.workspace}
+                {t("moreTools.style.workspaceLabel", { workspace: me.workspace })}
               </Typography>
             )}
           </Stack>
@@ -732,6 +745,7 @@ function PackStatusBar({
   error: Error | null;
   refetch: () => void;
 }) {
+  const { t } = useTranslation();
   const admin = role === "admin";
   const cfg = useProjectConfig();
   const [busy, setBusy] = useState(false);
@@ -747,7 +761,7 @@ function PackStatusBar({
     setForbidden(false);
     try {
       const res = await api.runContextExport(shrinkOverride ? { shrinkOverride: true } : undefined);
-      setMsg(`Export queued (${res.id})`);
+      setMsg(t("moreTools.style.exportQueued", { id: res.id }));
       // The workflow is async; poll a few times so the chip converges without a
       // manual reload. No claim is made about success until the status says so.
       for (let i = 0; i < 6; i++) {
@@ -755,9 +769,9 @@ function PackStatusBar({
         refetch();
       }
     } catch (e) {
-      if (e instanceof ApiError && e.status === 403) setMsg("Running exports is admin-only");
-      else if (e instanceof ApiError && e.status === 409) setMsg("An export was just queued — wait a moment and retry");
-      else setMsg("Couldn't start the export");
+      if (e instanceof ApiError && e.status === 403) setMsg(t("moreTools.style.exportsAdminOnly"));
+      else if (e instanceof ApiError && e.status === 409) setMsg(t("moreTools.style.exportJustQueued"));
+      else setMsg(t("moreTools.style.exportStartFailed"));
     } finally {
       setBusy(false);
     }
@@ -767,12 +781,12 @@ function PackStatusBar({
     setModeBusy(true);
     try {
       const updated = await setProjectMode(next);
-      setMsg(`Mode set to ${updated.mode}`);
+      setMsg(t("moreTools.style.modeSet", { mode: updated.mode }));
     } catch (e) {
       // Never flip the switch optimistically: on failure it keeps showing the
       // server's actual mode (cfg is unchanged), not the opposite of it.
-      if (e instanceof ApiError && e.status === 403) setMsg("Changing project mode is admin-only");
-      else setMsg("Couldn't change the project mode");
+      if (e instanceof ApiError && e.status === 403) setMsg(t("moreTools.style.modeAdminOnly"));
+      else setMsg(t("moreTools.style.modeChangeFailed"));
     } finally {
       setModeBusy(false);
     }
@@ -785,18 +799,21 @@ function PackStatusBar({
   }, [error]);
 
   let chipText: string;
-  if (role === "viewer" || forbidden) chipText = "Export status isn't visible for your role";
-  else if (loading && !status) chipText = "Loading export status…";
-  else if (!status) chipText = "Export status unavailable";
-  else if (status.sha) chipText = `Context pack ready — ${status.sha.slice(0, 8)}`;
-  else chipText = `No context pack exported yet (${EXPORT_STATUS_LABELS[status.status] ?? status.status})`;
+  if (role === "viewer" || forbidden) chipText = t("moreTools.style.statusNotVisible");
+  else if (loading && !status) chipText = t("moreTools.style.statusLoading");
+  else if (!status) chipText = t("moreTools.style.statusUnavailable");
+  else if (status.sha) chipText = t("moreTools.style.packReady", { sha: status.sha.slice(0, 8) });
+  else
+    chipText = t("moreTools.style.noPackYet", {
+      status: EXPORT_STATUS_LABEL_KEYS[status.status] ? t(EXPORT_STATUS_LABEL_KEYS[status.status]) : status.status,
+    });
 
   const detailBits: string[] = [];
   if (status) {
-    detailBits.push(`${status.terms} terms`);
-    detailBits.push(`${status.examplesTn} tN examples`);
-    detailBits.push(`${status.examplesTq} tQ examples`);
-    if (status.failureReason) detailBits.push(`blocked: ${status.failureReason}`);
+    detailBits.push(t("moreTools.style.termsCount", { count: status.terms }));
+    detailBits.push(t("moreTools.style.tnExamplesCount", { count: status.examplesTn }));
+    detailBits.push(t("moreTools.style.tqExamplesCount", { count: status.examplesTq }));
+    if (status.failureReason) detailBits.push(t("moreTools.style.blocked", { reason: status.failureReason }));
   }
 
   const mode = cfg?.mode ?? null;
@@ -845,16 +862,16 @@ function PackStatusBar({
         }
         label={
           <Typography variant="body2">
-            Project mode: {mode ?? "loading…"}
-            {!admin && " (admin-only)"}
+            {t("moreTools.style.projectMode", { mode: mode ?? t("moreTools.style.modeLoading") })}
+            {!admin && ` ${t("moreTools.style.adminOnlySuffix")}`}
           </Typography>
         }
       />
 
-      <Tooltip title={admin ? "" : "Running exports is admin-only"}>
+      <Tooltip title={admin ? "" : t("moreTools.style.exportsAdminOnly")}>
         <span>
           <Button size="small" variant="outlined" disabled={!admin || busy} onClick={() => void runExport(false)}>
-            Export now
+            {t("moreTools.style.exportNow")}
           </Button>
         </span>
       </Tooltip>
@@ -862,14 +879,13 @@ function PackStatusBar({
           appears exactly when the server says the shrink guard refused. */}
       {admin && status?.status === "shrink_refused" && (
         <Button size="small" variant="outlined" color="warning" disabled={busy} onClick={() => void runExport(true)}>
-          Export (force)
+          {t("moreTools.style.exportForce")}
         </Button>
       )}
 
       <Typography variant="caption" color="text.secondary" sx={{ flexBasis: "100%" }}>
-        The pack is a git-committed snapshot the AI reads from — a run records the exact commit it used, so
-        it stays reproducible even if the pack changes later.
-        {detailBits.length > 0 && ` Last export snapshot — ${detailBits.join(", ")}.`}
+        {t("moreTools.style.packCaption")}
+        {detailBits.length > 0 && ` ${t("moreTools.style.lastSnapshot", { details: detailBits.join(", ") })}`}
       </Typography>
 
       <Snackbar open={!!msg} autoHideDuration={4000} onClose={() => setMsg(null)} message={msg ?? ""} />
@@ -884,29 +900,33 @@ function PackStatusBar({
 // apply time in the server code; what does not exist is any endpoint for
 // enabling, tuning, or adding rules — so this section reads its own state
 // honestly instead of pretending to be a live config surface.
-const QA_RULES: Array<{ name: string; severity: "error" | "warning" }> = [
-  { name: "Quote column untouched", severity: "error" },
-  { name: "Empty translation", severity: "error" },
-  { name: "Repeated word", severity: "warning" },
-  { name: "Terminology enforcement", severity: "warning" },
+const QA_RULES: Array<{ nameKey: string; severity: "error" | "warning" }> = [
+  { nameKey: "moreTools.style.qaRuleQuoteUntouched", severity: "error" },
+  { nameKey: "moreTools.style.qaRuleEmptyTranslation", severity: "error" },
+  { nameKey: "moreTools.style.qaRuleRepeatedWord", severity: "warning" },
+  { nameKey: "moreTools.style.qaRuleTerminology", severity: "warning" },
 ];
 
 function QaRulesSection() {
+  const { t } = useTranslation();
   return (
     <Panel
       id="qa"
-      title="QA rules"
-      intro="Deterministic checks with severities. The structural note checks (quote / ID / reference integrity) already run when a draft is applied; this screen for enabling, tuning, and adding rules is coming soon."
-      headerExtra={<FlowStatusChip kind="edited" label="Coming soon" />}
-      footState="Coming soon"
+      title={t("moreTools.style.sectionQaRules")}
+      intro={t("moreTools.style.qaIntro")}
+      headerExtra={<FlowStatusChip kind="edited" label={t("moreTools.style.comingSoon")} />}
+      footState={t("moreTools.style.comingSoon")}
     >
       <Stack spacing={1}>
         {QA_RULES.map((rule) => (
-          <Stack key={rule.name} direction="row" alignItems="center" spacing={1}>
+          <Stack key={rule.nameKey} direction="row" alignItems="center" spacing={1}>
             <Typography variant="body2" sx={{ flex: 1 }}>
-              {rule.name}
+              {t(rule.nameKey)}
             </Typography>
-            <FlowStatusChip kind={rule.severity === "error" ? "warn" : "edited"} label={rule.severity} />
+            <FlowStatusChip
+              kind={rule.severity === "error" ? "warn" : "edited"}
+              label={rule.severity === "error" ? t("moreTools.style.severityError") : t("moreTools.style.severityWarning")}
+            />
           </Stack>
         ))}
       </Stack>
@@ -916,6 +936,7 @@ function QaRulesSection() {
 
 // ── Templates pointer ───────────────────────────────────────────────────────
 function TemplatesSection() {
+  const { t } = useTranslation();
   const [units, setUnits] = useState<{ support_ref: string; has_target: 0 | 1 }[] | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -948,26 +969,26 @@ function TemplatesSection() {
   return (
     <Panel
       id="templates"
-      title="Templates"
-      intro="Coverage summary for per-SupportReference note templates. Full curation — draft, save, approve, history — lives on its own screen."
-      footState="Curate templates on the dedicated screen"
+      title={t("moreTools.style.sectionTemplates")}
+      intro={t("moreTools.style.templatesIntro")}
+      footState={t("moreTools.style.curateFoot")}
       footActions={
         <Button size="small" variant="contained" href="#/curate">
-          Open template curation →
+          {t("moreTools.style.openCuration")}
         </Button>
       }
     >
       {failed ? (
-        <Alert severity="error">Couldn't load template coverage.</Alert>
+        <Alert severity="error">{t("moreTools.style.coverageLoadFailed")}</Alert>
       ) : !coverage ? (
         <CircularProgress size={22} />
       ) : (
         <Stack spacing={0.5}>
           <Typography variant="body2">
-            {coverage.translated} of {coverage.total} SupportReference types have a translated unit
+            {t("moreTools.style.coverageSummary", { translated: coverage.translated, total: coverage.total })}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {coverage.units} template units in this workspace
+            {t("moreTools.style.unitCount", { count: coverage.units })}
           </Typography>
         </Stack>
       )}

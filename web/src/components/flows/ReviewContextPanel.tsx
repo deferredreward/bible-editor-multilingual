@@ -1,6 +1,3 @@
-// TODO(i18n): plain English literals in this file need keys added to
-// web/src/i18n/locales/*.json — this slice ships with hard-coded strings.
-//
 // "This verse" read-only context for the review queue, after the .ctx-panel /
 // .ctx-lane / .ctx-twl blocks in docs/flows/ui/t2-review.html. One component
 // serves all three bands: the desktop right-hand column, the tablet
@@ -10,6 +7,7 @@
 // Nothing here is editable. TWL in particular has no approve lifecycle, and
 // the mockup says so out loud rather than implying a third queue.
 
+import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
 import Link from "@mui/material/Link";
 import Typography from "@mui/material/Typography";
@@ -27,6 +25,7 @@ export interface ReviewContextPanelProps {
 }
 
 function Lane({ label, text }: { label: string; text: string | null }) {
+  const { t } = useTranslation();
   return (
     <Box sx={{ mb: 1.5 }}>
       <Typography
@@ -51,7 +50,7 @@ function Lane({ label, text }: { label: string; text: string | null }) {
       >
         {text ?? (
           <Box component="em" sx={{ color: "text.secondary" }}>
-            No {label} text loaded for this verse.
+            {t("flowReview.context.noLaneText", { label })}
           </Box>
         )}
       </Typography>
@@ -60,6 +59,7 @@ function Lane({ label, text }: { label: string; text: string | null }) {
 }
 
 export function ReviewContextPanel({ ultText, ustText, twl, sourceDir }: ReviewContextPanelProps) {
+  const { t } = useTranslation();
   return (
     <Box sx={{ textAlign: "start" }}>
       <Lane label="ULT" text={ultText} />
@@ -72,11 +72,11 @@ export function ReviewContextPanel({ ultText, ustText, twl, sourceDir }: ReviewC
           component="div"
           sx={{ fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}
         >
-          Word links (read-only)
+          {t("flowReview.context.wordLinks")}
         </Typography>
         {twl.length === 0 ? (
           <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 0.75 }}>
-            No word links recorded for this verse.
+            {t("flowReview.context.noWordLinks")}
           </Typography>
         ) : (
           <Box component="ul" sx={{ listStyle: "none", m: 0, mt: 0.75, p: 0 }}>
@@ -121,7 +121,7 @@ export function ReviewContextPanel({ ultText, ustText, twl, sourceDir }: ReviewC
           component="p"
           sx={{ mt: 1, fontStyle: "italic" }}
         >
-          Word links have no approve lifecycle — shown here for reference only.
+          {t("flowReview.context.wordLinksNote")}
         </Typography>
       </Box>
     </Box>

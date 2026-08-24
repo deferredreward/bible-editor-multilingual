@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Box, Stack, Typography, IconButton, Tooltip } from "@mui/material";
 import SaveIcon from "@mui/icons-material/Save";
 import UndoIcon from "@mui/icons-material/Undo";
@@ -128,6 +129,7 @@ export function DocColumn({
   onEditSection,
   textCheck,
 }: Props) {
+  const { t } = useTranslation();
   const projectConfig = useProjectConfig();
   // Hebrew original gets the enlarged SBL-Hebrew treatment; RTL direction alone
   // (e.g. an Arabic pane) keeps the normal reading font.
@@ -177,7 +179,8 @@ export function DocColumn({
             flex: 1,
           }}
         >
-          {versionLabel(projectConfig, bibleVersion)} · {readOnly ? "read-only" : "editing"}
+          {versionLabel(projectConfig, bibleVersion)} ·{" "}
+          {readOnly ? t("widgets.docColumn.readOnly") : t("widgets.docColumn.editing")}
         </Typography>
         <CopyChapterButton
           book={book}
@@ -421,6 +424,7 @@ function VerseSpan({
   onEdit: (plain: string) => void;
   onSave: (plain: string) => void;
 }) {
+  const { t } = useTranslation();
   const isSource = bibleVersion === "UHB" || bibleVersion === "UGNT";
   const activeRange = useMemo<{ start: number; end: number } | null>(() => {
     if (!findActiveMatch) return null;
@@ -633,13 +637,13 @@ function VerseSpan({
             textShade !== "open" ? `2px solid ${LANE_FILL[textShade].bg}` : undefined,
         }}
       >
-        {verseNum === 0 ? "intro" : `${chapter}:${verseLabel}`}
+        {verseNum === 0 ? t("shell.intro") : `${chapter}:${verseLabel}`}
       </span>
       {!readOnly && (
         <AlignLinkButton
           targetContent={content}
           sourceContent={sourceContent}
-          tooltip={`align verse ${verseNum}`}
+          tooltip={t("widgets.verse.alignVerse", { verse: verseNum })}
           iconSize={14}
           sx={{ p: 0.25, verticalAlign: "-3px" }}
           onClick={(e) => {
@@ -649,7 +653,9 @@ function VerseSpan({
         />
       )}
       {showTextCheck && (
-        <Tooltip title={`Text — ${textCheck!.attribution(verseNum)}`}>
+        <Tooltip
+          title={t("widgets.verse.textCheck", { attribution: textCheck!.attribution(verseNum) })}
+        >
           <IconButton
             onClick={(e) => {
               e.stopPropagation();
@@ -674,7 +680,7 @@ function VerseSpan({
         </Tooltip>
       )}
       {!readOnly && hasDraft && (
-        <Tooltip title={`undo edits to verse ${verseNum}`}>
+        <Tooltip title={t("widgets.verse.undoVerse", { verse: verseNum })}>
           <IconButton
             onClick={(e) => {
               e.stopPropagation();
@@ -705,7 +711,7 @@ function VerseSpan({
         </Tooltip>
       )}
       {!readOnly && hasDraft && (
-        <Tooltip title={`save verse ${verseNum}`}>
+        <Tooltip title={t("widgets.verse.saveVerse", { verse: verseNum })}>
           <IconButton
             onClick={(e) => {
               e.stopPropagation();
