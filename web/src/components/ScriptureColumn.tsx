@@ -1521,6 +1521,7 @@ function ActiveLine({
             <span>
               <IconButton
                 size="small"
+                aria-label={t("shell.saveEdits")}
                 disabled={!hasDraft}
                 onClick={() => onSave(elRef.current?.textContent ?? "")}
                 sx={{
@@ -1541,6 +1542,7 @@ function ActiveLine({
           <Tooltip title={t("shell.undoEdits")}>
             <IconButton
               size="small"
+              aria-label={t("shell.undoEdits")}
               onClick={() => {
                 void drafts.clear(draftKey);
                 dirtyRef.current = false;
