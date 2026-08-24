@@ -1258,7 +1258,15 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
               />
             </Box>
 
-            {/* English source note */}
+            {(() => {
+              // Intro notes (row.verse === 0) render the source + target cards
+              // side-by-side on wide screens, mirroring the tA/tW article
+              // editor's responsive split (ArticleWorkspace.tsx); per-verse
+              // notes keep the original vertical stack (a fragment — no extra
+              // DOM node, so their layout is untouched). The grid's column
+              // order follows the document direction, so this is RTL-safe.
+              const englishSourceCard = (
+            /* English source note */
             <Box sx={cardSx}>
               <Typography component="p" sx={labelSx}>
                 <Box
@@ -1283,8 +1291,9 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 </Typography>
               )}
             </Box>
-
-            {/* target draft — the centrepiece */}
+              );
+              const targetDraftCard = (
+            /* target draft — the centrepiece */
             <Box ref={editorContainerRef} sx={cardSx}>
               <Typography component="p" sx={labelSx}>
                 <Box
@@ -1391,6 +1400,26 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 </Typography>
               )}
             </Box>
+              );
+              return row.verse === 0 ? (
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+                    gap: 1.5,
+                    alignItems: "start",
+                  }}
+                >
+                  {englishSourceCard}
+                  {targetDraftCard}
+                </Box>
+              ) : (
+                <>
+                  {englishSourceCard}
+                  {targetDraftCard}
+                </>
+              );
+            })()}
 
             {/* previous / next — hidden in phone focus mode (keyboard-up
                 editing) so the editor gets the room */}
