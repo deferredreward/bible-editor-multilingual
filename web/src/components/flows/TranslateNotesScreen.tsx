@@ -61,7 +61,10 @@
 //   * Approve                  → api.validateNote
 //   * Not needed               → api.trashNote (the existing tn soft-trash,
 //                                relabelled; the row stays recoverable)
-//   * Redo                     → api.tnQuick
+//   * Redo                     → api.tnQuick for verse notes; intro/general
+//                                notes (verse === 0) use the single-row
+//                                translate pipeline instead (classic NoteCard
+//                                "Re-run" already does this — issue #300)
 //
 // Chapter locks (verified in api/src/rows.ts, findings §2.7): tn PATCH is
 // lock-EXEMPT, and /validate + /trash have no lock check at all. So every write
@@ -109,11 +112,13 @@ import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { resolveSourceRef } from "../../lib/sourceRef";
 import { buildVerseIndex } from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
+import { tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
 import { extractTargetSelectionText } from "../../lib/highlight";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { realChapters } from "../../lib/bookSummary";
 import { drafts, rowKey } from "../../sync/drafts";
 import { onOutboxResult, outbox } from "../../sync/outbox";
+import { pipelineStore, getSessionKey } from "../../sync/pipelineStore";
 import {
   api,
   ApiError,
@@ -863,21 +868,60 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     }
   }
 
-  const redoBlockedReason = (() => {
-    if (aiUnavailable) return aiUnavailable;
-    if (!row) return t("flowTranslate.noNoteSelected");
-    if (!row.support_reference) {
-      return t("flowTranslate.redoNeedsSupportRef");
-    }
-    if (!row.quote) return t("flowTranslate.redoNeedsQuote");
-    return null;
-  })();
+  const redoBlockedReason = tnRedoBlockedReason(row, {
+    aiUnavailable,
+    noNoteSelected: t("flowTranslate.noNoteSelected"),
+    needsSupportRef: t("flowTranslate.redoNeedsSupportRef"),
+    needsQuote: t("flowTranslate.redoNeedsQuote"),
+  });
+
+  // Intro Redo lands through the pipeline store (async), not a response body.
+  // Same looseness as TranslateWordsScreen: any translate completion for this
+  // user clears the spinner and refreshes the open chapter.
+  useEffect(
+    () =>
+      pipelineStore.onComplete((job) => {
+        if (job.pipeline_type !== "translate") return;
+        setRedoing(false);
+        if (job.state === "done") {
+          if (row) void drafts.clear(rowKey("tn", book, row.id));
+          void refetch().then(() => setReloadNonce((n) => n + 1));
+          setToast(t("flowTranslate.toastNewDraft"));
+        } else {
+          say(
+            t("flowTranslate.redoFailed", {
+              status: job.error_message ?? job.state,
+            }),
+          );
+        }
+      }),
+    [book, refetch, row, say, t],
+  );
 
   async function handleRedo() {
     if (!row || !data || redoing || redoBlockedReason) return;
     setRedoing(true);
     setNotice(null);
+    // Pipeline Redo stays spinning until onComplete; tn-quick (and any
+    // failure / early return) clears it in finally.
+    let keepSpinningForPipeline = false;
     try {
+      if (tnRedoUsesPipeline(row)) {
+        // Chapter intros (N:intro → verse 0, chapter ≥ 1). Book front:intro
+        // (chapter 0) is out of scope for this flows screen — startChapter
+        // must be positive on the pipeline start route.
+        await pipelineStore.start({
+          pipelineType: "translate",
+          book,
+          startChapter: chapter,
+          endChapter: chapter,
+          sessionKey: getSessionKey(),
+          translate: { rowIds: [row.id] },
+        });
+        keepSpinningForPipeline = true;
+        say(t("flowTranslate.redoStarted"), "info");
+        return;
+      }
       const built = buildTnQuickRequest(row, data);
       if (!built.ok) {
         say(
@@ -904,6 +948,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       if (
         code === "tn_quick_disabled" ||
         code === "anthropic_api_key_missing" ||
+        code === "pipeline_api_disabled" ||
         (err instanceof ApiError && err.status === 503)
       ) {
         // Calm and specific: this workspace simply has no AI drafting yet.
@@ -917,7 +962,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
         );
       }
     } finally {
-      setRedoing(false);
+      if (!keepSpinningForPipeline) setRedoing(false);
     }
   }
 
