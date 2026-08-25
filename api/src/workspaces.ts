@@ -277,13 +277,23 @@ async function invalidateAndReprime(env: Env): Promise<void> {
 async function findClaimedByOrg(env: Env, db: D1Database, org: string): Promise<Workspace | null> {
   const row = await db
     .prepare(
-      // COLLATE NOCASE so the idempotency check AND the claimWorkspace catch-block
-      // recovery both find a pre-existing claim regardless of the case the admin
-      // typed — matching the NOCASE UNIQUE index on workspaces.org (migration
-      // 0068). Without it, a fail-open cross-case re-claim (canonicalOrgName
-      // couldn't reach DCS) would trip the UNIQUE index and then fail to recover.
+      // COLLATE NOCASE: Door43 org names are case-insensitive, so a lookup for
+      // "BSOJ" must find an existing "bsoj" row — otherwise a second workspace
+      // gets claimed for the same org (duplicate-claim hole). This is also what
+      // lets the idempotency check AND the claimWorkspace catch-block recovery
+      // find a pre-existing claim regardless of the case the admin typed,
+      // matching the NOCASE UNIQUE index on workspaces.org (migration 0068).
+      //
+      // The ORDER BY predates 0068, when `org` was UNIQUE under BINARY
+      // collation and a case-variant pair could already exist (the pre-fix code
+      // is what would have created it). Prefer the exact-case row and then the
+      // oldest slot, so the org always resolves to ONE deterministic binding
+      // rather than an arbitrary one — resolving to the wrong binding would
+      // serve another tenant's database. Kept as a belt-and-braces guard for
+      // any pre-0068 deploy window.
       `SELECT slug, label, org, binding, export_owner AS exportOwner
-         FROM workspaces WHERE org = ?1 COLLATE NOCASE AND status = 'claimed' LIMIT 1`,
+         FROM workspaces WHERE org = ?1 COLLATE NOCASE AND status = 'claimed'
+         ORDER BY (org = ?1) DESC, slug ASC LIMIT 1`,
     )
     .bind(org)
     .first<WorkspaceRow>();

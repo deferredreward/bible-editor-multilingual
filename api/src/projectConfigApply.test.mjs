@@ -507,6 +507,78 @@ test("dataExportIdentity: differs on org, exportOrg, or a non-lane repo; ignores
   );
 });
 
+test("dataExportIdentity: a case-only org / exportOrg / repo difference is the SAME identity", () => {
+  // DCS/Gitea resolves owner and repo names case-insensitively. A config
+  // persisted as org "bsoj" against a detect()-canonicalized "BSOJ" repoints
+  // nothing, so it must NOT read as a tenancy change — raw-string comparison
+  // returned the hard `project_not_empty` stop ("recreate the database") for a
+  // pure letter-case difference and blocked a real BSOJ workspace.
+  const env = {};
+  const base = {
+    org: "BSOJ", exportOrg: "BSOJ", exportOwnerFromConfig: true,
+    repos: { lit: "ar_avd", sim: "ar_nav", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl", tw: "ar_tw", ta: "ar_ta" },
+  };
+  const id = (cfg) => dataExportIdentity(env, cfg);
+  assert.equal(id(base), id({ ...base, org: "bsoj" }), "case-only org -> same identity");
+  assert.equal(id(base), id({ ...base, exportOrg: "bsoj" }), "case-only exportOrg -> same identity");
+  assert.equal(
+    id(base),
+    id({ ...base, repos: { ...base.repos, ta: "AR_TA" } }),
+    "case-only non-lane repo -> same identity",
+  );
+  // A genuinely different org/repo is still a different identity.
+  assert.notEqual(id(base), id({ ...base, org: "unfoldingWord" }));
+  assert.notEqual(id(base), id({ ...base, repos: { ...base.repos, ta: "ar_ta2" } }));
+});
+
+test("applyProjectConfig: a POPULATED lane whose stored source differs only in CASE applies (no 409)", async () => {
+  // The BSOJ block, end to end. The lane rows and the stored config carry a
+  // lowercase org ("bsoj") — persisted before org names were canonicalized
+  // against DCS — while the wizard's PUT carries DCS's canonical "BSOJ". The
+  // repos are otherwise IDENTICAL, so nothing is being repointed: this apply
+  // must succeed. Before the case-fold it hit project_not_empty (tenancy) and,
+  // past that, lane_source_change_requires_migration on both populated lanes.
+  const LOWER = {
+    org: "bsoj",
+    exportOrg: "bsoj",
+    repos: { lit: "ar_avd", sim: "ar_nav", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl", tw: "ar_tw", ta: "ar_ta" },
+    translationSource: null,
+  };
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  // Activate the lowercase config on the empty DB, then POPULATE both lanes.
+  assert.equal((await applyProjectConfig(env, "custom-gl", LOWER)).ok, true);
+  db.prepare(`INSERT INTO tn_rows (id, book, deleted_at) VALUES ('a','ZEC',NULL)`).run();
+  for (const bv of ["ULT", "UST"]) {
+    db.prepare(`INSERT INTO verses (book, chapter, verse, bible_version, content_json)
+                VALUES ('ZEC', 1, 1, ?, '{}')`).run(bv);
+  }
+  // Same config, canonical casing — plus the change the admin actually came for
+  // (translationAcademy sourced from the org's own ar_ta instead of upstream).
+  const CANONICAL = {
+    ...LOWER,
+    org: "BSOJ",
+    exportOrg: "BSOJ",
+    translationSource: { org: "unfoldingWord", languageCode: "en", repos: { ta: { org: "BSOJ", repo: "ar_ta" } } },
+  };
+  const result = await applyProjectConfig(env, "custom-gl", CANONICAL);
+  assert.equal(result.ok, true, `case-only org difference must apply, got ${result.error ?? ""}`);
+  const stored = JSON.parse(db.prepare(`SELECT overrides_json AS o FROM project_config WHERE id=1`).get().o);
+  assert.equal(stored.org, "BSOJ", "the apply persists the canonical casing");
+  assert.deepEqual(stored.translationSource.repos.ta, { org: "BSOJ", repo: "ar_ta" });
+  // Both lanes stay live: no quarantine, no pending target, exports unblocked.
+  for (const lane of ["lit", "sim"]) {
+    const row = db.prepare(`SELECT replacement_required, pending_target_json, exports_blocked, active_config_json
+                              FROM scripture_lane_state WHERE lane = ?`).get(lane);
+    assert.equal(row.replacement_required, 0, `${lane} not quarantined`);
+    assert.equal(row.pending_target_json, null, `${lane} has no pending target`);
+    assert.equal(row.exports_blocked, 0, `${lane} exports not blocked`);
+    assert.equal(JSON.parse(row.active_config_json).source.owner, "BSOJ", `${lane} adopts canonical casing`);
+  }
+});
+
 test("applyProjectConfig: exportOrg change (same org) on a populated custom-gl DB rejects (409)", async () => {
   const db = freshDb();
   seedConfig(db, "en-unfoldingword");

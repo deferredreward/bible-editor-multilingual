@@ -5,6 +5,8 @@
 // pointed at a different repo within the same upstream org" — lives in exactly
 // one place the hook wraps with React state.
 
+import { sameDcsName } from "./door43Url.ts";
+
 export type ResourceKey = "lit" | "sim" | "tn" | "tq" | "twl" | "tw" | "ta";
 
 export const RESOURCE_KEYS: ResourceKey[] = ["lit", "sim", "tn", "tq", "twl", "tw", "ta"];
@@ -122,8 +124,10 @@ export function buildTranslationSource(params: {
       if (repo === "") continue;
       const org = (sel.org ?? "").trim();
       // A distinct override org emits an { org, repo } ref; otherwise a bare
-      // string (same upstream org) keeps the legacy shape.
-      repos[key] = org !== "" && org !== upstreamOrg ? { org, repo } : repo;
+      // string (same upstream org) keeps the legacy shape. "Distinct" is
+      // case-insensitive — DCS org names are, so `unfoldingword` typed against
+      // an `unfoldingWord` upstream is the same org, not a cross-org override.
+      repos[key] = org !== "" && !sameDcsName(org, upstreamOrg) ? { org, repo } : repo;
     }
     // blank → omit
   }

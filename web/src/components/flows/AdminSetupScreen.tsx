@@ -34,7 +34,7 @@
 //    REAL backend (issue #103: api.getBookSources / setBookSource /
 //    clearBookSource, sync/api.ts:1662-1702) and a REAL self-contained panel,
 //    BookSourceOverridesPanel (web/src/components/BookSourceOverridesPanel.tsx
-//    :35, already reused by ImportWorkspace.tsx:484). Reused wholesale behind a
+//    :35, already reused by the Books screen). Reused wholesale behind a
 //    book selector fed by api.getBooks() — overrides are per-book, so the
 //    artifact's book-less table needed that one addition to be honest.
 //

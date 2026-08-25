@@ -17,9 +17,9 @@
 // Real data only. The book grid's imported/not-imported state comes from
 // GET /api/books; a FAILED list load renders an explicit error + retry and
 // never collapses into an all-"not imported" list (that would re-expose the
-// destructive import path for an already-imported book — the same safety rule
-// ImportWorkspace enforces, and the shared decision logic in lib/importIntent
-// is reused here rather than re-derived).
+// destructive import path for an already-imported book — the safety rule the
+// retired ImportWorkspace enforced, now carried by the shared decision logic in
+// lib/importIntent, which is reused here rather than re-derived).
 //
 // Breakpoints: only the system bands (theme `tablet` = 560, `md` = 900). The
 // mockup mixed 700/820/900; those are not reproduced. The mobile canonical
@@ -45,8 +45,6 @@ import {
   Popover,
   Stack,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography,
   useMediaQuery,
 } from "@mui/material";
@@ -63,23 +61,20 @@ import {
   type BookLintReport,
   type BookListEntry,
   type BookSummary,
-  type ImportHasLocalEditsBody,
   type Role,
 } from "../../sync/api";
 import { BOOKS, bookName } from "../../lib/bookNames";
 import {
   classifyAiTranslateResult,
-  defaultIntent,
-  importActionFor,
   mainPaneState,
   repullDefaultRange,
   type BooksFetchStatus,
-  type ImportIntent,
 } from "../../lib/importIntent";
 import { startBookAiTranslate } from "../../lib/aiTranslate";
 import { realChapterNumbers } from "../../lib/bookSummary";
 import { isTranslationProject, useProjectConfig } from "../../hooks/useProjectConfig";
 import { ImportFromDoor43Dialog } from "../ImportFromDoor43Dialog";
+import { BringInBookDialog } from "./BringInBookDialog";
 import { FlowStatusChip } from "./FlowStatusChip";
 import { Panel, PanelBody, PanelFoot, PanelTop } from "./BooksPanel";
 import { BooksActivityPanel, BooksPendingPanel } from "./BooksActivityPanels";
@@ -91,6 +86,13 @@ export interface BooksScreenProps extends FlowScreenContext {
   // session's navigation over the (potentially stale) `me.lastBook` snapshot
   // fetched once at boot. `null` when there is no last position at all.
   lastPosition: { book: string; chapter: number; verse: number } | null;
+  /**
+   * Book selected by the route (#/books/:book), or null on the bare #/books.
+   * The retired #/import/:book surface redirects here (App.tsx), so a
+   * reference-box nav to an un-imported book still opens that book's detail
+   * pane — which is where "Bring in this book" now lives.
+   */
+  book: string | null;
 }
 
 const OT_COUNT = 39;
@@ -382,17 +384,16 @@ function BookDetailPanel({
   const isTranslation = isTranslationProject(cfg);
 
   const [summary, setSummary] = useState<BookSummary | null>(null);
-  const [intent, setIntent] = useState<ImportIntent>(() => defaultIntent(imported));
-  const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [justImported, setJustImported] = useState(false);
   const [repullOpen, setRepullOpen] = useState(false);
+  // The "Bring in this book" source sheet (docs/ux-simplification.md §1.3).
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const effectiveImported = imported || justImported;
-  const action = importActionFor(effectiveImported, intent);
 
   const loadSummary = useCallback(async (): Promise<BookSummary | null> => {
     try {
@@ -409,42 +410,23 @@ function BookDetailPanel({
     void loadSummary();
   }, [loadSummary]);
 
-  const runImport = async (translateFromSource: boolean) => {
-    setBusy(true);
+  // Import runs inside the "Bring in this book" sheet (BringInBookDialog) —
+  // sources first, then the POST, including the has_local_edits discard
+  // confirm. This callback is the shared post-import path.
+  const handleImported = (res: Awaited<ReturnType<typeof api.importBook>>) => {
     setError(null);
     setWarning(null);
-    setMessage(null);
-    try {
-      const res = await api.importBook(book, translateFromSource ? { translateFromSource: true } : undefined);
-      const sources = importedSourceRepos(res.sources);
-      setMessage(
-        sources.length
-          ? t("flowBooks.detail.importedFrom", { book, sources: sources.join(", ") })
-          : t("flowBooks.detail.importedBook", { book }),
-      );
-      setJustImported(true);
+    const sources = importedSourceRepos(res.sources);
+    setMessage(
+      sources.length
+        ? t("flowBooks.detail.importedFrom", { book, sources: sources.join(", ") })
+        : t("flowBooks.detail.importedBook", { book }),
+    );
+    setJustImported(true);
+    void (async () => {
       await onImported();
       await loadSummary();
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        const body = e.body as Partial<ImportHasLocalEditsBody> | undefined;
-        if (body?.error === "has_local_edits") {
-          setError(
-            t("flowBooks.detail.hasLocalEdits", {
-              book,
-              tn: body.tn ?? 0,
-              tq: body.tq ?? 0,
-              twl: body.twl ?? 0,
-              verses: body.verses ?? 0,
-            }),
-          );
-          return;
-        }
-      }
-      setError(t("flowBooks.detail.importFailed", { book, error: errorText(e) }));
-    } finally {
-      setBusy(false);
-    }
+    })();
   };
 
   const runAiTranslate = async () => {
@@ -519,46 +501,14 @@ function BookDetailPanel({
             )
           ) : (
             <>
-              <Typography
-                variant="caption"
-                sx={{
-                  display: "block",
-                  fontWeight: 700,
-                  letterSpacing: "0.06em",
-                  textTransform: "uppercase",
-                  color: "text.secondary",
-                  mb: 0.75,
-                }}
-              >
-                {t("flowBooks.detail.intent")}
-              </Typography>
-              <ToggleButtonGroup
-                exclusive
-                size="small"
-                value={intent}
-                onChange={(_, v) => {
-                  if (v) setIntent(v as ImportIntent);
-                }}
-                sx={{ flexWrap: "wrap" }}
-              >
-                <ToggleButton value="translate" sx={{ textTransform: "none", px: 2, minHeight: 36 }}>
-                  {t("import.intentTranslate")}
-                </ToggleButton>
-                <ToggleButton value="load" sx={{ textTransform: "none", px: 2, minHeight: 36 }}>
-                  {t("import.intentLoad")}
-                </ToggleButton>
-              </ToggleButtonGroup>
-
-              <Stack direction="row" spacing={1.5} sx={{ mt: 2, flexWrap: "wrap", rowGap: 1 }}>
-                {action.kind === "import" ? (
-                  <Button
-                    variant="contained"
-                    disabled={busy}
-                    onClick={() => void runImport(action.translateFromSource)}
-                    startIcon={busy ? <CircularProgress size={16} color="inherit" /> : undefined}
-                    sx={{ minHeight: 40 }}
-                  >
-                    {busy ? t("flowBooks.detail.importingBook", { book }) : t("flowBooks.detail.importBook", { book })}
+              <Stack direction="row" spacing={1.5} sx={{ flexWrap: "wrap", rowGap: 1 }}>
+                {!effectiveImported ? (
+                  // SAFETY: the destructive bootstrap is offered only for a book
+                  // with no content (same invariant lib/importIntent encodes).
+                  // The button opens the "Bring in this book" source sheet, which
+                  // owns intent + per-resource sources + the import itself.
+                  <Button variant="contained" onClick={() => setSheetOpen(true)} sx={{ minHeight: 40 }}>
+                    {t("flowBooks.detail.bringInBook", { book })}
                   </Button>
                 ) : (
                   <>
@@ -584,19 +534,12 @@ function BookDetailPanel({
                 )}
               </Stack>
 
-              {busy && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-                  {t("flowBooks.detail.importRunsServerSide")}
-                </Typography>
-              )}
-
               <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
                 {t("flowBooks.detail.importInfo")}
               </Alert>
 
-              {/* 2026-08-11: the per-book source-overrides editor that used to sit
-                  here (duplicated with the admin Setup screen) now lives on
-                  Admin → Setup only. */}
+              {/* Source choices live in the import sheet now; Admin → Setup
+                  remains the AFTER-import edit path for override rows. */}
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 2 }}>
                 {t("flowBooks.detail.sourceOverridesMovedPrefix")}{" "}
                 <Link href="#/admin/setup">{t("flowBooks.detail.adminSetup")}</Link>.
@@ -626,6 +569,15 @@ function BookDetailPanel({
       {isAdmin && <BooksActivityPanel book={book} />}
 
       {isAdmin && (
+        <BringInBookDialog
+          open={sheetOpen}
+          onClose={() => setSheetOpen(false)}
+          book={book}
+          onSuccess={handleImported}
+        />
+      )}
+
+      {isAdmin && (
         <ImportFromDoor43Dialog
           open={repullOpen}
           onClose={() => setRepullOpen(false)}
@@ -643,7 +595,7 @@ function BookDetailPanel({
   );
 }
 
-export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScreenProps) {
+export default function BooksScreen({ role, onNavigate, lastPosition, book: routeBook }: BooksScreenProps) {
   const { t } = useTranslation();
   const theme = useTheme();
   const { skip } = theme.palette.flows;
@@ -657,7 +609,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
   const [booksStatus, setBooksStatus] = useState<BooksFetchStatus>("loading");
   const [listError, setListError] = useState<string | null>(null);
   const statusRef = useRef<BooksFetchStatus>("loading");
-  const [selected, setSelected] = useState<string>("GEN");
+  const [selected, setSelected] = useState<string>(routeBook ?? "GEN");
   const [search, setSearch] = useState("");
   // Phone accordion tree: which testament / sub-group disclosures are open.
   // Fully controlled so a search-driven force-open can't flip the component
@@ -666,6 +618,9 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
   // Only auto-jump the selection to a real imported book on the FIRST load —
   // afterwards the user's click wins.
   const seededRef = useRef(false);
+  // Read inside refetchBooks without making the callback depend on the route.
+  const routeBookRef = useRef(routeBook);
+  routeBookRef.current = routeBook;
 
   const setStatus = useCallback((s: BooksFetchStatus) => {
     statusRef.current = s;
@@ -681,7 +636,10 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
       setStatus("loaded");
       if (!seededRef.current && r.books.length > 0) {
         seededRef.current = true;
-        if (!r.books.some((b) => b.book === "GEN")) setSelected(r.books[0].book);
+        // An explicit #/books/:book wins over the auto-seed — including for a
+        // book that is NOT imported yet, which is exactly the case that used to
+        // route to #/import/:book.
+        if (!routeBookRef.current && !r.books.some((b) => b.book === "GEN")) setSelected(r.books[0].book);
       }
     } catch (e) {
       // A background-refresh failure keeps the last known-good list; an INITIAL
@@ -697,6 +655,20 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
   useEffect(() => {
     void refetchBooks();
   }, [refetchBooks]);
+
+  useEffect(() => {
+    if (routeBook) setSelected(routeBook);
+  }, [routeBook]);
+
+  // Keep the URL truthful once the user picks a different book, so a reload or
+  // a shared link reopens the pane they were looking at rather than the book
+  // the route seeded. replaceState (not `location.hash =`) so browsing the grid
+  // doesn't pile up history entries — and it fires no hashchange, which would
+  // otherwise re-enter parseHash and fight this component's own state.
+  const selectBook = useCallback((code: string) => {
+    setSelected(code);
+    history.replaceState(null, "", `${location.pathname}#/books/${code}`);
+  }, []);
 
   const importedSet = useMemo(() => new Set(books.map((b) => b.book)), [books]);
 
@@ -853,7 +825,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                     code={code}
                     imported={importedSet.has(code)}
                     selected={selected === code}
-                    onSelect={setSelected}
+                    onSelect={selectBook}
                   />
                 ))}
               </Box>
@@ -893,7 +865,7 @@ export default function BooksScreen({ role, onNavigate, lastPosition }: BooksScr
                       code={code}
                       imported={importedSet.has(code)}
                       selected={selected === code}
-                      onSelect={setSelected}
+                      onSelect={selectBook}
                     />
                   ));
                   if (!group.name) return <Box key="bare">{rows}</Box>;

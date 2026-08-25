@@ -64,7 +64,8 @@ import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
 import { dcsRawUrl, dcsResourceFile, fetchDcsMasterText, fetchText, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
 import { getProjectConfig, exportOwnerFor } from "./projectConfig.ts";
-import { listRangeHeldOutKeys } from "./bookSource.ts";
+import { sameDcsName } from "./repoUrl.ts";
+import { heldOutChapters, type HeldOut, type BookSourceResource } from "./bookSource.ts";
 import {
   laneForBibleVersion,
   assertLaneWritable,
@@ -82,7 +83,7 @@ import {
   verifyExportFencingToken,
 } from "./scriptureLaneReplacement";
 import type { TnRow, TqRow, TwlRow, VerseRow } from "./types";
-import { gateTsvRowForExport } from "./preDraftSnapshot";
+import { gateTsvRowForPublish } from "./publishGate.ts";
 import { lintUsfmVerses } from "./lint";
 import {
   renderContextPack,
@@ -152,6 +153,11 @@ export interface StepResult {
   // creation failed (see prReason).
   prNumber: number | null;
   prReason: string | null;
+  // tn/tq only: rows OMITTED from the render by the provenance-aware publish
+  // gate (foreign-sourced, not validated, no usable snapshot — publishGate.ts).
+  // Absent/0 for other resources. When ALL rows were held, the commit is
+  // skipped with dcsSkippedReason `held_for_review:<count>`.
+  heldForReview?: number;
 }
 
 const isResource = (s: string): s is Resource => (ALL_RESOURCES as string[]).includes(s);
@@ -244,48 +250,38 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       ? [params.resource]
       : ALL_RESOURCES;
 
-    // Books whose tn/tq/ult/ust/twl did NOT come from the configured org/lane
-    // repo — re-sourced from Aquifer (POST /aquifer-drafts, tn/tq only),
-    // imported from the English translationSource, or (tn/tq only) set to a
-    // per-book/per-chapter-range override (#103) — are held out of that
-    // resource's EXPORT: their rows are source-keyed drafts, and until
-    // validated their export snapshot is empty — exporting would push
-    // blank/unapproved (or another org's) content over the DCS repo.
-    // Export-direction handling for these books is deferred (see STATE.md);
-    // until then, skip the held-out resource. Other resources export normally.
-    // Mirrors the reimport skip in bookReimport.ts (issue #142 widened this
-    // from tn/tq-only to also cover ult/ust/twl — see heldOutNoteResources).
+    // Books whose ult/ust/twl did NOT come from the configured org/lane repo
+    // (imported from the English translationSource) are held out of that
+    // resource's EXPORT as a whole (book, resource) pair: scripture/twl have no
+    // review state, so there is no row-level "approved" signal to publish on —
+    // the whole-book provenance marker stays the skip (issue #142, and #104 for
+    // the future review concept).
     //
-    // Two sources of hold-out for tn/tq: (a) the whole-book book_imports
-    // marker, and (b) the range table (#103 Tier 2, tn/tq only — ult/ust/twl
-    // have no per-chapter-range mechanism, so (a) is the only source for
-    // them). A PARTIALLY-sourced tn/tq book has NO marker (its base is the
-    // org's own repo), so (b) is what stops it from rendering the
-    // cross-sourced chapters over master. NOTE: this is whole-RESOURCE skip, so
-    // a partial book's OWNED chapters don't publish either — a documented
-    // limitation; the merge-export that publishes owned chapters is a
-    // follow-up (STATE.md).
+    // tn/tq are NOT pair-skipped any more (docs/ux-simplification.md §1.4, the
+    // durable #236 fix): their foreign provenance — the whole-book book_imports
+    // marker AND the #103 chapter-range overrides — is enforced PER ROW inside
+    // buildResource via gateTsvRowForPublish (publishGate.ts): validated rows
+    // publish live content, snapshot-backed drafts publish the snapshot, and
+    // everything else on a foreign chapter is omitted from the render. A
+    // partial book therefore publishes its owned + approved chapters instead
+    // of being withheld wholesale.
     const heldOutNotes = new Set(
       await step.do("list-held-out-note-books", async () => {
-        const cfg = await getProjectConfig(this.env);
         const rs = await this.env.DB.prepare(
-          `SELECT book, tn_source, tq_source, ult_source, ust_source, twl_source FROM book_imports
-            WHERE tn_source IS NOT NULL OR tq_source IS NOT NULL
-               OR ult_source IS NOT NULL OR ust_source IS NOT NULL OR twl_source IS NOT NULL`,
+          `SELECT book, ult_source, ust_source, twl_source FROM book_imports
+            WHERE ult_source IS NOT NULL OR ust_source IS NOT NULL OR twl_source IS NOT NULL`,
         ).all<{
           book: string;
-          tn_source: string | null;
-          tq_source: string | null;
           ult_source: string | null;
           ust_source: string | null;
           twl_source: string | null;
         }>();
         // step.do must return a JSON-serializable value → "BOOK:resource" strings.
-        const markerKeys = rs.results.flatMap((r) =>
+        // The rows carry no tn_source/tq_source, so heldOutNoteResources can only
+        // yield ult/ust/twl keys here.
+        return rs.results.flatMap((r) =>
           [...heldOutNoteResources(r)].map((res) => `${r.book}:${res}`),
         );
-        const rangeKeys = await listRangeHeldOutKeys(this.env, cfg);
-        return [...new Set([...markerKeys, ...rangeKeys])];
       }),
     );
 
@@ -343,8 +339,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const results: StepResult[] = [];
     for (const resource of resources) {
       for (const book of books) {
-        // Aquifer- / English-source-sourced tn/tq, or English-source-sourced
-        // ult/ust/twl: not exported yet (see above, issue #142). Emit a skipped
+        // English-source-sourced ult/ust/twl: not exported (see above, issue
+        // #142; tn/tq are row-gated in buildResource instead). Emit a skipped
         // StepResult + snapshot instead of a bare `continue` so admins can see
         // WHY a (book, resource) is absent from the run rather than it silently
         // vanishing (indistinguishable from "never attempted") — issue #236.
@@ -1017,6 +1013,29 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       await renewExportLease(this.env, leaseId);
     }
 
+    // Every row of this (book, resource) was omitted by the provenance-aware
+    // publish gate — nothing is publishable yet. Skip the commit exactly like
+    // the old pair-level held-out path, but record the omitted count so admins
+    // can see why the resource is absent (#236's visibility ask, repurposed).
+    if (built.rowCount === 0 && built.heldForReview > 0) {
+      const reason = `held_for_review:${built.heldForReview}`;
+      await this.recordSnapshot(book, resource, null, null, 0, reason);
+      return {
+        book,
+        resource,
+        rowCount: 0,
+        bytes: 0,
+        r2Key: null,
+        branch: null,
+        dcsCommitSha: null,
+        dcsChanged: false,
+        dcsSkippedReason: reason,
+        prNumber: null,
+        prReason: null,
+        heldForReview: built.heldForReview,
+      };
+    }
+
     if (built.content === "") {
       await this.recordSnapshot(book, resource, null, null, built.rowCount, "no_rows");
       return {
@@ -1354,6 +1373,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       dcsSkippedReason,
       prNumber,
       prReason,
+      heldForReview: built.heldForReview,
     };
     } finally {
       if (leaseId) await releaseExportLease(this.env, leaseId).catch(() => {});
@@ -1559,53 +1579,84 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     if (!valid) throw new Error("fencing_token_superseded");
   }
 
+  // The foreign chapter set for a (book, tn|tq): chapters whose rows were
+  // sourced off the org's own repo — the whole-book book_imports marker
+  // (aquifer:… / source:…) plus the #103 range overrides, resolved by the same
+  // helpers the old pair-level skip used (heldOutChapters, bookSource.ts).
+  // Drives the per-row publish gate in buildResource. null = nothing foreign.
+  private async foreignNoteChapters(
+    book: string,
+    resource: BookSourceResource,
+  ): Promise<HeldOut | null> {
+    const cfg = await getProjectConfig(this.env);
+    const prov = await this.env.DB.prepare(
+      `SELECT tn_source, tq_source FROM book_imports WHERE book = ?1`,
+    )
+      .bind(book)
+      .first<{ tn_source: string | null; tq_source: string | null }>();
+    const marker = resource === "tn" ? prov?.tn_source ?? null : prov?.tq_source ?? null;
+    const held = await heldOutChapters(this.env, cfg, book, resource, marker);
+    return held.all || held.ranges.length > 0 ? held : null;
+  }
+
   private async buildResource(
     book: string,
     resource: Resource,
     scriptureGen: number,
-  ): Promise<{ content: string; rowCount: number; sortOrderUpdates: Array<{ id: string; sort_order: number }> }> {
+  ): Promise<{ content: string; rowCount: number; heldForReview: number; sortOrderUpdates: Array<{ id: string; sort_order: number }> }> {
     const db = this.env.DB;
-    if (resource === "tn") {
-      // trashed_at IS NULL excludes notes pending deletion. The nightly cron
-      // promotes trash -> deleted_at before this Workflow's steps read, but
-      // this guard also covers anything trashed mid-run (after finalize, before
-      // this book's export step).
-      const rs = await db
-        .prepare(
-          `SELECT * FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL
-           ORDER BY chapter, verse, sort_order ASC NULLS LAST, id`,
-        )
-        .bind(book)
-        .all<TnRow>();
-      // Export gate (migration 0049): a non-validated AI draft must never reach
-      // DCS — emit the pre-draft snapshot instead. Row count is unchanged, so
-      // the shrink guard is unaffected.
-      const gated = rs.results.map((r) => {
-        const { row, legacy } = gateTsvRowForExport(r, ["note", "tags"]);
-        if (legacy) {
-          console.log(`export gate: tn ${book}/${r.id} is ${r.translation_state} with no pre-draft snapshot (legacy) — exporting current content`);
+    if (resource === "tn" || resource === "tq") {
+      // trashed_at IS NULL (tn only) excludes notes pending deletion. The
+      // nightly cron promotes trash -> deleted_at before this Workflow's steps
+      // read, but this guard also covers anything trashed mid-run (after
+      // finalize, before this book's export step).
+      const rs = resource === "tn"
+        ? await db
+            .prepare(
+              `SELECT * FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL
+               ORDER BY chapter, verse, sort_order ASC NULLS LAST, id`,
+            )
+            .bind(book)
+            .all<TnRow>()
+        : await db
+            .prepare(
+              `SELECT * FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL
+               ORDER BY chapter, verse, sort_order ASC NULLS LAST, id`,
+            )
+            .bind(book)
+            .all<TqRow>();
+      const fields = resource === "tn" ? (["note", "tags"] as const) : (["question", "response"] as const);
+      // Provenance-aware export gate (publishGate.ts, ux-simplification §1.4):
+      // own-provenance rows keep the migration-0049 review-state gate (a
+      // non-validated AI draft ships its pre-draft snapshot, never DCS-bound
+      // draft content); rows on FOREIGN-sourced chapters additionally require
+      // either 'validated' (live content) or a usable snapshot — anything else
+      // is OMITTED from the render and counted as held-for-review. Omission
+      // shrinks the render; over a populated master that is the shrink guard's
+      // territory, by design.
+      const foreign = await this.foreignNoteChapters(book, resource);
+      let heldForReview = 0;
+      const gated: Array<TnRow | TqRow> = [];
+      for (const r of rs.results) {
+        const { row, legacy } = gateTsvRowForPublish(r, fields, foreign);
+        if (row == null) {
+          heldForReview++;
+          continue;
         }
-        return row;
-      });
-      return { content: gated.length === 0 ? "" : buildTnTsv(gated), rowCount: gated.length, sortOrderUpdates: [] };
-    }
-    if (resource === "tq") {
-      const rs = await db
-        .prepare(
-          `SELECT * FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL
-           ORDER BY chapter, verse, sort_order ASC NULLS LAST, id`,
-        )
-        .bind(book)
-        .all<TqRow>();
-      // Same non-validated-draft export gate as tn above.
-      const gated = rs.results.map((r) => {
-        const { row, legacy } = gateTsvRowForExport(r, ["question", "response"]);
         if (legacy) {
-          console.log(`export gate: tq ${book}/${r.id} is ${r.translation_state} with no pre-draft snapshot (legacy) — exporting current content`);
+          console.log(`export gate: ${resource} ${book}/${r.id} is ${r.translation_state} with no pre-draft snapshot (legacy) — exporting current content`);
         }
-        return row;
-      });
-      return { content: gated.length === 0 ? "" : buildTqTsv(gated), rowCount: gated.length, sortOrderUpdates: [] };
+        gated.push(row);
+      }
+      if (heldForReview > 0) {
+        console.log(`export gate: ${resource} ${book} held ${heldForReview} foreign-sourced row(s) for review (not validated, no snapshot) — omitted from render`);
+      }
+      const content = gated.length === 0
+        ? ""
+        : resource === "tn"
+          ? buildTnTsv(gated as TnRow[])
+          : buildTqTsv(gated as TqRow[]);
+      return { content, rowCount: gated.length, heldForReview, sortOrderUpdates: [] };
     }
     if (resource === "twl") {
       const rs = await db
@@ -1623,7 +1674,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         .bind(book, "ULT", scriptureGen)
         .all<VerseRow>();
       if (rs.results.length === 0) {
-        return { content: "", rowCount: 0, sortOrderUpdates: [] };
+        return { content: "", rowCount: 0, heldForReview: 0, sortOrderUpdates: [] };
       }
       const result = buildTwlTsv(rs.results, {
         book,
@@ -1634,6 +1685,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       return {
         content: result.tsv,
         rowCount: rs.results.length,
+        heldForReview: 0,
         sortOrderUpdates: result.sortOrderUpdates,
       };
     }
@@ -1646,7 +1698,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       )
       .bind(book, bibleVersion, scriptureGen)
       .all<VerseRow>();
-    if (rs.results.length === 0) return { content: "", rowCount: 0, sortOrderUpdates: [] };
+    if (rs.results.length === 0) return { content: "", rowCount: 0, heldForReview: 0, sortOrderUpdates: [] };
     const headersRow = await db
       .prepare(`SELECT headers_json FROM book_usfm_meta WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3`)
       .bind(book, bibleVersion, scriptureGen)
@@ -1663,6 +1715,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     return {
       content: buildUsfm({ book, bibleVersion, headers, verses: rs.results }),
       rowCount: rs.results.length,
+      heldForReview: 0,
       sortOrderUpdates: [],
     };
   }
@@ -2047,8 +2100,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const destOwner = dest?.owner ?? src.owner;
     const destRepo = dest?.repo ?? src.repo;
     const baseRef = dest?.baseRef ?? src.ref;
+    // Owner/repo names are case-insensitive on DCS; baseRef vs src.ref stays
+    // an exact git-ref comparison.
     const sameIdentity =
-      destOwner === src.owner && destRepo === src.repo && baseRef === src.ref;
+      sameDcsName(destOwner, src.owner) && sameDcsName(destRepo, src.repo) && baseRef === src.ref;
 
     if (sameIdentity) {
       const watermark = await storedResourceSha(this.env, book, resource, src);
@@ -2068,8 +2123,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     }
     const tipSha = await fileCommitSha(this.env, destOwner, destRepo, path, baseRef);
     const baseline = await this.env.DB.prepare(
+      // owner/repo are DCS names (case-insensitive); lane/base_ref/book are not.
+      // The baseline upsert keys on a BINARY primary key, so a case-only drift can
+      // leave two rows for one repo: prefer the exact-case row (pre-NOCASE
+      // behaviour) and fall back to a case variant only when none exists.
       `SELECT base_sha FROM scripture_export_baselines
-        WHERE lane = ?1 AND owner = ?2 AND repo = ?3 AND base_ref = ?4 AND book = ?5`,
+        WHERE lane = ?1 AND owner = ?2 COLLATE NOCASE AND repo = ?3 COLLATE NOCASE AND base_ref = ?4 AND book = ?5
+        ORDER BY (owner = ?2 AND repo = ?3) DESC
+        LIMIT 1`,
     )
       .bind(lane, destOwner, destRepo, baseRef, book)
       .first<{ base_sha: string | null }>();

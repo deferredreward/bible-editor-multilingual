@@ -706,6 +706,11 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
 
   async function handleApprove() {
     if (!selectedRow || approving) return;
+    // Never validate a trashed note: it would promote a row the editor already
+    // threw away into the nightly context-repo export's few-shot set (see the
+    // handleApproveAll comment). The Approve button is disabled for trashed rows;
+    // this guards any other path (e.g. keyboard) to the same rule.
+    if (activeKind === "tn" && (selectedRow as TnRow).trashed_at != null) return;
     setApproving(true);
     setNotice(null);
     try {
@@ -1205,15 +1210,19 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
           </Button>
         </span>
       </Tooltip>
-      <Button
-        variant="contained"
-        color="success"
-        onClick={handleApprove}
-        disabled={approving}
-        sx={{ flex: 1, minHeight: 44 }}
-      >
-        {approving ? t("flowReview.common.approving") : t("common.approve")}
-      </Button>
+      <Tooltip title={isTrashed ? t("flowReview.queue.approveTrashedTooltip") : ""}>
+        <span style={{ flex: 1, display: "flex" }}>
+          <Button
+            variant="contained"
+            color="success"
+            onClick={handleApprove}
+            disabled={approving || isTrashed}
+            sx={{ flex: 1, minHeight: 44 }}
+          >
+            {approving ? t("flowReview.common.approving") : t("common.approve")}
+          </Button>
+        </span>
+      </Tooltip>
     </>
   );
 

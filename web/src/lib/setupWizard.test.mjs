@@ -171,6 +171,25 @@ test("laneSourceReconcilable: a fresh lane is fine; a normal populated same-org 
   );
 });
 
+test("laneSourceReconcilable: owner matching is case-insensitive (DCS org names are)", () => {
+  // The BSOJ block: the lane's active source owner was persisted as `bsoj`
+  // before org names were canonicalized against DCS, while detect() now reports
+  // `BSOJ`. Same org — Apply must NOT be blocked.
+  assert.equal(
+    laneSourceReconcilable({ populated: true, config: { source: { owner: "bsoj", repo: "ar_avd" } } }, "BSOJ"),
+    true,
+  );
+  assert.equal(
+    laneSourceReconcilable({ populated: true, config: { source: { owner: "BSOJ", repo: "ar_avd" } } }, " bsoj "),
+    true,
+  );
+  // A genuinely foreign owner is still blocked, case-folding or not.
+  assert.equal(
+    laneSourceReconcilable({ populated: true, config: { source: { owner: "unfoldingword", repo: "en_ult" } } }, "BSOJ"),
+    false,
+  );
+});
+
 test("laneSourceReconcilable: mltest drift (foreign owner / mid-migration) is NOT reconcilable → block", () => {
   // The mltest quarantine: active source owner unfoldingWord, being configured as
   // BibleEditorMLTest — desired.owner can never equal unfoldingWord → block, not loop.
@@ -328,4 +347,15 @@ test("defaultReplaceSelection: a book missing from stats defaults to replace", (
   const books = ["GEN", "JOL"];
   const stats = { JOL: { verses: 73, edited: 4 } };
   assert.deepEqual(defaultReplaceSelection(books, stats), ["GEN"]);
+});
+
+test("shouldPrefillFromCurrent: same org in different case still counts as a re-run", () => {
+  // Config persisted `bsoj`, detect() reports `BSOJ` — a re-run, so the non-lane
+  // repos must prefill from the current config. Reading it as a different org
+  // proposed a fresh-inference repo set and tripped the identity guard on apply.
+  assert.equal(shouldPrefillFromCurrent("bsoj", "BSOJ"), true);
+  assert.equal(shouldPrefillFromCurrent(" BSOJ ", "bsoj"), true);
+  assert.equal(shouldPrefillFromCurrent("unfoldingWord", "BSOJ"), false);
+  assert.equal(shouldPrefillFromCurrent("", "BSOJ"), false);
+  assert.equal(shouldPrefillFromCurrent("BSOJ", null), false);
 });

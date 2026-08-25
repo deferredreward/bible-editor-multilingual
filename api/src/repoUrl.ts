@@ -91,10 +91,26 @@ export function parseDoor43SourceRef(
   return { ok: true, org: norm.ref.owner, repo };
 }
 
+/**
+ * Canonical comparison form for a DCS/Gitea owner (org or user) or repo NAME.
+ * Gitea resolves both case-insensitively, so `BSOJ/ar_avd` and `bsoj/ar_avd`
+ * are one repo — any identity decision between two such names must compare
+ * these forms, never the raw strings. Git REFS are excluded on purpose: branch
+ * and tag names ARE case-sensitive.
+ */
+export function dcsName(s: string | undefined | null): string {
+  return (s ?? "").trim().toLowerCase();
+}
+
+/** Two DCS owner (or repo) names denote the same thing. */
+export function sameDcsName(a: string | undefined | null, b: string | undefined | null): boolean {
+  return dcsName(a) === dcsName(b);
+}
+
 export function repoRefEquals(a: RepoRef, b: RepoRef): boolean {
   return (
-    a.owner.toLowerCase() === b.owner.toLowerCase() &&
-    a.repo.toLowerCase() === b.repo.toLowerCase() &&
+    sameDcsName(a.owner, b.owner) &&
+    sameDcsName(a.repo, b.repo) &&
     a.ref === b.ref
   );
 }

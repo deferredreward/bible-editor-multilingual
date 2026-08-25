@@ -7,7 +7,10 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "./index";
 import { requireAdmin } from "./auth";
-import { ALL_RESOURCES, type Resource } from "./export";
+import { ALL_RESOURCES, resourceTargetsFor, type Resource } from "./export";
+import { getProjectConfig, exportOwnerFor } from "./projectConfig.ts";
+import { getLaneState, activeLaneConfig, type LaneKey } from "./scriptureLane";
+import { snapshotPrUrl, type PrDestinationMap } from "./exportPrUrl.ts";
 
 export const exports = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -106,7 +109,39 @@ exports.get("/", requireAdmin, async (c) => {
     pr_number: number | null;
     pr_error: string | null;
   }>();
-  return c.json({ snapshots: rs.results });
+  // Enrich rows that carry a pr_number with a Door43 web URL (`prUrl`), by
+  // resolving the destination repo through the SAME functions exportOne uses:
+  // scripture lanes (ult/ust) → live lane config's export destination;
+  // tn/tq/twl → project-config repo under exportOwnerFor. Best-effort: any
+  // resolution failure just leaves prUrl off (client falls back to plain
+  // "PR #n" text). See exportPrUrl.ts for the current-config caveat.
+  let snapshots: Array<(typeof rs.results)[number] & { prUrl?: string | null }> = rs.results;
+  if (rs.results.some((r) => r.pr_number != null)) {
+    try {
+      const cfg = await getProjectConfig(c.env);
+      const targets = resourceTargetsFor(cfg);
+      const owner = exportOwnerFor(c.env, cfg);
+      const dest: PrDestinationMap = {
+        tn: { owner, repo: targets.tn.repo },
+        tq: { owner, repo: targets.tq.repo },
+        twl: { owner, repo: targets.twl.repo },
+      };
+      const lanePairs: Array<[Resource, LaneKey]> = [["ult", "lit"], ["ust", "sim"]];
+      for (const [resource, lane] of lanePairs) {
+        if (!rs.results.some((r) => r.resource === resource && r.pr_number != null)) continue;
+        const row = await getLaneState(c.env, lane);
+        const exp = row ? activeLaneConfig(row).export : null;
+        dest[resource] = exp ? { owner: exp.owner, repo: exp.repo } : null;
+      }
+      snapshots = rs.results.map((r) => ({
+        ...r,
+        prUrl: snapshotPrUrl(c.env.DCS_BASE_URL, dest[r.resource], r.pr_number),
+      }));
+    } catch (e) {
+      console.error("exports list prUrl enrichment failed", e instanceof Error ? e.message : String(e));
+    }
+  }
+  return c.json({ snapshots });
 });
 
 // Workflow instance status. The Workflow's own `status()` returns a structured
