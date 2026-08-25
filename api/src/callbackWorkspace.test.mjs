@@ -214,4 +214,78 @@ console.log("[callback] first-time manual allowlistee in a NON-DEFAULT workspace
   }
 }
 
+// ── Denied redirect names the rejecting workspace (issue #288) ──────────────
+// A user with no role anywhere and no org membership hits the denied screen.
+// The redirect must carry `org=<workspace label>` so a user with access to
+// several orgs can tell WHERE the mismatch is.
+console.log("[callback] denied redirect carries the rejecting workspace label (#288)");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    // Both workspaces' user_roles are empty → nobody has a role anywhere.
+    const sharedSql = sharedDbSqlite();
+    const org2Sql = org2DbSqlite();
+    org2Sql.exec("DELETE FROM user_roles;");
+
+    const baseEnv = {
+      JWT_SIGNING_KEY: SIGNING,
+      JWT_ISSUER: ISSUER,
+      DCS_BASE_URL: "https://git.door43.org",
+      DCS_CLIENT_ID: "client-id",
+      DCS_CLIENT_SECRET: "client-secret",
+      DCS_OAUTH_TOKEN_URL: "https://git.door43.org/login/oauth/access_token",
+      DCS_OAUTH_AUTHORIZE_URL: "https://git.door43.org/login/oauth/authorize",
+      SUPER_ADMINS: "",
+      DB: makeD1(sharedSql),
+      DB2: makeD1(org2Sql),
+      WORKSPACES: JSON.stringify([
+        { slug: "uw", label: "unfoldingWord", org: "unfoldingWord", binding: "DB" },
+        { slug: "org2", label: "Org Two", org: "OrgTwo", binding: "DB2" },
+      ]),
+    };
+
+    // nobody: in NO orgs, on NO teams — a genuine deny.
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      const json = (body) =>
+        new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      if (u.includes("/login/oauth/access_token")) {
+        assert(init?.method === "POST", "token exchange is a POST");
+        return json({ access_token: "nobody-token" });
+      }
+      if (u.includes("/api/v1/user/orgs")) return json([]);
+      if (u.includes("/api/v1/user/teams")) return json([]);
+      if (u.endsWith("/api/v1/user")) return json({ id: 99, login: "nobody", full_name: "No Body" });
+      throw new Error(`unexpected DCS call: ${u}`);
+    };
+
+    const app = new Hono();
+    app.get("/api/auth/dcs/callback", callbackDcsAuth);
+
+    const state = "state-deny";
+    const stateCookie = await new SignJWT({ state })
+      .setProtectedHeader({ alg: "HS256" })
+      .setExpirationTime("10m")
+      .sign(KEY);
+
+    const request = new Request(
+      `https://editor.example.org/api/auth/dcs/callback?code=abc&state=${state}`,
+      { headers: { cookie: `dcs_auth_state=${stateCookie}` } },
+    );
+    const ws = resolveWorkspace(baseEnv, parseWorkspaceCookie(request));
+    const res = await app.fetch(request, workspaceEnv(baseEnv, ws));
+
+    assert(res.status === 302, `denied callback redirects (302), got ${res.status}`);
+    const location = res.headers.get("location") ?? "";
+    assert(location.includes("_auth_denied=1"), "it IS the denied redirect");
+    assert(location.includes("u=nobody"), "redirect carries the rejected username");
+    assert(
+      location.includes(`org=${encodeURIComponent(ws.label)}`),
+      `redirect names the rejecting workspace (org=${ws.label}), got ${location}`,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 console.log("callbackWorkspace: all assertions passed");
