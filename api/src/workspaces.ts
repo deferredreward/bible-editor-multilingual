@@ -279,13 +279,18 @@ async function findClaimedByOrg(env: Env, db: D1Database, org: string): Promise<
     .prepare(
       // COLLATE NOCASE: Door43 org names are case-insensitive, so a lookup for
       // "BSOJ" must find an existing "bsoj" row — otherwise a second workspace
-      // gets claimed for the same org (duplicate-claim hole).
+      // gets claimed for the same org (duplicate-claim hole). This is also what
+      // lets the idempotency check AND the claimWorkspace catch-block recovery
+      // find a pre-existing claim regardless of the case the admin typed,
+      // matching the NOCASE UNIQUE index on workspaces.org (migration 0068).
       //
-      // `org` is UNIQUE under BINARY collation, so a case-variant pair could
-      // already exist (the pre-fix code is what would have created it). Prefer
-      // the exact-case row and then the oldest slot, so the org always resolves
-      // to ONE deterministic binding rather than an arbitrary one — resolving to
-      // the wrong binding would serve another tenant's database.
+      // The ORDER BY predates 0068, when `org` was UNIQUE under BINARY
+      // collation and a case-variant pair could already exist (the pre-fix code
+      // is what would have created it). Prefer the exact-case row and then the
+      // oldest slot, so the org always resolves to ONE deterministic binding
+      // rather than an arbitrary one — resolving to the wrong binding would
+      // serve another tenant's database. Kept as a belt-and-braces guard for
+      // any pre-0068 deploy window.
       `SELECT slug, label, org, binding, export_owner AS exportOwner
          FROM workspaces WHERE org = ?1 COLLATE NOCASE AND status = 'claimed'
          ORDER BY (org = ?1) DESC, slug ASC LIMIT 1`,
@@ -325,6 +330,12 @@ export async function claimWorkspace(
   opts: { org: string; label: string; exportOwner?: string },
 ): Promise<ClaimResult | null> {
   const db = sharedDb(env);
+  // Callers pass an already-canonicalized org: the sole production caller (the
+  // POST /api/workspaces/pool/claim route) resolves DCS canonical casing before
+  // calling in, keeping this function free of network I/O. claimWorkspace stays
+  // defensive regardless — findClaimedByOrg below is COLLATE NOCASE, so a
+  // pre-existing claim under different casing (e.g. a fail-open where DCS was
+  // unreachable) is still found rather than duplicated.
   const org = opts.org.trim();
   const label = opts.label.trim();
   if (!isIdent(org)) throw new Error(`claimWorkspace: invalid org ${JSON.stringify(opts.org)}`);
