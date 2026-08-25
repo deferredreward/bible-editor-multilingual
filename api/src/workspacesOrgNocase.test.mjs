@@ -96,4 +96,59 @@ console.log("[0068] many NULL-org spare slots still coexist under the NOCASE UNI
   assert(n === 2, "multiple NULL-org available rows coexist (UNIQUE ignores NULLs regardless of collation)");
 }
 
+// -- 4. the preflight aborts (loudly) when the registry ALREADY holds a
+//       case-variant pair, instead of dying on an anonymous UNIQUE failure -----
+
+console.log("[0068] preflight aborts on pre-existing duplicate-cased org rows");
+{
+  const db = new DatabaseSync(":memory:");
+  db.exec("PRAGMA foreign_keys = OFF;");
+  db.exec(M0058);
+  // 0058's BINARY-collated UNIQUE lets BOTH of these in. That is the state the
+  // rebuild cannot represent, and the state the preflight has to name.
+  db.prepare("INSERT INTO workspaces (slug, org, binding, status) VALUES ('a', 'bsoj', 'DB', 'claimed')").run();
+  db.prepare("INSERT INTO workspaces (slug, org, binding, status) VALUES ('b', 'BSOJ', 'DB_MLTEST', 'claimed')").run();
+
+  let err = null;
+  try {
+    db.exec(M0068);
+  } catch (e) {
+    err = e;
+  }
+  assert(err !== null, "migration refuses to run against a duplicate-cased registry");
+  assert(
+    String(err?.message ?? "").includes("abort_0068_duplicate_cased_org_in_workspaces_resolve_manually"),
+    "the failure message names the problem, so the operator sees WHAT to fix",
+  );
+  // Nothing destructive ran: both original rows are still there, untouched.
+  assert(
+    db.prepare("SELECT COUNT(*) AS n FROM workspaces").get().n === 2,
+    "both tenancy rows survive the aborted migration (no silent dedupe)",
+  );
+}
+
+// -- 5. a retry after an aborted run still reaches the real failure -----------
+
+console.log("[0068] a re-run after an aborted attempt is not blocked by leftovers");
+{
+  const db = new DatabaseSync(":memory:");
+  db.exec("PRAGMA foreign_keys = OFF;");
+  db.exec(M0058);
+  db.prepare("INSERT INTO workspaces (slug, org, binding, status) VALUES ('a', 'bsoj', 'DB', 'claimed')").run();
+  db.prepare("INSERT INTO workspaces (slug, org, binding, status) VALUES ('b', 'BSOJ', 'DB_MLTEST', 'claimed')").run();
+  try { db.exec(M0068); } catch { /* expected: preflight abort */ }
+
+  // Operator resolves the duplicate the way the comment says to, then re-runs.
+  db.prepare("UPDATE workspaces SET org = NULL, status = 'retired' WHERE slug = 'b'").run();
+  db.exec(M0068);
+
+  const cols = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='workspaces'").get().sql;
+  assert(/org\s+TEXT UNIQUE COLLATE NOCASE/.test(cols), "re-run completes and lands the NOCASE collation");
+  assert(db.prepare("SELECT COUNT(*) AS n FROM workspaces").get().n === 2, "both rows still present after the successful re-run");
+  assert(
+    db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='workspaces_v2'").get() === undefined,
+    "no workspaces_v2 leftover after a successful run",
+  );
+}
+
 console.log("workspacesOrgNocase: all assertions passed");
