@@ -450,8 +450,10 @@ export function SetupWizard() {
               <Button
                 variant="contained"
                 onClick={() => {
-                  // Hand off to the Import surface — the separated import workflow.
-                  location.hash = "#/import";
+                  // Hand off to the Books screen, where "Bring in this book"
+                  // now owns the import workflow (the old #/import surface is
+                  // retired; App.tsx redirects it here).
+                  location.hash = "#/books";
                 }}
               >
                 {t("setup.goToImport")}

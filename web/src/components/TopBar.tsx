@@ -444,19 +444,17 @@ export function TopBar({
   }, [book, showNavigation]);
 
   // Un-imported books are no longer silently bootstrapped from here. Selecting
-  // one routes to the deliberate IMPORT surface (#/import/:book), where the user
-  // picks an intent (translate a new book vs load existing work) before any
-  // destructive import runs. Already-imported books navigate as before.
-  // Optionally carries the requested chapter[:verse] through the route so a
-  // reference like "MAT 5:3" for an un-imported book lands at 5:3 after import
-  // (Open in editor reads it) instead of silently resetting to 1:1.
-  const goToImport = (code: string, targetChapter?: number, verse?: number) => {
-    const parts = [`#/import/${code}`];
-    if (targetChapter && targetChapter > 0) {
-      parts.push(String(targetChapter));
-      if (verse && verse > 0) parts.push(String(verse));
-    }
-    location.hash = parts.join("/");
+  // one routes to the Books screen with that book selected (#/books/:book),
+  // where "Bring in this book" makes the user pick sources and an intent before
+  // any destructive import runs. Already-imported books navigate as before.
+  //
+  // The retired #/import surface used to carry the requested chapter[:verse]
+  // through the route so "MAT 5:3" for an un-imported book landed at 5:3 after
+  // import. The Books screen opens a book at its package hub (#/package/:book),
+  // which is not verse-addressable, so the tail is no longer carried and the
+  // signature keeps only the book.
+  const goToImport = (code: string) => {
+    location.hash = `#/books/${code}`;
   };
 
   // Front matter included on purpose: chapter 0 renders as "Intro" in the
@@ -492,7 +490,7 @@ export function TopBar({
     if (importedSet.has(targetBook)) {
       onNavigate(targetBook, targetChapter, refVerse);
     } else {
-      goToImport(targetBook, targetChapter, refVerse);
+      goToImport(targetBook);
     }
   };
 
@@ -869,7 +867,7 @@ export function TopBar({
           <MenuItem
             onClick={() => {
               closeMore();
-              location.hash = "#/import";
+              location.hash = "#/books";
             }}
           >
             <ListItemIcon>

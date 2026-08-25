@@ -1,4 +1,6 @@
-// Pure decision logic for the IMPORT surface (see web/src/components/ImportWorkspace.tsx).
+// Pure decision logic for the import surface — now BooksScreen's book detail
+// pane + BringInBookDialog (the standalone ImportWorkspace was retired; see
+// web/src/components/flows/BooksScreen.tsx).
 //
 // Two orthogonal facts drive every import action:
 //   • whether the book is ALREADY imported into BE (has content in D1), and

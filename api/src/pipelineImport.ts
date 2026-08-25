@@ -33,6 +33,7 @@ import { IMPORT_CLAIM_STALE_SECONDS } from "./pipelineImportClaim.ts";
 import { nextPreDraftJson } from "./preDraftSnapshot.ts";
 import { fetchBotOutputWith } from "./botOutput.ts";
 import { rawUrlOriginError } from "./rawUrlPin.ts";
+import { sameDcsName } from "./repoUrl.ts";
 
 interface OutputEntry {
   type?: string;
@@ -1737,8 +1738,9 @@ async function applyVerseUpdate(
       }
       if (
         gate.generation !== laneStamp.generation ||
-        gate.config.source.owner !== laneStamp.owner ||
-        gate.config.source.repo !== laneStamp.repo ||
+        // owner/repo are DCS names (case-insensitive); ref stays exact.
+        !sameDcsName(gate.config.source.owner, laneStamp.owner) ||
+        !sameDcsName(gate.config.source.repo, laneStamp.repo) ||
         gate.config.source.ref !== laneStamp.ref
       ) {
         await env.DB.prepare(

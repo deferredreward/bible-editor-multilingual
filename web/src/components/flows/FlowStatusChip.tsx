@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 
 export type FlowStatusKind =
   | "draft"
+  | "aquifer"
   | "approved"
   | "edited"
   | "trashed"
@@ -26,6 +27,7 @@ export interface FlowStatusChipProps {
 // Default label keys per kind — translated at render.
 const DEFAULT_LABEL_KEYS: Record<FlowStatusKind, string> = {
   draft: "flowTranslate.status.draft",
+  aquifer: "flowTranslate.status.aquiferImport",
   approved: "flowTranslate.status.approved",
   edited: "flowTranslate.status.edited",
   trashed: "flowTranslate.status.trashed",
@@ -45,6 +47,12 @@ export function FlowStatusChip({ kind, label, size = "small" }: FlowStatusChipPr
   const editedSoft = dark ? "rgba(49, 173, 227, 0.26)" : "rgba(49, 173, 227, 0.18)";
   const editedInk = dark ? "#31ADE3" : "#1B84B8";
 
+  // Aquifer provenance — the classic NoteCard badge (#70C9CC). A distinct hue so
+  // it reads as "where this came from", not as a quality/state signal; the light
+  // ink is darkened for contrast on the soft ground, mirroring the edited case.
+  const aquiferSoft = dark ? "rgba(112, 201, 204, 0.26)" : "rgba(112, 201, 204, 0.18)";
+  const aquiferInk = dark ? "#70C9CC" : "#2C8285";
+
   let background: string;
   let color: string;
   switch (kind) {
@@ -60,6 +68,10 @@ export function FlowStatusChip({ kind, label, size = "small" }: FlowStatusChipPr
     case "edited":
       background = editedSoft;
       color = editedInk;
+      break;
+    case "aquifer":
+      background = aquiferSoft;
+      color = aquiferInk;
       break;
     case "draft":
     case "trashed":

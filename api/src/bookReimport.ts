@@ -71,6 +71,7 @@ import { shouldRecordResourceSync } from "./reimportSyncGate.ts";
 import { computeTwlSortOrderUpdates } from "./twlCanonicalOrder.ts";
 import { applyTwlSortOrderUpdates } from "./twlSortOrderApply.ts";
 import type { TwlRow, VerseRow } from "./types";
+import { sameDcsName } from "./repoUrl.ts";
 
 export type Resource = "ult" | "ust" | "tn" | "tq" | "twl";
 
@@ -1629,8 +1630,9 @@ async function verifyVerseWriteIdentity(
   if (intended) {
     if (
       live.generation !== intended.generation ||
-      live.owner !== intended.owner ||
-      live.repo !== intended.repo ||
+      // owner/repo are DCS names (case-insensitive); ref stays exact.
+      !sameDcsName(live.owner, intended.owner) ||
+      !sameDcsName(live.repo, intended.repo) ||
       live.ref !== intended.ref
     ) {
       return null;
@@ -2362,10 +2364,22 @@ export async function storedResourceSha(
   source: ResourceSourceRef,
 ): Promise<string | null> {
   const row = await env.DB.prepare(
+    // source_owner/source_repo are DCS names (case-insensitive);
+    // source_generation and source_ref (a git ref) are NOT.
+    //
+    // The WRITE (recordResourceSync) upserts against a BINARY primary key, so a
+    // case-only drift can leave TWO rows for one repo. The ORDER BY therefore
+    // prefers the row whose casing matches this lookup exactly — identical to the
+    // pre-NOCASE behaviour whenever such a row exists — and falls back to the
+    // case-variant row only when it does not, which is the whole point: an
+    // existing watermark stored under the old casing must still count, instead of
+    // reading as "never imported" and re-pulling the book.
     `SELECT source_sha FROM book_resource_syncs
       WHERE book = ?1 AND resource = ?2
-        AND source_generation = ?3 AND source_owner = ?4
-        AND source_repo = ?5 AND source_ref = ?6`,
+        AND source_generation = ?3 AND source_owner = ?4 COLLATE NOCASE
+        AND source_repo = ?5 COLLATE NOCASE AND source_ref = ?6
+      ORDER BY (source_owner = ?4 AND source_repo = ?5) DESC, synced_at DESC
+      LIMIT 1`,
   )
     .bind(book, resource, source.generation, source.owner, source.repo, source.ref)
     .first<{ source_sha: string | null }>();

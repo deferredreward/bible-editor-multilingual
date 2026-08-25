@@ -9,9 +9,11 @@
 
 import { useTranslation } from "react-i18next";
 import Box from "@mui/material/Box";
+import Link from "@mui/material/Link";
 import Typography from "@mui/material/Typography";
 import { SCRIPTURE_FONT_STACK } from "../../theme";
 import type { TwlRow } from "../../sync/api";
+import { parseTwId, twShort } from "../../lib/twArticle";
 
 export interface ReviewContextPanelProps {
   ultText: string | null;
@@ -78,24 +80,39 @@ export function ReviewContextPanel({ ultText, ustText, twl, sourceDir }: ReviewC
           </Typography>
         ) : (
           <Box component="ul" sx={{ listStyle: "none", m: 0, mt: 0.75, p: 0 }}>
-            {twl.map((w) => (
-              <Box
-                component="li"
-                key={w.id}
-                sx={{ display: "flex", justifyContent: "space-between", gap: 1, mb: 0.75 }}
-              >
+            {twl.map((w) => {
+              const short = twShort(w.tw_link);
+              const canOpen = parseTwId(w.tw_link) !== null;
+              return (
                 <Box
-                  component="span"
-                  dir={sourceDir}
-                  sx={{ fontFamily: SCRIPTURE_FONT_STACK, fontSize: "0.9rem", textAlign: "start" }}
+                  component="li"
+                  key={w.id}
+                  sx={{ display: "flex", justifyContent: "space-between", gap: 1, mb: 0.75 }}
                 >
-                  {w.orig_words ?? ""}
+                  <Box
+                    component="span"
+                    dir={sourceDir}
+                    sx={{ fontFamily: SCRIPTURE_FONT_STACK, fontSize: "0.9rem", textAlign: "start" }}
+                  >
+                    {w.orig_words ?? ""}
+                  </Box>
+                  {canOpen ? (
+                    <Link
+                      href={`#/articles/tw/${encodeURIComponent(short)}`}
+                      variant="caption"
+                      title="open the translationWords article (read-only)"
+                      sx={{ color: "text.secondary" }}
+                    >
+                      {short}
+                    </Link>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      {(w.tw_link ?? "").replace(/^rc:\/\/\*\/tw\/dict\/bible\//, "")}
+                    </Typography>
+                  )}
                 </Box>
-                <Typography variant="caption" color="text.secondary">
-                  {(w.tw_link ?? "").replace(/^rc:\/\/\*\/tw\/dict\/bible\//, "")}
-                </Typography>
-              </Box>
-            ))}
+              );
+            })}
           </Box>
         )}
         <Typography

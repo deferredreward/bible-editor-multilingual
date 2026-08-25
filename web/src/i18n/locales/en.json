@@ -87,19 +87,10 @@
     "draftDisabledValidated": "Un-approve first to draft over an approved translation."
   },
   "import": {
-    "title": "Import Books",
-    "navTitle": "Import books",
-    "backToScripture": "Back to scripture",
     "searchPlaceholder": "Search books",
     "importedCount": "{{n}}/{{total}} imported",
     "imported": "Imported",
     "notImported": "Not imported",
-    "notImportedYet": "Not imported yet.",
-    "selectBook": "Select a book to import.",
-    "loadFailed": "Couldn't load the book list.",
-    "retry": "Retry",
-    "summaryHint": "{{chapters}} chapters · {{tn}} notes · {{tq}} questions",
-    "intentLegend": "What do you want to do?",
     "intentTranslate": "Translate a new book",
     "intentTranslateDesc": "Import the English source (ULT/UST + notes & questions) so you can translate it and run AI Translate.",
     "intentLoad": "Load my existing work",
@@ -134,22 +125,7 @@
       "rangeNeedsBoth": "Enter both a start and end chapter, or leave both blank for the whole book.",
       "saveFailed": "Couldn't save the override.",
       "removeFailed": "Couldn't remove the override."
-    },
-    "importButton": "Import {{book}}",
-    "importing": "Importing…",
-    "importedOk": "Imported {{book}}.",
-    "importedFromSource": "Imported {{book}} — notes/questions from {{repos}}.",
-    "importFailed": "Couldn't import {{book}}: {{message}}",
-    "openButton": "Open in editor",
-    "repullButton": "Re-pull from Door43…",
-    "alreadyImported": "This book is already imported. Open it to edit, or re-pull the latest from Door43 (your edits are preserved).",
-    "aiTranslate": "AI Translate (notes + questions)",
-    "aiTranslateDesc": "Draft translation notes and questions for the whole book with AI. You can review each chapter in the editor.",
-    "aiTranslateStarted": "Started AI Translate: {{started}} runs queued{{suffix}}.",
-    "aiTranslateSkipped": " ({{skipped}} already running)",
-    "aiTranslatePartial": "Started {{started}} AI Translate runs, but {{failed}} chapter runs failed to start — retry to queue the rest.",
-    "aiTranslateNone": "Nothing to translate — no chapters found.",
-    "aiTranslateFailedAll": "Couldn't start AI Translate."
+    }
   },
   "topbar": {
     "showVerseList": "show verse list",
@@ -702,7 +678,7 @@
   },
   "workspace": {
     "switchTooltip": "switch which Door43 organization you're editing",
-    "membershipUnknownHint": "Couldn't confirm your Door43 org memberships — this list may be incomplete. Sign in again to refresh.",
+    "membershipUnknownHint": "This list of organizations you can switch to may be incomplete — we couldn't confirm your Door43 memberships. Sign in again to refresh.",
     "notMemberTooltip": "you need Door43 membership in this org to switch to it",
     "notAMember": "You're not a member of that organization.",
     "noLongerAvailable": "That workspace is no longer available.",
@@ -956,6 +932,7 @@
     "clickToEdit": "click to edit",
     "notApproved": "Not approved",
     "restoreToReorder": "restore to reorder",
+    "openArticle": "open the translationAcademy article for this support reference",
     "addSupportRef": "+ support ref",
     "supportRefPlaceholder": "figs-, translate-, writing-, …",
     "changeReference": "change reference",
@@ -998,6 +975,9 @@
     "replaceNoteAiBody": "This note already has text. Generating with AI will replace both the Quote and Note. You can hit Undo on the toolbar afterwards to restore the original.",
     "replace": "Replace",
     "replaceNoteTemplateBody": "This note already has text. Filling from the template will replace it. You can hit Undo on the toolbar afterwards to restore the original.",
+    "discardConfirmTitle": "Discard unsaved edits?",
+    "discardConfirmBody": "This reverts the Quote and Note to the last saved version, dropping every change you have made since. This can't be undone.",
+    "discardConfirmAction": "Discard",
     "extendThrough": "Extend v{{verse}} through:",
     "back": "← Back",
     "spanMultiple": "Span multiple verses…",
@@ -1588,6 +1568,7 @@
     "authoringWorkspace": "This workspace authors notes in English rather than translating them, so there is no separate source.",
     "targetDraft": "{{target}} draft",
     "targetDraftAi": "{{target}} draft · AI",
+    "targetDraftAquifer": "{{target}} draft · Aquifer",
     "emptyDraftTap": "Nothing drafted yet — tap to write this note in {{target}}.",
     "tapToEdit": "Tap the text to edit",
     "done": "Done",
@@ -1636,7 +1617,8 @@
       "trashed": "Trashed",
       "ok": "OK",
       "needsAttention": "Needs attention",
-      "skipped": "Skipped"
+      "skipped": "Skipped",
+      "aquiferImport": "Aquifer import"
     },
     "pipeline": {
       "generate": "AI generate",
@@ -1724,12 +1706,13 @@
       "nothingToOpen": "Nothing to open yet — an administrator brings books into the editor.",
       "intent": "Intent",
       "importBook": "Import {{book}}",
+      "bringInBook": "Bring in {{book}}…",
       "importingBook": "Importing {{book}}…",
       "repull": "Re-pull…",
       "aiTranslateWholeBook": "AI Translate whole book",
       "importRunsServerSide": "Importing a book runs server-side and can take up to a minute for a large book. Leaving this screen does not cancel it.",
       "importInfo": "Import pulls ULT/UST/tN/tQ/TWL from this project's configured source. A fresh, unedited book is safe to re-pull; a populated one carries more risk on the nightly re-import.",
-      "sourceOverridesMovedPrefix": "Source overrides moved to",
+      "sourceOverridesMovedPrefix": "Sources are chosen when bringing a book in; after import, edit the overrides in",
       "adminSetup": "Admin → Setup",
       "importedFrom": "Imported {{book}} from {{sources}}.",
       "importedBook": "Imported {{book}}.",
@@ -1742,6 +1725,26 @@
       "aiStarted_other": "{{count}} AI run(s) started.",
       "aiStartedSkipped": "{{started}} AI run(s) started, {{skipped}} already running.",
       "notYetImported": "Not yet imported"
+    },
+    "sheet": {
+      "title": "Bring in {{book}}",
+      "intro": "Choose where notes and questions come from. The project default needs no setup — for most books, just import.",
+      "sourceDefault": "Project default (own repos)",
+      "addRange": "Add range",
+      "existingHeading": "Existing overrides",
+      "existingNote": "Already saved — they apply on import. Edit them in Admin → Setup.",
+      "badRange": "Chapters must be whole numbers, with start ≤ end.",
+      "aquiferTnOnly": "Aquifer is available for notes (tN) only.",
+      "urlRequired": "Paste a Door43 repo URL.",
+      "urlVerifyFailed": "Couldn't verify that Door43 URL. Check the address and try again.",
+      "overlapSheet": "This range overlaps another row for the same resource.",
+      "savingSources": "Saving source overrides…",
+      "confirm": "Bring in {{book}}",
+      "alreadyImportedSources": "{{book}} is already imported, so the source choices were saved but not applied — they only take effect on a full re-import, which discards the current content.",
+      "forceReimport": "Force re-import…",
+      "discardBody": "{{book}} carries local edits: {{tn}} notes, {{tq}} questions, {{twl}} word links, {{verses}} verse edits. Re-importing permanently discards all of them and reloads the book from the selected sources.",
+      "discardIrreversible": "This cannot be undone. Only continue if you are certain nobody needs this work.",
+      "discardConfirm": "Discard {{n}} edits and re-import"
     },
     "pending": {
       "title": "Pending imports",
@@ -2642,7 +2645,7 @@
       "activateButton": "Activate…",
       "publishingTitle": "Publishing",
       "publishingSub": "The nightly export renders the database to TSV + USFM and commits to a Door43 branch. History below is real; the schedule is configuration (api/wrangler.toml crons), not live data — there's no endpoint that lists registered crons.",
-      "latestCommit": "Latest commit: {{book}} · {{resource}} — {{date}}",
+      "latestCommit": "Latest commit: {{target}} — {{date}}",
       "historyUnavailable": "History unavailable",
       "noExportHistory": "No export history yet",
       "exportsRunAutomatically": "Exports run automatically at 05:30 UTC",
@@ -2700,7 +2703,9 @@
       "msgExportStartFailedHttp": "Export start failed (HTTP {{status}})",
       "msgExportStartFailed": "Export start failed",
       "exportHistoryAdminOnly": "Export history is admin-only.",
-      "exportHistoryLoadFailed": "Failed to load export history."
+      "exportHistoryLoadFailed": "Failed to load export history.",
+      "contextSnapshotLabel": "Context pack",
+      "contextSnapshotHint": "The translation-context pack the nightly export builds to guide AI drafting — not a published book."
     }
   },
   "widgets": {
@@ -3008,7 +3013,8 @@
       "trash": "Trash",
       "restoreTooltip": "Bring this note back out of the trash",
       "trashTooltip": "Move this note to the visible, restorable trash",
-      "deleteQuestionTooltip": "Questions are deleted outright — there is no question trash"
+      "deleteQuestionTooltip": "Questions are deleted outright — there is no question trash",
+      "approveTrashedTooltip": "This note is in the trash — restore it before approving."
     },
     "conflictNotice": {
       "rowGone": "That row is no longer in this chapter — the other editor may have deleted it.",
@@ -3022,7 +3028,16 @@
       "approvingProgress": "Approving {{done}} of {{total}}…",
       "adding": "Adding…",
       "badgeNote": "N",
-      "badgeQuestion": "Q"
+      "badgeQuestion": "Q",
+      "filterHeading": "Filter",
+      "statusAll": "All statuses",
+      "statusPending": "Pending",
+      "typeAll": "All types",
+      "statusFilterAriaNotes": "Filter notes by status",
+      "statusFilterAriaQuestions": "Filter questions by status",
+      "typeFilterAria": "Filter notes by type",
+      "noNotesFiltered": "No notes match the current filters.",
+      "noQuestionsFiltered": "No questions match the current filters."
     },
     "grid": {
       "heading": "Questions — dense grid (English authoring)",
@@ -3541,6 +3556,34 @@
         "questions_one": "{{count}} question",
         "questions_other": "{{count}} questions"
       }
+    },
+    "lifecycle": {
+      "title": "Book lifecycle",
+      "notesApproved": "Notes approved",
+      "questionsApproved": "Questions approved",
+      "versesDone": "Verses done",
+      "ofTotal": "{{done}} of {{total}}",
+      "publishButton": "Publish this book",
+      "confirmTitle": "Publish {{book}}?",
+      "confirmBody": "This renders the approved content of {{book}} and opens or updates the Door43 pull requests for each resource. Rows still awaiting review are held back automatically and stay here unpublished.",
+      "confirmRun": "Publish",
+      "queuedMsg": "Publish run queued",
+      "runningLine": "Publishing — {{status}}",
+      "alreadyRunning": "An export run is already in progress. Try again in a few minutes.",
+      "startFailed": "Could not start the publish run",
+      "startFailedHttp": "Could not start the publish run (HTTP {{status}})",
+      "doneMsg": "Publish run finished",
+      "failedMsg": "The publish run did not finish cleanly — see the admin workflow screen.",
+      "timeoutMsg": "The publish run is still going — results will appear here when it finishes.",
+      "latestResults": "Latest publish results",
+      "notPublished": "Not published yet",
+      "historyLoadFailed": "Could not load publish results",
+      "chipHeld": "Held for review",
+      "chipUpToDate": "Up to date",
+      "rowsCommitted_one": "{{count}} row committed",
+      "rowsCommitted_other": "{{count}} rows committed",
+      "heldRows_one": "{{count}} row awaiting review",
+      "heldRows_other": "{{count}} rows awaiting review"
     }
   },
   "messages": {

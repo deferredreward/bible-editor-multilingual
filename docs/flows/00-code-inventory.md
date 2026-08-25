@@ -4,7 +4,7 @@ Purpose: authoritative, exhaustive inventory of every user-facing surface, actio
 
 Taxonomy used throughout:
 - **A** = Stand up an org (setup wizard)
-- **B** = Bring in a book (`#/import`)
+- **B** = Bring in a book (`#/import`, retired → `#/books`; see Bundle B)
 - **C** = Teach the AI our style (`#/preferences/*` + context pack export)
 - **D** = Bulk draft a chapter (AI menu pipelines)
 - **E** = Review & approve drafts (APPROVE / APPROVE ALL)
@@ -104,6 +104,14 @@ Reused by A.2, A.3, B.4, and the Scripture-Lanes "change source" flow (§A.7).
 ---
 
 ## Bundle B — Bring in a book (`#/import`)
+
+> **Retired (2026-08-24).** `ImportWorkspace` and the `#/import` route no longer
+> exist. The workflow below now lives on the Books screen
+> (`web/src/components/flows/BooksScreen.tsx` + `BringInBookDialog.tsx`, PR #305
+> A3); `#/import[/BOOK]` redirects to `#/books[/BOOK]` and the chapter/verse tail
+> is dropped. The rest of this section is kept as the as-built record of what the
+> replacement had to cover.
+
 
 **Entry point:** `App.tsx:75-83` parses `#/import(/:book(/:chapter(/:verse)))`; rendered `App.tsx:544-553`. No role gate at route level (per-book source-override writes are admin-gated, see B.4).
 

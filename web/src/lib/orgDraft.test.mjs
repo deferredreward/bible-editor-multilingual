@@ -166,3 +166,20 @@ test("upstreamSourceForResource: derives the unfoldingWord upstream { org, repo 
     assert.equal(src.repo, UW_UPSTREAM_REPOS[key]);
   }
 });
+
+test("an override org that differs only in CASE is the same org (bare-repo shape)", () => {
+  // DCS resolves org names case-insensitively, so `unfoldingword` typed against
+  // the `unfoldingWord` upstream is NOT a cross-org override and must keep the
+  // legacy bare-string shape rather than persisting a redundant { org, repo }.
+  const ts = build({
+    ...defaultResourceSources(),
+    tn: { mode: "override", org: "unfoldingword", repo: "en_tn" },
+  });
+  assert.equal(ts.repos.tn, "en_tn");
+  // A genuinely different org still emits the explicit ref.
+  const ts2 = build({
+    ...defaultResourceSources(),
+    tn: { mode: "override", org: "BibleAquifer", repo: "ar_tn" },
+  });
+  assert.deepEqual(ts2.repos.tn, { org: "BibleAquifer", repo: "ar_tn" });
+});

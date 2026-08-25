@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../sync/api";
 import type { OrgDraftState } from "./OrgConfigDraftEditor";
 import { LANGUAGES, lookupLanguage, directionForLang } from "../lib/isoLanguages";
+import { sameDcsName } from "../lib/door43Url";
 
 interface LangOption {
   code: string;
@@ -52,9 +53,12 @@ export function OrgIdentityFields({ state }: { state: OrgDraftState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-run detection once the org is known (only once per org).
+  // Auto-run detection once the org is known (only once per org). Org matching
+  // is case-insensitive (DCS resolves org names that way), so re-typing the
+  // workspace org in different case still counts as "the same org" and neither
+  // re-triggers detection nor silently stops it.
   useEffect(() => {
-    if (workspaceOrg && detectedFor.current !== workspaceOrg && state.org === workspaceOrg) {
+    if (workspaceOrg && !sameDcsName(detectedFor.current, workspaceOrg) && sameDcsName(state.org, workspaceOrg)) {
       detectedFor.current = workspaceOrg;
       void state.detect();
     }

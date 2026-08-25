@@ -11,6 +11,7 @@ import {
   type ResourceSourceMap,
   type ResourceKey,
 } from "./orgDraft.ts";
+import { dcsName } from "./door43Url.ts";
 
 // The wizard's step order (configure-only flow). Setup NEVER stages/overwrites
 // scripture text: a populated-lane source change is rejected by the backend
@@ -247,8 +248,12 @@ export function shouldPrefillFromCurrent(
   currentConfigOrg: string | null | undefined,
   detectedOrg: string | null | undefined,
 ): boolean {
-  const a = (currentConfigOrg ?? "").trim();
-  const b = (detectedOrg ?? "").trim();
+  // Case-insensitive: DCS org names are. A config persisted as `bsoj` against a
+  // detected `BSOJ` is the SAME org — reading it as a different one skipped the
+  // prefill, so the wizard proposed a fresh-inference repo set and the apply
+  // tripped the data/export identity guard.
+  const a = dcsName(currentConfigOrg);
+  const b = dcsName(detectedOrg);
   return a !== "" && b !== "" && a === b;
 }
 
@@ -327,13 +332,20 @@ export function laneActiveSourceRepo(ls: LanePublicLike | null | undefined): str
 // org AND it isn't mid-migration. The mltest drift (active owner unfoldingWord,
 // or replacement_required) is NOT reconcilable — Apply must be blocked (not
 // looped), directing the admin to the deliberate Change-Source tool.
+//
+// Owner matching is case-INSENSITIVE, matching DCS/Gitea (which resolves org
+// names case-insensitively) and the backend's own `sameLaneSource`. A lane whose
+// active source was persisted before org names were canonicalized against DCS
+// (e.g. owner `bsoj` while detect() now reports `BSOJ`) IS the same org, and
+// treating it as foreign blocked Setup permanently with no way out.
 export function laneSourceReconcilable(
   ls: LanePublicLike | null | undefined,
   orgBeingConfigured: string,
 ): boolean {
   if (!laneSourceEstablished(ls)) return true;
   if (ls?.replacementRequired) return false;
-  const owner = ls?.config?.source?.owner ?? "";
-  const org = (orgBeingConfigured ?? "").trim();
+  const owner = dcsName(ls?.config?.source?.owner);
+  const org = dcsName(orgBeingConfigured);
   return owner !== "" && org !== "" && owner === org;
 }
+
