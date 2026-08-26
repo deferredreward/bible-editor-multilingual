@@ -12,11 +12,12 @@
 //   anything, fail fast — the bot would 422 no_rtl on an empty guess
 //   and the user deserves a clearer message.
 //
-//   Hebrew mode (regenerate path): after the AI has run once, QUOTE
-//   contains Hebrew. We use that Hebrew as `hebrewGuess` and derive
-//   ULT/UST selections from it via the same alignment lookup that
-//   drives verse highlighting. Lets a translator tweak the issue
-//   type and re-run without retyping English.
+//   Source-language mode (regenerate path): after the AI has run once,
+//   QUOTE contains the original-language quote — Hebrew (OT) or Greek
+//   (NT). We use it as `hebrewGuess` (name kept for the bot contract) and
+//   derive ULT/UST selections from it via the same alignment lookup that
+//   drives verse highlighting. Lets a translator tweak the issue type and
+//   re-run without retyping English.
 //
 // Context: prev/next 5 verses within the current chapter; we don't
 // fetch neighboring chapters here (spec allows shorter arrays at
@@ -26,18 +27,25 @@ import type { ChapterPayload, TnRow, TnQuickRequest, VerseDto } from "../sync/ap
 import {
   extractTargetSelectionText,
   findSourceForTargetText,
-} from "./highlight";
-import { shortSupport } from "./supportReference";
-import { buildVerseIndex } from "./verseRange";
+} from "./highlight.ts";
+import { shortSupport } from "./supportReference.ts";
+import { buildVerseIndex } from "./verseRange.ts";
 
 const CONTEXT_WINDOW = 5;
-const HEBREW_GAP = /[&…]+|\.{3}/g;
-// Hebrew Unicode block. Presence of even one char flips us into
-// "regenerate from existing Hebrew quote" mode.
-const HEBREW_CHAR = /[֐-׿]/;
+const SOURCE_GAP = /[&…]+|\.{3}/g;
+// Original-language Unicode ranges: Hebrew (U+0590–U+05FF), Greek and Coptic
+// (U+0370–U+03FF), and Greek Extended (U+1F00–U+1FFF). Presence of even one
+// such char flips us into "regenerate from the existing source-language quote"
+// mode. Greek matters because NT (UGNT) notes carry Greek quotes — without it
+// every quoted NT note fell through to the English path and aborted as
+// hebrew_not_found (Redo broken for the whole New Testament).
+const SOURCE_LANG_CHAR = /[\u0590-\u05FF\u0370-\u03FF\u1F00-\u1FFF]/;
 
-function hasHebrew(s: string): boolean {
-  return HEBREW_CHAR.test(s);
+// True when the quote is written in an original language (Hebrew or Greek),
+// i.e. this is the "regenerate from the existing source quote" path rather
+// than the "user typed English support text" path.
+export function hasSourceLangQuote(s: string): boolean {
+  return SOURCE_LANG_CHAR.test(s);
 }
 
 function extractPlainText(verseObjects: unknown[]): string {
@@ -93,8 +101,8 @@ function gatherContext(
   return { prev5, next5 };
 }
 
-function cleanHebrew(quote: string): string {
-  return quote.replace(HEBREW_GAP, " ").replace(/\s+/g, " ").trim();
+function cleanSourceQuote(quote: string): string {
+  return quote.replace(SOURCE_GAP, " ").replace(/\s+/g, " ").trim();
 }
 
 export interface BuildTnQuickRequestError {
@@ -146,12 +154,13 @@ export function buildTnQuickRequest(
   let ustSelection: string;
   let hebrewGuess: string;
 
-  if (hasHebrew(rawQuote)) {
-    // Regenerate path: the row already has a Hebrew quote (typically
-    // from a previous AI run). Derive English from the same alignment
-    // that drives highlighting.
+  if (hasSourceLangQuote(rawQuote)) {
+    // Regenerate path: the row already has an original-language quote —
+    // Hebrew (OT) or Greek (NT) — typically from a previous AI run. Derive
+    // English from the same alignment that drives highlighting. `hebrewGuess`
+    // keeps its name for the bot request contract but carries either language.
     const occurrence = row.occurrence ?? 1;
-    hebrewGuess = cleanHebrew(rawQuote);
+    hebrewGuess = cleanSourceQuote(rawQuote);
     ultSelection =
       (ultVo && extractTargetSelectionText(ultVo, rawQuote, occurrence, sourceVo)) ||
       ultText.slice(0, 500);
