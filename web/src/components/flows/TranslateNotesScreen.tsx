@@ -360,20 +360,29 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   // following the top bar's "N unsaved" jump can see exactly which note it
   // meant — the open card's own live diff is covered separately by hasDiff.
   const [draftRowIds, setDraftRowIds] = useState<Set<string>>(() => new Set());
-  useEffect(
-    () =>
-      drafts.subscribe((list) => {
-        const ids = new Set<string>();
-        for (const d of list) {
-          if (d.quarantined) continue;
-          if (d.meta.kind === "row" && d.meta.rowKind === "tn" && d.meta.book === book) {
-            ids.add(d.meta.id);
-          }
+  useEffect(() => {
+    // `active` fences the subscription's initial async snapshot: subscribe()
+    // fires the callback from a listAll() promise that unsubscribe does NOT
+    // cancel, so on a book change the outgoing effect's late snapshot could
+    // otherwise land after the new book's and mark colliding row ids (ids are
+    // only unique per book) Unsaved.
+    let active = true;
+    const unsub = drafts.subscribe((list) => {
+      if (!active) return;
+      const ids = new Set<string>();
+      for (const d of list) {
+        if (d.quarantined) continue;
+        if (d.meta.kind === "row" && d.meta.rowKind === "tn" && d.meta.book === book) {
+          ids.add(d.meta.id);
         }
-        setDraftRowIds(ids);
-      }),
-    [book],
-  );
+      }
+      setDraftRowIds(ids);
+    });
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, [book]);
 
   const queueIds = queue?.key === chapterKey ? queue.ids : null;
   const total = queueIds?.length ?? 0;
@@ -1718,17 +1727,19 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
     const typeSlug = typeSlugOf(r.support_reference);
     const rowPending = editedIds.has(id) || r.translation_state === "edited";
     const rowChip: { kind: FlowStatusKind; label: string } =
-      st === "approved"
-        ? { kind: "approved", label: t("flowTranslate.status.approved") }
-        : st === "skipped"
-          ? { kind: "skip", label: t("flowTranslate.notNeeded") }
-          : id === currentId && hasDiff
-            ? { kind: "edited", label: t("flowTranslate.status.edited") }
-            : id !== currentId && draftRowIds.has(id)
-              ? // Persisted unsaved typing on a card that is NOT open — the one
-                // state the row itself can't otherwise reveal (the open card's
-                // live diff is the hasDiff branch above).
-                { kind: "edited", label: t("flowTranslate.status.unsaved") }
+      // Persisted unsaved typing on a card that is NOT open — checked first,
+      // ahead of even the approved/skipped verdicts: a draft means the visible
+      // text differs from what the server holds, and hiding that behind
+      // "Approved" recreates the very can't-find-my-unsaved-edit gap this chip
+      // exists to close. (The open card's live diff is the hasDiff branch.)
+      id !== currentId && draftRowIds.has(id)
+        ? { kind: "edited", label: t("flowTranslate.status.unsaved") }
+        : st === "approved"
+          ? { kind: "approved", label: t("flowTranslate.status.approved") }
+          : st === "skipped"
+            ? { kind: "skip", label: t("flowTranslate.notNeeded") }
+            : id === currentId && hasDiff
+              ? { kind: "edited", label: t("flowTranslate.status.edited") }
               : rowPending
               ? { kind: "edited", label: t("flowTranslate.status.pending") }
               : r.translation_state === "ai_draft" && isAquiferDraftRow(r)
