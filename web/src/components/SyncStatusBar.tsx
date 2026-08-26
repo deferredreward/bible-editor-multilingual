@@ -98,11 +98,26 @@ function draftPreviewLine(d: DraftRecord): string | null {
   const p = d.payload as Record<string, unknown>;
   const patch =
     typeof p.patch === "object" && p.patch !== null ? (p.patch as Record<string, unknown>) : {};
-  const candidates = [p.plainText, p.target_md, ...Object.values(patch)];
+  // The prose fields first: a row patch can also carry quote (raw Hebrew/Greek
+  // — noise in a one-line preview, same reasoning as the notes screen's own
+  // list preview) or a support_reference URI ahead of the text the translator
+  // actually typed. The generic patch spread stays as the last resort.
+  const candidates = [
+    patch.note,
+    patch.question,
+    patch.response,
+    p.plainText,
+    p.target_md,
+    ...Object.values(patch),
+  ];
   for (const c of candidates) {
     if (typeof c !== "string") continue;
     const line = c.split("\n").find((l) => l.trim())?.trim();
-    if (line) return line.length > 60 ? `${line.slice(0, 60)}…` : line;
+    if (!line) continue;
+    // Code-point slice, not string slice — a cut mid-surrogate-pair would
+    // render a lone � before the ellipsis.
+    const points = [...line];
+    return points.length > 60 ? `${points.slice(0, 60).join("")}…` : line;
   }
   return null;
 }

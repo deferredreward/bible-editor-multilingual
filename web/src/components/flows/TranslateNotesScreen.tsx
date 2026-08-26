@@ -341,7 +341,7 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
     setView(verse != null || rowIdx >= 0 ? "cards" : ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
     setReviewing(false);
     setTypeFilter(null);
-    // `verse` deliberately not a dep beyond this — this effect only builds the
+    // `verse` and `rowId` deliberately not deps beyond this — this effect only builds the
     // queue and seeds its cursor once per mount/chapter change (the
     // `queue?.key === chapterKey` guard above). Re-seeking on a later,
     // same-chapter change to `verse` is handled by the dedicated effect below,
