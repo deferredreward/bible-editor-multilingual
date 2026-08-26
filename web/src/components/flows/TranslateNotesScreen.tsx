@@ -61,7 +61,10 @@
 //   * Approve                  → api.validateNote
 //   * Not needed               → api.trashNote (the existing tn soft-trash,
 //                                relabelled; the row stays recoverable)
-//   * Redo                     → api.tnQuick
+//   * Redo                     → api.tnQuick for verse notes; intro/general
+//                                notes (verse === 0) use the single-row
+//                                translate pipeline instead (classic NoteCard
+//                                "Re-run" already does this — issue #300)
 //
 // Chapter locks (verified in api/src/rows.ts, findings §2.7): tn PATCH is
 // lock-EXEMPT, and /validate + /trash have no lock check at all. So every write
@@ -109,11 +112,13 @@ import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { resolveSourceRef } from "../../lib/sourceRef";
 import { buildVerseIndex } from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
+import { tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
 import { extractTargetSelectionText } from "../../lib/highlight";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { realChapters } from "../../lib/bookSummary";
 import { drafts, rowKey } from "../../sync/drafts";
 import { onOutboxResult, outbox } from "../../sync/outbox";
+import { pipelineStore, getSessionKey } from "../../sync/pipelineStore";
 import {
   api,
   ApiError,
@@ -143,6 +148,10 @@ type CardStatus = "approved" | "skipped";
 // Content width. The mockup is a 430px phone shell; 480 keeps the same one-column
 // reading measure while giving desktop a little more room for long notes.
 const COLUMN_PX = 480;
+
+// Escape hatch for intro Redo: single-row translate rarely needs this long, but
+// the spinner must not stick forever if onComplete never fires.
+const INTRO_REDO_TIMEOUT_MS = 15 * 60 * 1000;
 
 function verseObjectsOf(v: VerseDto | undefined): unknown[] | null {
   if (!v) return null;
@@ -445,6 +454,18 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
 
   const [busy, setBusy] = useState(false);
   const [redoing, setRedoing] = useState(false);
+  // Intro Redo is async (pipeline). Track the exact job + row we started so
+  // onComplete / timeout only settle *this* Redo — not chapter-wide translate
+  // jobs or a Redo on another note/screen (issue #300 review).
+  const pendingIntroRedoRef = useRef<{ jobId: string; rowId: string } | null>(null);
+  // Same pending row id as state, because the inline editor has to LOCK while a
+  // background redraft is in flight: the draft key is per row, and settling a
+  // done job clears that draft — so anything typed in the meantime would be
+  // silently discarded (codex P1 on #300). A ref can't gate a render.
+  const [introRedoRowId, setIntroRedoRowId] = useState<string | null>(null);
+  const redoingRef = useRef(false);
+  redoingRef.current = redoing;
+  const introRedoTimerRef = useRef<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; severity: "info" | "warning" } | null>(null);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
@@ -519,6 +540,12 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   }, [row?.id, book, reloadNonce, settledKey]);
 
   const hasDiff = draftValue !== baselineRef.current;
+
+  // While THIS row has a background redraft in flight the inline editor is
+  // read-only: settling a done job clears the row's draft and refetches, so
+  // anything typed in that window would be thrown away. Only the pending row
+  // locks — a redraft on one note must not block editing another.
+  const editLocked = introRedoRowId != null && row?.id === introRedoRowId;
 
   // Stash every keystroke. Nothing leaves the browser here — the draft store
   // is what makes "no save on blur, no save on unmount" safe.
@@ -863,21 +890,128 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     }
   }
 
-  const redoBlockedReason = (() => {
-    if (aiUnavailable) return aiUnavailable;
-    if (!row) return t("flowTranslate.noNoteSelected");
-    if (!row.support_reference) {
-      return t("flowTranslate.redoNeedsSupportRef");
+  const redoBlockedReason = tnRedoBlockedReason(row, {
+    aiUnavailable,
+    noNoteSelected: t("flowTranslate.noNoteSelected"),
+    needsSupportRef: t("flowTranslate.redoNeedsSupportRef"),
+    needsQuote: t("flowTranslate.redoNeedsQuote"),
+  });
+
+  const clearIntroRedoTimer = useCallback(() => {
+    if (introRedoTimerRef.current != null) {
+      window.clearTimeout(introRedoTimerRef.current);
+      introRedoTimerRef.current = null;
     }
-    if (!row.quote) return t("flowTranslate.redoNeedsQuote");
-    return null;
-  })();
+  }, []);
+
+  useEffect(() => () => clearIntroRedoTimer(), [clearIntroRedoTimer]);
+
+  // Settle the in-flight intro Redo only for the job/row we started. Shared by
+  // onComplete, a post-start already-terminal check, and the stuck-spinner timeout.
+  const settleIntroRedo = useCallback(
+    (
+      job: { job_id: string; state: string; error_message?: string | null },
+      opts?: { timedOut?: boolean },
+    ) => {
+      const pending = pendingIntroRedoRef.current;
+      if (!pending || job.job_id !== pending.jobId) return;
+      if (!redoingRef.current && !opts?.timedOut) return;
+      clearIntroRedoTimer();
+      pendingIntroRedoRef.current = null;
+      setIntroRedoRowId(null);
+      setRedoing(false);
+      if (opts?.timedOut) {
+        say(t("flowTranslate.redoTimedOut"), "warning");
+        return;
+      }
+      if (job.state === "done") {
+        void drafts.clear(rowKey("tn", book, pending.rowId));
+        void refetch().then(() => setReloadNonce((n) => n + 1));
+        setToast(t("flowTranslate.toastNewDraft"));
+      } else {
+        say(
+          t("flowTranslate.redoFailed", {
+            status: job.error_message ?? job.state,
+          }),
+        );
+      }
+    },
+    [book, clearIntroRedoTimer, refetch, say, t],
+  );
+
+  // Intro Redo lands through the pipeline store (async), not a response body.
+  useEffect(
+    () =>
+      pipelineStore.onComplete((job) => {
+        if (job.pipeline_type !== "translate") return;
+        settleIntroRedo(job);
+      }),
+    [settleIntroRedo],
+  );
+
+  // Cancel (and dismiss) drop the job from the store WITHOUT a completion event
+  // — onComplete only fires on done/failed transitions. Without this the
+  //  spinner would sit until the 15-minute timeout (codex P2 on #300).
+  useEffect(
+    () =>
+      pipelineStore.subscribe((list) => {
+        const pending = pendingIntroRedoRef.current;
+        if (!pending) return;
+        const job = list.find((j) => j.job_id === pending.jobId);
+        if (job && job.state !== "cancelled") return;
+        settleIntroRedo({ job_id: pending.jobId, state: "cancelled" });
+      }),
+    [settleIntroRedo],
+  );
 
   async function handleRedo() {
     if (!row || !data || redoing || redoBlockedReason) return;
     setRedoing(true);
     setNotice(null);
+    // Pipeline Redo stays spinning until settleIntroRedo; tn-quick (and any
+    // failure / early return) clears it in finally.
+    let keepSpinningForPipeline = false;
     try {
+      if (tnRedoUsesPipeline(row)) {
+        // Chapter intros (N:intro → verse 0, chapter ≥ 1). Book front:intro
+        // (chapter 0) is out of scope for this flows screen — startChapter
+        // must be positive on the pipeline start route.
+        const started = await pipelineStore.start({
+          pipelineType: "translate",
+          book,
+          startChapter: chapter,
+          endChapter: chapter,
+          sessionKey: getSessionKey(),
+          translate: { rowIds: [row.id] },
+        });
+        pendingIntroRedoRef.current = { jobId: started.jobId, rowId: row.id };
+        setIntroRedoRowId(row.id);
+        // Close the editor: the incoming draft replaces this row's text, and the
+        // lock below keeps it closed until the job settles.
+        setEditing(false);
+        keepSpinningForPipeline = true;
+        clearIntroRedoTimer();
+        introRedoTimerRef.current = window.setTimeout(() => {
+          settleIntroRedo(
+            { job_id: started.jobId, state: "failed", error_message: "timeout" },
+            { timedOut: true },
+          );
+        }, INTRO_REDO_TIMEOUT_MS);
+        // Race: completion may have fired before the ref was set. If the
+        // store already shows a terminal row, settle now instead of spinning.
+        const existing = pipelineStore.get(started.jobId);
+        if (
+          existing &&
+          (existing.state === "done" ||
+            existing.state === "cancelled" ||
+            existing.state === "failed")
+        ) {
+          settleIntroRedo(existing);
+        } else {
+          say(t("flowTranslate.redoStarted"), "info");
+        }
+        return;
+      }
       const built = buildTnQuickRequest(row, data);
       if (!built.ok) {
         say(
@@ -897,6 +1031,9 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       setToast(t("flowTranslate.toastNewDraft"));
       if (res.warnings.length > 0) say(res.warnings.join(" "), "info");
     } catch (err) {
+      clearIntroRedoTimer();
+      pendingIntroRedoRef.current = null;
+      setIntroRedoRowId(null);
       const code =
         err instanceof ApiError && err.body && typeof err.body === "object" && "error" in err.body
           ? String((err.body as { error?: unknown }).error)
@@ -904,6 +1041,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       if (
         code === "tn_quick_disabled" ||
         code === "anthropic_api_key_missing" ||
+        code === "pipeline_api_disabled" ||
         (err instanceof ApiError && err.status === 503)
       ) {
         // Calm and specific: this workspace simply has no AI drafting yet.
@@ -917,7 +1055,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
         );
       }
     } finally {
-      setRedoing(false);
+      if (!keepSpinningForPipeline) setRedoing(false);
     }
   }
 
@@ -1332,6 +1470,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                     // genuine Arabic and LTR for English placeholder text, so LTR
                     // content in an RTL-target project no longer bidi-mangles (#256).
                     // Never an sx `direction` (stylis inverts it under an RTL UI; PR #53).
+                    disabled={editLocked}
                     inputProps={{ dir: "auto" }}
                     sx={{
                       "& .MuiOutlinedInput-root": {
@@ -1367,15 +1506,17 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                     // draft renders RTL while English placeholder text renders LTR
                     // instead of bidi-mangling (see the editor TextField above; #256).
                     dir="auto"
-                    onClick={() => setEditing(true)}
+                    onClick={() => {
+                      if (!editLocked) setEditing(true);
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        setEditing(true);
+                        if (!editLocked) setEditing(true);
                       }
                     }}
                     sx={{
-                      cursor: "text",
+                      cursor: editLocked ? "default" : "text",
                       borderRadius: "6px",
                       paddingBlock: 0.25,
                       paddingInline: 0.5,
