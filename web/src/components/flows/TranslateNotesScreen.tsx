@@ -139,6 +139,11 @@ export interface TranslateNotesScreenProps extends FlowScreenContext {
   // it again on any later change to this prop within the same chapter (see
   // the dedicated seek effect below) — without rebuilding the queue itself.
   verse?: number;
+  // Optional deep-link note id (#/notes/{book}/{ch}/{vs}?row={id}) — the
+  // SyncStatusBar "N unsaved" jump menu sends it so the cursor lands on the
+  // exact note holding the draft, not just the verse's first card. When the id
+  // isn't in the queue (trashed, or a stale link) the verse seek still applies.
+  rowId?: string;
 }
 
 // A card is terminal in exactly two ways — the two verbs that finish it.
@@ -241,7 +246,7 @@ function Lane({ label, text, segments, labelFontFamily, mark }: LaneProps) {
   );
 }
 
-export default function TranslateNotesScreen({ book, chapter, verse }: TranslateNotesScreenProps) {
+export default function TranslateNotesScreen({ book, chapter, verse, rowId }: TranslateNotesScreenProps) {
   const { t } = useTranslation();
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
@@ -315,7 +320,13 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     setQueue({ key: chapterKey, ids: ordered.map((r) => r.id) });
     setStatuses(seed);
     setEditedIds(new Set());
-    if (verse != null) {
+    const rowIdx = rowId != null ? ordered.findIndex((r) => r.id === rowId) : -1;
+    if (rowIdx >= 0) {
+      // An exact note id wins over the verse seek — several notes can share a
+      // verse, and the id names the one the deep link (e.g. the "N unsaved"
+      // jump menu) actually meant.
+      setCursor(rowIdx);
+    } else if (verse != null) {
       // A verse past the last note's verse has no >= match (-1); clamp to the
       // last card instead of falling back to index 0, which would jump to the
       // top of the chapter instead of near where the user asked to look.
@@ -324,10 +335,10 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     } else {
       setCursor(firstOpen < 0 ? 0 : firstOpen);
     }
-    // A deep-linked verse always lands on the card view, even if every note
-    // in the chapter is already approved — "done" would otherwise discard
-    // the requested verse.
-    setView(verse != null ? "cards" : ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
+    // A deep-linked verse or note always lands on the card view, even if every
+    // note in the chapter is already approved — "done" would otherwise discard
+    // the requested target.
+    setView(verse != null || rowIdx >= 0 ? "cards" : ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
     setReviewing(false);
     setTypeFilter(null);
     // `verse` deliberately not a dep beyond this — this effect only builds the
@@ -343,6 +354,26 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     for (const r of data?.tn ?? []) m.set(r.id, r);
     return m;
   }, [data]);
+
+  // Note rows in THIS book holding persisted unsaved typing (IndexedDB drafts
+  // from this browser). Drives the list pane's "Unsaved" chip so a translator
+  // following the top bar's "N unsaved" jump can see exactly which note it
+  // meant — the open card's own live diff is covered separately by hasDiff.
+  const [draftRowIds, setDraftRowIds] = useState<Set<string>>(() => new Set());
+  useEffect(
+    () =>
+      drafts.subscribe((list) => {
+        const ids = new Set<string>();
+        for (const d of list) {
+          if (d.quarantined) continue;
+          if (d.meta.kind === "row" && d.meta.rowKind === "tn" && d.meta.book === book) {
+            ids.add(d.meta.id);
+          }
+        }
+        setDraftRowIds(ids);
+      }),
+    [book],
+  );
 
   const queueIds = queue?.key === chapterKey ? queue.ids : null;
   const total = queueIds?.length ?? 0;
@@ -362,9 +393,11 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   // they do for a manual row click — no queue rebuild, no reset of statuses/
   // editedIds.
   const prevVerseRef = useRef(verse);
+  const prevRowIdRef = useRef(rowId);
   useEffect(() => {
-    if (prevVerseRef.current === verse) return;
+    if (prevVerseRef.current === verse && prevRowIdRef.current === rowId) return;
     prevVerseRef.current = verse;
+    prevRowIdRef.current = rowId;
     if (!queueIds || queueIds.length === 0) return;
     // Honoring a same-chapter verse change always overrides an active type
     // filter (issue #226, gap 2). The requested verse's note may be a different
@@ -374,6 +407,16 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     // setCursor) lets that effect early-return instead of fighting this one, and
     // mirrors what the queue-build path does on a cross-chapter deep link.
     setTypeFilter(null);
+    // Same precedence as the queue-build seek: an exact note id (from the
+    // "N unsaved" jump menu) beats the verse's first-card heuristic.
+    if (rowId != null) {
+      const rowIdx = queueIds.indexOf(rowId);
+      if (rowIdx >= 0) {
+        setCursor(rowIdx);
+        setView("cards");
+        return;
+      }
+    }
     if (verse == null) {
       // The verse segment was dropped (e.g. #/notes/RUT/1/9 → #/notes/RUT/1 via
       // Back/Forward or a manual URL edit). Restore the same no-verse init the
@@ -387,7 +430,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     const seekIdx = queueIds.findIndex((id) => (rowById.get(id)?.verse ?? -Infinity) >= verse);
     setCursor(seekIdx < 0 ? queueIds.length - 1 : seekIdx);
     setView("cards");
-  }, [verse, queueIds, rowById, statuses]);
+  }, [verse, rowId, queueIds, rowById, statuses]);
 
   // ── article-type filter (2026-08-10) ─────────────────────────────────────
   // Distinct types present in THIS chapter's queue, with counts — the filter
@@ -1681,7 +1724,12 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
           ? { kind: "skip", label: t("flowTranslate.notNeeded") }
           : id === currentId && hasDiff
             ? { kind: "edited", label: t("flowTranslate.status.edited") }
-            : rowPending
+            : id !== currentId && draftRowIds.has(id)
+              ? // Persisted unsaved typing on a card that is NOT open — the one
+                // state the row itself can't otherwise reveal (the open card's
+                // live diff is the hasDiff branch above).
+                { kind: "edited", label: t("flowTranslate.status.unsaved") }
+              : rowPending
               ? { kind: "edited", label: t("flowTranslate.status.pending") }
               : r.translation_state === "ai_draft" && isAquiferDraftRow(r)
                 ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }

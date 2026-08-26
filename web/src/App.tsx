@@ -54,7 +54,7 @@ type Location =
   | { view: "team" }
   | { view: "observe" }
   | { view: "verse"; book: string; chapter: number; verse: number }
-  | { view: "notes"; book: string; chapter: number; verse: number | null }
+  | { view: "notes"; book: string; chapter: number; verse: number | null; rowId: string | null }
   | { view: "questions"; book: string; chapter: number }
   | { view: "package"; book: string }
   | { view: "translateWords"; book: string }
@@ -175,13 +175,17 @@ function parseHash(): Location {
   if (rv) {
     return { view: "review", book: rv[1].toUpperCase(), chapter: rv[2] ? parseInt(rv[2], 10) : 1 };
   }
-  const nt = location.hash.match(/^#\/notes\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?$/);
+  // Optional ?row={id} tail: the SyncStatusBar "N unsaved" jump menu uses it to
+  // land on the exact note holding the draft — a verse can carry several notes,
+  // and without the id the screen can only seek to the verse's first card.
+  const nt = location.hash.match(/^#\/notes\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?(?:\?row=([^&]+))?$/);
   if (nt) {
     return {
       view: "notes",
       book: nt[1].toUpperCase(),
       chapter: nt[2] ? parseInt(nt[2], 10) : 1,
       verse: nt[3] ? parseInt(nt[3], 10) : null,
+      rowId: nt[4] ? decodeURIComponent(nt[4]) : null,
     };
   }
   const qn = location.hash.match(/^#\/questions\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
@@ -899,7 +903,7 @@ export function App() {
             ) : loc.view === "observe" ? (
               <ObserveScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "notes" ? (
-              <TranslateNotesScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse ?? undefined} />
+              <TranslateNotesScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse ?? undefined} rowId={loc.rowId ?? undefined} />
             ) : loc.view === "questions" ? (
               <TranslateQuestionsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
             ) : loc.view === "package" ? (

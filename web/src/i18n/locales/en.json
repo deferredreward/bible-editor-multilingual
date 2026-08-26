@@ -1620,6 +1620,7 @@
       "approved": "Approved",
       "edited": "Edited",
       "pending": "Pending",
+      "unsaved": "Unsaved",
       "trashed": "Trashed",
       "ok": "OK",
       "needsAttention": "Needs attention",

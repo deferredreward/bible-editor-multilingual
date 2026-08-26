@@ -89,6 +89,24 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
+// One-line preview of what a draft actually holds, so the "N unsaved" jump
+// menu shows WHAT is unsaved, not only where. Payload shapes vary by editor —
+// verse lanes stash {plainText}, rows {patch:{note|question|...}}, articles and
+// templates {target_md} — so scan the likely fields and take the first real
+// text. Null (no preview) just omits the secondary line.
+function draftPreviewLine(d: DraftRecord): string | null {
+  const p = d.payload as Record<string, unknown>;
+  const patch =
+    typeof p.patch === "object" && p.patch !== null ? (p.patch as Record<string, unknown>) : {};
+  const candidates = [p.plainText, p.target_md, ...Object.values(patch)];
+  for (const c of candidates) {
+    if (typeof c !== "string") continue;
+    const line = c.split("\n").find((l) => l.trim())?.trim();
+    if (line) return line.length > 60 ? `${line.slice(0, 60)}…` : line;
+  }
+  return null;
+}
+
 function formatDraftMeta(m: DraftMeta): string {
   if (m.kind === "verse") return `${m.bibleVersion} ${m.book} ${m.chapter}:${m.verse}`;
   if (m.kind === "article") {
@@ -408,7 +426,10 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRo
       // Row draft — branch by rowKind so tq/twl don't land on Translate Notes.
       if (flowRouting) {
         if (m.rowKind === "tn") {
-          location.hash = `#/notes/${m.book}/${m.chapter}/${m.verse}`;
+          // Carry the exact row id so the notes screen lands on the note that
+          // holds the draft, not just the verse's first card — several notes
+          // can share a verse, and the point of this jump is telling them apart.
+          location.hash = `#/notes/${m.book}/${m.chapter}/${m.verse}?row=${encodeURIComponent(m.id)}`;
         } else if (m.rowKind === "tq") {
           // Questions hash is chapter-scoped (no verse segment in parseHash).
           location.hash = `#/questions/${m.book}/${m.chapter}`;
@@ -494,11 +515,17 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRo
           {activeDrafts.map((d) => (
             <MenuItem key={d.key} onClick={() => navigateToDraft(d.meta)} dense>
               <ListItemText
+                primary={formatDraftMeta(d.meta)}
+                secondary={draftPreviewLine(d)}
                 primaryTypographyProps={{ sx: { fontFamily: "monospace", fontSize: 13 } }}
+                secondaryTypographyProps={{
+                  // The drafted text itself, so the menu answers "which edit is
+                  // this?" without a jump. dir=auto: drafts can be RTL text.
+                  dir: "auto",
+                  sx: { fontSize: 12, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+                }}
                 sx={{ mr: 1 }}
-              >
-                {formatDraftMeta(d.meta)}
-              </ListItemText>
+              />
               <Tooltip title={t("sync.discardThisEdit")}>
                 <IconButton
                   size="small"
