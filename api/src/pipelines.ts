@@ -21,7 +21,7 @@ import type { Env } from "./index";
 import { currentUserId, requireEditor } from "./auth.ts";
 import { importJobOutput } from "./pipelineImport.ts";
 import { getProjectConfig } from "./projectConfig.ts";
-import { buildTranslateOptions } from "./translateOptions.ts";
+import { buildTranslateOptions, normalizeRowIds } from "./translateOptions.ts";
 import { getAiProviderConfig, resolveDispatchAi, scrubSecret } from "./aiProvider.ts";
 import { decryptApiKey } from "./aiKeyCrypto.ts";
 import { applyContextRef } from "./assistedContextRef.ts";
@@ -1255,6 +1255,30 @@ pipelines.post("/start", requireEditor, async (c) => {
   // predating resourceType default to 'tn' via COALESCE.
   const dedupResourceType =
     parsed.data.pipelineType === "translate" ? (rt ?? "tn") : null;
+  // A translate job's identity ALSO includes its row scope (#316). A row-scoped
+  // translate ("re-run AI on THIS note", translate.rowIds) must not dedup against
+  // a different row's in-flight job in the same chapter — otherwise row B is
+  // answered `already_running` with row A's id and never runs. The normalized
+  // (sorted+deduped) rowIds set is persisted in options_json by
+  // buildTranslateOptions, and `json_extract($.rowIds)` re-serializes it to the
+  // same text JSON.stringify produces for these short ids, so we compare as text.
+  // A chapter-wide job has no $.rowIds → COALESCE to the 'ALL' sentinel, which
+  // only matches another chapter-wide request. Result: same row → dup; different
+  // rows → distinct jobs; chapter-wide and row-scoped never dedup against each
+  // other. Non-translate jobs bind null → clause vacuous.
+  const dedupNormRowIds =
+    parsed.data.pipelineType === "translate"
+      ? normalizeRowIds(parsed.data.translate?.rowIds)
+      : undefined;
+  const dedupRowScope =
+    parsed.data.pipelineType === "translate"
+      ? // row-scoped → the JSON array text json_extract($.rowIds) yields;
+        // chapter-wide → the bare 'ALL' sentinel COALESCE substitutes for a
+        // missing $.rowIds. (Must NOT be JSON.stringify("ALL") — that is quoted.)
+        dedupNormRowIds
+        ? JSON.stringify(dedupNormRowIds)
+        : "ALL"
+      : null;
   const dup = await c.env.DB.prepare(
     `SELECT j.job_id, j.user_id, j.pipeline_type, j.book, j.start_chapter,
             j.end_chapter, j.state, j.current_skill, j.current_status,
@@ -1264,12 +1288,13 @@ pipelines.post("/start", requireEditor, async (c) => {
       WHERE j.book = ?1 AND j.start_chapter = ?2 AND j.end_chapter = ?3
         AND j.pipeline_type = ?4
         AND (?5 IS NULL OR COALESCE(json_extract(j.options_json, '$.resourceType'), 'tn') = ?5)
+        AND (?6 IS NULL OR COALESCE(json_extract(j.options_json, '$.rowIds'), 'ALL') = ?6)
         AND j.state IN ('queued', 'dispatching', 'running',
                         'paused_for_outage', 'paused_for_usage_limit')
       ORDER BY j.created_at ASC
       LIMIT 1`,
   )
-    .bind(book, startChapter, endChapter, parsed.data.pipelineType, dedupResourceType)
+    .bind(book, startChapter, endChapter, parsed.data.pipelineType, dedupResourceType, dedupRowScope)
     .first<PublicJobSummary & { user_id: number }>();
   if (dup) {
     if (dup.user_id === userId) {
