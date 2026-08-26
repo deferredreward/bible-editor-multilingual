@@ -1493,7 +1493,11 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
               const targetDraftCard = (
             /* target draft — the centrepiece */
             <Box ref={editorContainerRef} sx={cardSx}>
-              <Typography component="p" sx={labelSx}>
+              {/* component="div", not "p": this header nests a flex <Box> (the
+                  type pill + FlowStatusChip, an MUI Chip = <div>), and a <div>
+                  is invalid inside a <p> (validateDOMNesting warning; #336).
+                  The sibling <span>-only headers stay as-is. */}
+              <Typography component="div" sx={labelSx}>
                 <Box
                   component="span"
                   sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: INSPIRE }}
