@@ -33,8 +33,30 @@ import { isInFlowMarker, isTsMilestone, liftMarkerText, SECTION_HEADER_TAGS } fr
 // 4:10's הָאֶ֧בֶן), so every quote↔token EQUALITY check strips them from
 // BOTH sides. Matching only: stored text, rendered text, and HighlightKey
 // sets keep the raw joiners.
+// Sentence / quotation punctuation that clings to the ENDS of a quote token --
+// most commonly a comma, present in ~12% of tN quotes (516/4,352 on dev) -- but
+// absent from the aligned \w text, so a comma-bearing Greek token never equals
+// its bare \w counterpart. We trim this class from the leading/trailing edges of
+// BOTH sides of every equality check (quote tokens AND \w / milestone-content
+// text all flow through matchNorm), so the comparison canonicalizes
+// symmetrically. Deliberately:
+//   - EDGE ONLY: interior characters are untouched, so nothing inside a word is
+//     altered and no word is split.
+//   - EXCLUDES Hebrew separators: maqqef (U+05BE) is a token separator
+//     (quoteGroups splits on it) and sof-pasuq (U+05C3) is verse-final source
+//     punctuation; neither is in this class, and nfc()/combining-mark order is
+//     untouched.
+//   - EXCLUDES gap markers (&, U+2026, ...): quoteGroups splits those out at the
+//     GROUP level (see GAP) before any token reaches matchNorm, so they are
+//     never eaten here.
+const EDGE_PUNCT_CLASS =
+  "\\s,.;:!?()\\[\\]{}\"'\\u00B7\\u0387\\u00AB\\u00BB\\u201C\\u201D\\u2018\\u2019\\u060C\\u061B\\u061F";
+const EDGE_PUNCT = new RegExp(`^[${EDGE_PUNCT_CLASS}]+|[${EDGE_PUNCT_CLASS}]+$`, "gu");
+
 export function matchNorm(s: string): string {
-  return nfc(s).replace(/[\u2060\u200d]/g, "");
+  return nfc(s)
+    .replace(/[\u2060\u200d]/g, "")
+    .replace(EDGE_PUNCT, "");
 }
 
 type WordToken = { text: string; occurrence: number };

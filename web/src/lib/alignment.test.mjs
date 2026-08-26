@@ -30,7 +30,12 @@ import {
   dropDuplicateSourceMilestones,
 } from "./alignment.ts";
 import { extractPlainText } from "./usfm.ts";
-import { findTargetHighlights, findSourceHighlights } from "./highlight.ts";
+import {
+  findTargetHighlights,
+  findSourceHighlights,
+  matchSourceTokens,
+  matchNorm,
+} from "./highlight.ts";
 import { buildQuoteFromSelection, collectTargetTokens, tokenKey } from "./quoteBuilder.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -3335,6 +3340,87 @@ const srcWordContents = (st) => st.groups.flatMap((g) => g.source).map((s) => ({
     Array.isArray(json.chapters[ch][v].verseObjects),
     "re-serialized content slots back into the verse envelope",
   );
+}
+
+// ─── Case: punctuation inside a Greek (UGNT) quote must still match (#322) ──
+//
+// Confirmed live on MRK 13:2 note `xdhj` (figs-activepassive): the tN quote
+// carries a comma after `λίθον` (present upstream in en_tn). Before the
+// matchNorm edge-punctuation trim, the quote token `λίθον,` was compared
+// verbatim against the UGNT `\w` text `λίθον` and never matched, so
+// `matchSourceTokens` returned [] and the highlighter fell to a scattered
+// degradation set. There was zero Greek/UGNT quote-matching coverage before
+// this case (only Hebrew).
+{
+  console.log("\n[Case] Greek quote punctuation — MRK 13:2 comma (#322)");
+  // UGNT source verse (the words of the issue quote). οὐ and μὴ repeat, so
+  // they carry occurrence 1 and 2; the rest are occurrence 1.
+  const w = (text, occurrence = 1, occurrences = 1) => ({
+    type: "word",
+    tag: "w",
+    text,
+    occurrence,
+    occurrences,
+  });
+  const sp = { type: "text", text: " " };
+  const ugnt = [
+    w("οὐ", 1, 2), sp,
+    w("μὴ", 1, 2), sp,
+    w("ἀφεθῇ"), sp,
+    w("ὧδε"), sp,
+    w("λίθος"), sp,
+    w("ἐπὶ"), sp,
+    w("λίθον"), sp,
+    w("ὃς"), sp,
+    w("οὐ", 2, 2), sp,
+    w("μὴ", 2, 2), sp,
+    w("καταλυθῇ"),
+  ];
+
+  // The real quote, WITH the upstream comma on λίθον.
+  const quoteWithComma = "οὐ μὴ ἀφεθῇ ὧδε λίθος ἐπὶ λίθον, ὃς οὐ μὴ καταλυθῇ";
+  const matched = matchSourceTokens(ugnt, quoteWithComma, 1);
+  assert(
+    matched.length === 11,
+    `MRK 13:2: comma-bearing Greek quote matches all 11 source tokens (got ${matched.length}: ${matched.map((t) => t.text).join(" ")})`,
+  );
+  assert(
+    matched.some((t) => t.text === "λίθον"),
+    "MRK 13:2: the comma-bearing word λίθον is among the matched tokens",
+  );
+
+  // Control: the same quote WITHOUT the comma matches identically — the trim
+  // makes the punctuated form behave like the clean form, nothing more.
+  const quoteNoComma = "οὐ μὴ ἀφεθῇ ὧδε λίθος ἐπὶ λίθον ὃς οὐ μὴ καταλυθῇ";
+  assert(
+    matchSourceTokens(ugnt, quoteNoComma, 1).length === 11,
+    "MRK 13:2: comma-free quote still matches all 11 tokens (unchanged)",
+  );
+
+  // findSourceHighlights (UGNT highlighter) now lights the comma word too.
+  const hl = findSourceHighlights(ugnt, "λίθον,", 1);
+  assert(hl.has("λίθον|1"), `UGNT: quote "λίθον," highlights the λίθον token (got ${[...hl].join(",")})`);
+}
+
+// ─── Case: matchNorm edge-trim is edge-only and language-safe (#322) ────────
+{
+  console.log("\n[Case] matchNorm punctuation trim boundaries (#322)");
+  // Trailing / leading / bracketing sentence punctuation is canonicalized away
+  // so both sides of an equality compare equal.
+  assert(matchNorm("λίθον,") === matchNorm("λίθον"), "trailing comma trimmed (Greek)");
+  assert(matchNorm("«λόγος»") === matchNorm("λόγος"), "guillemets trimmed both ends");
+  assert(matchNorm("(word).") === matchNorm("word"), "parens + period trimmed");
+  assert(matchNorm("λίθον").length > 0, "a real word does not vanish");
+
+  // EDGE ONLY: interior punctuation is preserved (no word is split or altered
+  // internally).
+  assert(matchNorm("a.b") === "a.b", "interior period preserved (edge-only)");
+
+  // Hebrew maqqef (־, U+05BE) is a token SEPARATOR handled by quoteGroups and
+  // must NOT be stripped by matchNorm — a comma on the end is, the maqqef in
+  // the middle is not.
+  assert(matchNorm("כָּל־הָאָרֶץ,").includes("־"), "interior maqqef survives while trailing comma is trimmed");
+  assert(matchNorm("דָּבָר,") === matchNorm("דָּבָר"), "trailing comma trimmed (Hebrew), letters kept");
 }
 
 if (failed > 0) {
