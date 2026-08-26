@@ -458,6 +458,11 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   // onComplete / timeout only settle *this* Redo — not chapter-wide translate
   // jobs or a Redo on another note/screen (issue #300 review).
   const pendingIntroRedoRef = useRef<{ jobId: string; rowId: string } | null>(null);
+  // Same pending row id as state, because the inline editor has to LOCK while a
+  // background redraft is in flight: the draft key is per row, and settling a
+  // done job clears that draft — so anything typed in the meantime would be
+  // silently discarded (codex P1 on #300). A ref can't gate a render.
+  const [introRedoRowId, setIntroRedoRowId] = useState<string | null>(null);
   const redoingRef = useRef(false);
   redoingRef.current = redoing;
   const introRedoTimerRef = useRef<number | null>(null);
@@ -535,6 +540,12 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   }, [row?.id, book, reloadNonce, settledKey]);
 
   const hasDiff = draftValue !== baselineRef.current;
+
+  // While THIS row has a background redraft in flight the inline editor is
+  // read-only: settling a done job clears the row's draft and refetches, so
+  // anything typed in that window would be thrown away. Only the pending row
+  // locks — a redraft on one note must not block editing another.
+  const editLocked = introRedoRowId != null && row?.id === introRedoRowId;
 
   // Stash every keystroke. Nothing leaves the browser here — the draft store
   // is what makes "no save on blur, no save on unmount" safe.
@@ -907,6 +918,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       if (!redoingRef.current && !opts?.timedOut) return;
       clearIntroRedoTimer();
       pendingIntroRedoRef.current = null;
+      setIntroRedoRowId(null);
       setRedoing(false);
       if (opts?.timedOut) {
         say(t("flowTranslate.redoTimedOut"), "warning");
@@ -937,6 +949,21 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     [settleIntroRedo],
   );
 
+  // Cancel (and dismiss) drop the job from the store WITHOUT a completion event
+  // — onComplete only fires on done/failed transitions. Without this the
+  //  spinner would sit until the 15-minute timeout (codex P2 on #300).
+  useEffect(
+    () =>
+      pipelineStore.subscribe((list) => {
+        const pending = pendingIntroRedoRef.current;
+        if (!pending) return;
+        const job = list.find((j) => j.job_id === pending.jobId);
+        if (job && job.state !== "cancelled") return;
+        settleIntroRedo({ job_id: pending.jobId, state: "cancelled" });
+      }),
+    [settleIntroRedo],
+  );
+
   async function handleRedo() {
     if (!row || !data || redoing || redoBlockedReason) return;
     setRedoing(true);
@@ -958,6 +985,10 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
           translate: { rowIds: [row.id] },
         });
         pendingIntroRedoRef.current = { jobId: started.jobId, rowId: row.id };
+        setIntroRedoRowId(row.id);
+        // Close the editor: the incoming draft replaces this row's text, and the
+        // lock below keeps it closed until the job settles.
+        setEditing(false);
         keepSpinningForPipeline = true;
         clearIntroRedoTimer();
         introRedoTimerRef.current = window.setTimeout(() => {
@@ -1002,6 +1033,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     } catch (err) {
       clearIntroRedoTimer();
       pendingIntroRedoRef.current = null;
+      setIntroRedoRowId(null);
       const code =
         err instanceof ApiError && err.body && typeof err.body === "object" && "error" in err.body
           ? String((err.body as { error?: unknown }).error)
@@ -1438,6 +1470,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                     // genuine Arabic and LTR for English placeholder text, so LTR
                     // content in an RTL-target project no longer bidi-mangles (#256).
                     // Never an sx `direction` (stylis inverts it under an RTL UI; PR #53).
+                    disabled={editLocked}
                     inputProps={{ dir: "auto" }}
                     sx={{
                       "& .MuiOutlinedInput-root": {
@@ -1473,15 +1506,17 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                     // draft renders RTL while English placeholder text renders LTR
                     // instead of bidi-mangling (see the editor TextField above; #256).
                     dir="auto"
-                    onClick={() => setEditing(true)}
+                    onClick={() => {
+                      if (!editLocked) setEditing(true);
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        setEditing(true);
+                        if (!editLocked) setEditing(true);
                       }
                     }}
                     sx={{
-                      cursor: "text",
+                      cursor: editLocked ? "default" : "text",
                       borderRadius: "6px",
                       paddingBlock: 0.25,
                       paddingInline: 0.5,
