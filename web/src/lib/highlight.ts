@@ -18,7 +18,8 @@
 //
 // Hebrew note: TN/TQ quote text typically arrives NFC-normalized while UHB
 // stores legacy combining-mark order (see lib/hebrew.ts), so all source-
-// text equality checks go through `matchNorm()` (NFC + joiner stripping).
+// text equality checks go through `matchNorm()` (NFC + joiner stripping +
+// edge-punctuation stripping).
 // The Set keys still carry the RAW verseObjects text — the consumer
 // (HebrewLine, renderHighlightedHTML) reads from the same tree, so raw
 // matches raw with no further work.
@@ -33,8 +34,46 @@ import { isInFlowMarker, isTsMilestone, liftMarkerText, SECTION_HEADER_TAGS } fr
 // 4:10's הָאֶ֧בֶן), so every quote↔token EQUALITY check strips them from
 // BOTH sides. Matching only: stored text, rendered text, and HighlightKey
 // sets keep the raw joiners.
+// Punctuation that sits at the EDGE of a word in running text without being
+// part of the word. Upstream en_tn quotes are cut straight out of the verse, so
+// they carry the sentence punctuation the OL `\w` token does not: MRK 13:2's
+// figs-activepassive quote ends `\u2026 \u1f10\u03c0\u1f76 \u03bb\u03af\u03b8\u03bf\u03bd, \u1f43\u03c2 \u2026` while the UGNT holds a bare
+// `\u03bb\u03af\u03b8\u03bf\u03bd` with the comma in a sibling text node. 516 of 4,352 seeded quoted
+// notes (~12%) carry a comma, so this is stripped from BOTH sides of every
+// quote\u2194token equality (issue #322).
+//
+// Deliberately EXCLUDED: `&`, `\u2026` and `...` (gap markers \u2014 quoteGroups splits
+// on them BEFORE any stripping, so a gap can never be eaten), `\u05be` maqqef (a
+// token separator, same place), and every letter / combining mark (Hebrew
+// pointing and Greek diacritics are part of the word) \u2014 with ONE letter-category
+// exception: U+02BC MODIFIER LETTER APOSTROPHE is included because UGNT elision
+// (\u1f00\u03bb\u03bb\u02bc, \u03b4\u03b9\u02bc) drifts between apostrophe characters across corpora, and no real
+// Greek word collapses onto another without it.
+//
+// Greek's own sentence punctuation (U+0387 ano teleia, U+037E question mark) is
+// handled WITHOUT being listed: both have singleton canonical decompositions to
+// U+00B7 / `;`, and matchNorm runs nfc() BEFORE the strip. Keep that order.
+//
+// String.raw means EDGE_PUNCT's literal value is regex SOURCE (backslash-u
+// escape text), only meaningful once compiled by `new RegExp` \u2014 never use it
+// with .includes()/.split(). The two compiled regexes are deliberately
+// non-global: a shared `g` regex carries lastIndex state, so a future
+// `.test()` against it would alternate true/false.
+const EDGE_PUNCT = String.raw`,;:!?.\u00b7\u05c3\u05c0()\[\]{}\u00ab\u00bb\u2039\u203a"'\u201c\u201d\u201e\u201f\u2018\u2019\u201a\u02bc`;
+const EDGE_PUNCT_LEAD = new RegExp(`^[${EDGE_PUNCT}]+`, "u");
+const EDGE_PUNCT_TRAIL = new RegExp(`[${EDGE_PUNCT}]+$`, "u");
+
+function stripEdgePunct(s: string): string {
+  return s.replace(EDGE_PUNCT_LEAD, "").replace(EDGE_PUNCT_TRAIL, "");
+}
+
+// Contract: matchNorm is for ORIGINAL-LANGUAGE text only (quote words, OL `\w`
+// text, `\zaln-s` x-content). OL tokens never carry edge punctuation (measured
+// zero across the sample corpora), so the strip is an equality-widening no-op
+// there. GL `\w` text DOES carry it (`\u201cWhat` vs `What`), so keying GL tokens
+// through matchNorm/tokenKey would silently collide occurrences \u2014 don't.
 export function matchNorm(s: string): string {
-  return nfc(s).replace(/[\u2060\u200d]/g, "");
+  return stripEdgePunct(nfc(s).replace(/[\u2060\u200d]/g, ""));
 }
 
 type WordToken = { text: string; occurrence: number };
@@ -58,7 +97,14 @@ function quoteGroups(quote: string): string[][] {
       segment
         .split(/[\s־]+/)
         .map((w) => w.trim())
-        .filter((w) => w.length > 0),
+        // Tokens keep their punctuation here (matchNorm strips it on both sides
+        // downstream), but a token that would normalize to "" — a stray `.`
+        // left over from a 4-dot gap, an orphan `»`, a bare joiner+comma —
+        // would then match every text-less token, so drop it. Filter with the
+        // FULL normalization, not just the punctuation strip: `⁠,`
+        // survives stripEdgePunct (the joiner remains) yet matchNorm folds it
+        // to "".
+        .filter((w) => matchNorm(w).length > 0),
     )
     .filter((g) => g.length > 0);
 }
