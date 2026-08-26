@@ -85,6 +85,7 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
+import SaveIcon from "@mui/icons-material/Save";
 
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
@@ -150,6 +151,8 @@ interface QaPairProps {
   chipLabel: string;
   hl: string;
   inspire: string;
+  // Disables the Save button while a save/approve is in flight (parent's `busy`).
+  saving: boolean;
   onChange: (value: string) => void;
   onStartEdit: () => void;
   onDone: () => void;
@@ -180,6 +183,7 @@ function QaPair({
   chipLabel,
   hl,
   inspire,
+  saving,
   onChange,
   onStartEdit,
   onDone,
@@ -297,10 +301,12 @@ function QaPair({
             />
             <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
               <Button
+                disabled={saving}
                 onClick={onDone}
+                startIcon={<SaveIcon />}
                 sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
               >
-                {t("flowQuestions.done")}
+                {t("flowTranslate.save")}
               </Button>
             </Stack>
           </>
@@ -762,7 +768,48 @@ export default function TranslateQuestionsScreen({
     }
     baselineRef.current = { ...values };
     setEditedIds((prev) => new Set(prev).add(target.id));
+    // Mirror the server's demotion locally so the row object stays consistent
+    // with what a refetch will report: a content edit demotes an AI draft or a
+    // previously-validated target row to 'edited' (see the CASE in
+    // api/src/rows.ts — English-root rows with a NULL state are left untouched,
+    // so we must not invent an 'edited' state for them). The Pending chip itself
+    // is driven by editedIds too, so it shows this session regardless; this keeps
+    // translation_state honest for genuine target rows across a refetch.
+    if (target.translation_state === "ai_draft" || target.translation_state === "validated") {
+      applyLocalRowPatch("tq", target.id, { translation_state: "edited" });
+    }
+    // Saving without approving demotes the row, so drop any prior Approved status.
+    setStatuses((prev) => {
+      if (prev[target.id] === undefined) return prev;
+      const next = { ...prev };
+      delete next[target.id];
+      return next;
+    });
     return true;
+  }
+
+  // "Save" persists the edit to the server without approving it. Editing a
+  // question is not the same as finishing it: a translator can save progress and
+  // approve later, and the row then carries the Pending chip. This replaced
+  // "Done", which only closed the editor and never touched the server — a close
+  // that looked like a save but wasn't. saveDraft persists every dirty field, so
+  // one Save from either field commits both.
+  async function handleSave() {
+    if (!row || busy) return;
+    if (!hasDiff) {
+      setEditingField(null);
+      return;
+    }
+    setBusy(true);
+    setNotice(null);
+    try {
+      if (await saveDraft(row)) {
+        setEditingField(null);
+        setToast(t("flowTranslate.toastSaved"));
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleApprove() {
@@ -830,8 +877,14 @@ export default function TranslateQuestionsScreen({
   function chipFor(id: string, rowForChip: TqRow | null, dirty: boolean) {
     const s = statuses[id];
     if (s === "approved") return { kind: "approved" as FlowStatusKind, label: t("translation.stateApproved") };
-    if (dirty || rowForChip?.translation_state === "edited" || editedIds.has(id)) {
+    // Live, unsaved typing in the open editor reads as "Edited"; a saved-but-not-
+    // yet-approved row (edited this session, or loaded already 'edited') reads as
+    // "Pending" so it's clear which rows still need approval.
+    if (dirty) {
       return { kind: "edited" as FlowStatusKind, label: t("translation.stateEdited") };
+    }
+    if (editedIds.has(id) || rowForChip?.translation_state === "edited") {
+      return { kind: "edited" as FlowStatusKind, label: t("flowTranslate.status.pending") };
     }
     // Parity with the notes screen: an untouched Aquifer import (ai_draft with
     // draft_meta_json.source==="aquifer") is provenance, not an AI-bot draft. tq
@@ -1006,7 +1059,7 @@ export default function TranslateQuestionsScreen({
               "&:hover": { bgcolor: ok.main, filter: "brightness(0.95)" },
             }}
           >
-            {t("common.approve")}
+            {t("flowTranslate.saveApprove")}
           </Button>
         </Stack>
       </Box>
@@ -1235,14 +1288,10 @@ export default function TranslateQuestionsScreen({
                 chipLabel={chip.label}
                 hl={HL}
                 inspire={INSPIRE}
+                saving={busy}
                 onChange={(v) => setValues((prev) => ({ ...prev, question: v }))}
                 onStartEdit={() => setEditingField("question")}
-                onDone={() => {
-                  setEditingField(null);
-                  if (values.question !== baselineRef.current.question) {
-                    setToast(t("flowQuestions.draftUpdated"));
-                  }
-                }}
+                onDone={() => void handleSave()}
               />
             </Box>
 
@@ -1269,14 +1318,10 @@ export default function TranslateQuestionsScreen({
                 chipLabel={chip.label}
                 hl={HL}
                 inspire={INSPIRE}
+                saving={busy}
                 onChange={(v) => setValues((prev) => ({ ...prev, response: v }))}
                 onStartEdit={() => setEditingField("response")}
-                onDone={() => {
-                  setEditingField(null);
-                  if (values.response !== baselineRef.current.response) {
-                    setToast(t("flowQuestions.draftUpdated"));
-                  }
-                }}
+                onDone={() => void handleSave()}
               />
             </Box>
 
