@@ -1536,7 +1536,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                   />
                   <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
                     <Button
-                      disabled={busy}
+                      disabled={busy || redoing}
                       onClick={() => void handleSave()}
                       startIcon={<SaveIcon />}
                       sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
