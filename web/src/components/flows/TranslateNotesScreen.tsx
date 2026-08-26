@@ -113,7 +113,7 @@ import { resolveSourceRef } from "../../lib/sourceRef";
 import { buildVerseIndex } from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
 import { tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
-import { extractTargetSelectionText } from "../../lib/highlight";
+import { flowLaneSegments, type FlowSegment } from "../../lib/flowHighlight";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { realChapters } from "../../lib/bookSummary";
 import { drafts, rowKey } from "../../sync/drafts";
@@ -177,10 +177,12 @@ function typeLabelOf(slug: string): string {
 
 interface LaneProps {
   label: string;
+  // Gates the "no text" empty state only — the rendered body comes from
+  // `segments` (which already carries this text, marked up per token).
   text: string | null;
-  selection: string;
+  segments: FlowSegment[];
   labelFontFamily: string | undefined;
-  mark: (text: string | null, selection: string) => ReactNode;
+  mark: (segments: FlowSegment[]) => ReactNode;
 }
 
 // Read-only scripture reference lane (ULT/UST) above a note card, with the
@@ -193,7 +195,7 @@ interface LaneProps {
 // `theme.typography.fontFamily` and the `mark` highlighter are now explicit
 // props instead of closed-over values, following the QaPair hoist pattern in
 // TranslateQuestionsScreen.tsx.
-function Lane({ label, text, selection, labelFontFamily, mark }: LaneProps) {
+function Lane({ label, text, segments, labelFontFamily, mark }: LaneProps) {
   const { t } = useTranslation();
   return (
     <Box
@@ -227,7 +229,7 @@ function Lane({ label, text, selection, labelFontFamily, mark }: LaneProps) {
         // trailing punctuation on the correct side, English stays LTR. The
         // label above keeps the container's direction.
         <Box component="span" dir="auto" sx={{ display: "block", textAlign: "start" }}>
-          {mark(text, selection)}
+          {mark(segments)}
         </Box>
       ) : (
         <Box component="em" sx={{ color: "text.secondary", fontSize: "0.875rem" }}>
@@ -675,36 +677,39 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   // The mockup highlights the note's phrase inside both scripture lanes. The
   // phrase is derived from the row's original-language quote through the same
   // alignment lookup the classic editor highlights with — never guessed.
+  //
+  // Marking is PER TOKEN (issue #323), like the classic surfaces: the lane text
+  // is rendered from the verse tree and every `\w` token whose
+  // `text|occurrence` key is highlighted gets its own <mark>. The old
+  // contiguous-substring search over plain_text highlighted nothing when the
+  // matched words scattered, and hit the wrong instance for occurrence > 1.
   const rowQuote = row?.quote ?? null;
   const rowOccurrence = row?.occurrence ?? 1;
-  const ultSelection = useMemo(() => {
-    const vo = verseObjectsOf(ultVerse);
-    if (!rowQuote || !vo) return "";
-    return extractTargetSelectionText(vo, rowQuote, rowOccurrence, sourceVo ?? undefined);
-  }, [ultVerse, rowQuote, rowOccurrence, sourceVo]);
-  const ustSelection = useMemo(() => {
-    const vo = verseObjectsOf(ustVerse);
-    if (!rowQuote || !vo) return "";
-    return extractTargetSelectionText(vo, rowQuote, rowOccurrence, sourceVo ?? undefined);
-  }, [ustVerse, rowQuote, rowOccurrence, sourceVo]);
+  const ultSegments = useMemo(
+    () => flowLaneSegments(verseObjectsOf(ultVerse), ultText, rowQuote, rowOccurrence, sourceVo),
+    [ultVerse, ultText, rowQuote, rowOccurrence, sourceVo],
+  );
+  const ustSegments = useMemo(
+    () => flowLaneSegments(verseObjectsOf(ustVerse), ustText, rowQuote, rowOccurrence, sourceVo),
+    [ustVerse, ustText, rowQuote, rowOccurrence, sourceVo],
+  );
 
   const mark = useCallback(
-    (text: string | null, selection: string): ReactNode => {
-      if (!text) return null;
-      if (!selection) return text;
-      const idx = text.indexOf(selection);
-      if (idx < 0) return text;
-      return (
-        <>
-          {text.slice(0, idx)}
+    (segments: FlowSegment[]): ReactNode => {
+      if (segments.length === 0) return null;
+      // Plain strings need no key; only the <mark> elements are keyed.
+      return segments.map((seg, i) =>
+        seg.marked ? (
           <Box
+            key={i}
             component="mark"
             sx={{ background: HL, color: "inherit", borderRadius: "3px", paddingInline: "2px" }}
           >
-            {selection}
+            {seg.text}
           </Box>
-          {text.slice(idx + selection.length)}
-        </>
+        ) : (
+          seg.text
+        ),
       );
     },
     [HL],
@@ -1389,14 +1394,14 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
               <Lane
                 label={litLabel}
                 text={ultText}
-                selection={ultSelection}
+                segments={ultSegments}
                 labelFontFamily={theme.typography.fontFamily}
                 mark={mark}
               />
               <Lane
                 label={simLabel}
                 text={ustText}
-                selection={ustSelection}
+                segments={ustSegments}
                 labelFontFamily={theme.typography.fontFamily}
                 mark={mark}
               />
