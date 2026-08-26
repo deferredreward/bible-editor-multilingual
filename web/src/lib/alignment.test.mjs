@@ -30,7 +30,12 @@ import {
   dropDuplicateSourceMilestones,
 } from "./alignment.ts";
 import { extractPlainText } from "./usfm.ts";
-import { findTargetHighlights, findSourceHighlights } from "./highlight.ts";
+import {
+  findTargetHighlights,
+  findSourceHighlights,
+  matchSourceTokens,
+  extractTargetSelectionText,
+} from "./highlight.ts";
 import { buildQuoteFromSelection, collectTargetTokens, tokenKey } from "./quoteBuilder.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -3334,6 +3339,178 @@ const srcWordContents = (st) => st.groups.flatMap((g) => g.source).map((s) => ({
   assert(
     Array.isArray(json.chapters[ch][v].verseObjects),
     "re-serialized content slots back into the verse envelope",
+  );
+}
+
+// ─── Case 34: MRK 13:2 — punctuation inside a Greek quote (issue #322) ────
+//
+// Upstream en_tn quotes are cut straight out of the verse, so they carry the
+// sentence punctuation the UGNT `\w` token does not — 516 of 4,352 seeded
+// quoted notes (~12%) hold a comma. MRK 13:2's figs-activepassive quote ends
+// `… ἐπὶ λίθον, ὃς …` while the UGNT `\w` is a bare `λίθον` (the comma lives in
+// a sibling text node), so matchSourceTokens returned [] and the target lane
+// fell to the degradation set-match — dropping the comma-bearing word and
+// mis-picking occurrences of the repeated `οὐ μὴ`. matchNorm now strips a
+// conservative EDGE punctuation class from both sides. Gap markers (`&`, `…`,
+// `...`) and the maqqef are split out BEFORE stripping, so they survive.
+//
+// This is also the file's first Greek/UGNT quote-matching coverage.
+{
+  console.log("\n[Case 34] MRK 13:2 punctuation-bearing Greek quote matches");
+  // MRK 13:2 UGNT, real word order + real occurrence counts (only οὐ / μὴ
+  // repeat). Punctuation rides text nodes exactly as usfm-js emits it.
+  const gw = (text, occurrence = 1, occurrences = 1) => ({
+    type: "word", tag: "w", text,
+    occurrence: String(occurrence), occurrences: String(occurrences),
+  });
+  const gt = (text) => ({ type: "text", text });
+  const ugnt = [
+    gw("καὶ"), gt(" "), gw("ὁ"), gt(" "), gw("Ἰησοῦς"), gt(" "),
+    gw("εἶπεν"), gt(" "), gw("αὐτῷ"), gt(", "),
+    gw("βλέπεις"), gt(" "), gw("ταύτας"), gt(" "), gw("τὰς"), gt(" "),
+    gw("μεγάλας"), gt(" "), gw("οἰκοδομάς"), gt("? "),
+    gw("οὐ", 1, 2), gt(" "), gw("μὴ", 1, 2), gt(" "), gw("ἀφεθῇ"), gt(" "),
+    gw("ὧδε"), gt(" "), gw("λίθος"), gt(" "), gw("ἐπὶ"), gt(" "),
+    gw("λίθον"), gt(", "), gw("ὃς"), gt(" "),
+    gw("οὐ", 2, 2), gt(" "), gw("μὴ", 2, 2), gt(" "), gw("καταλυθῇ"), gt("."),
+  ];
+
+  // (a) The real seeded quote (WITH the comma) resolves to all 11 source
+  // words, identically to the comma-free spelling of the same phrase.
+  const quoted = "οὐ μὴ ἀφεθῇ ὧδε λίθος ἐπὶ λίθον, ὃς οὐ μὴ καταλυθῇ";
+  const bare = "οὐ μὴ ἀφεθῇ ὧδε λίθος ἐπὶ λίθον ὃς οὐ μὴ καταλυθῇ";
+  const src = matchSourceTokens(ugnt, quoted, 1);
+  assert(src.length === 11, `comma-bearing quote resolves all 11 source words (got ${src.length})`);
+  assert(
+    src.map((t) => t.text).join(" ") === bare,
+    `matched tokens are the phrase in document order (got ${JSON.stringify(src.map((t) => t.text).join(" "))})`,
+  );
+  assert(
+    JSON.stringify(matchSourceTokens(ugnt, bare, 1)) === JSON.stringify(src),
+    "comma-bearing and comma-free quotes resolve identically",
+  );
+  // Highlight keys still carry the RAW `\w` text (no comma) — the renderer
+  // reads from the same tree.
+  const hlSrc = findSourceHighlights(ugnt, quoted, 1);
+  assert(hlSrc.has("λίθον|1"), `λίθον lights from the comma-bearing quote (got ${[...hlSrc].join(",")})`);
+  assert(!hlSrc.has("βλέπεις|1"), `quote must NOT bleed onto βλέπεις (got ${[...hlSrc].join(",")})`);
+  // Greek question mark / ano teleia / full stop at a token edge too.
+  assert(
+    matchSourceTokens(ugnt, "μεγάλας οἰκοδομάς?", 1).length === 2,
+    "trailing Greek question mark strips (μεγάλας οἰκοδομάς?)",
+  );
+  assert(
+    matchSourceTokens(ugnt, "«καταλυθῇ.»", 1).length === 1,
+    "surrounding guillemets + full stop strip («καταλυθῇ.»)",
+  );
+  // A token that is nothing but punctuation is dropped, not matched as "".
+  assert(matchSourceTokens(ugnt, ",", 1).length === 0, "a punctuation-only quote matches nothing");
+  assert(
+    matchSourceTokens(ugnt, "οὐ μὴ , ἀφεθῇ", 1).length === 3,
+    "an orphan comma token is dropped without breaking adjacency",
+  );
+
+  // (b) Target lane: the comma-bearing quote joins the aligned target through
+  // the OL-anchored path and lights the FULL milestone set (previously the
+  // degradation path dropped λίθον's run and mis-picked the repeated οὐ μὴ).
+  const gms = (content, occurrence, occurrences, words) => ({
+    type: "milestone", tag: "zaln", content,
+    occurrence: String(occurrence), occurrences: String(occurrences),
+    children: words.map((text) => ({
+      type: "word", tag: "w", text, occurrence: "1", occurrences: "1",
+    })),
+  });
+  const ult = [
+    gms("βλέπεις", 1, 1, ["see"]),
+    gms("οἰκοδομάς", 1, 1, ["buildings"]),
+    gms("οὐ", 1, 2, ["Not"]),
+    gms("μὴ", 1, 2, ["at", "all"]),
+    gms("ἀφεθῇ", 1, 1, ["remain"]),
+    gms("ὧδε", 1, 1, ["here"]),
+    gms("λίθος", 1, 1, ["stone"]),
+    gms("ἐπὶ", 1, 1, ["upon"]),
+    gms("λίθον", 1, 1, ["another"]),
+    gms("ὃς", 1, 1, ["that"]),
+    gms("οὐ", 2, 2, ["never"]),
+    gms("μὴ", 2, 2, ["ever"]),
+    gms("καταλυθῇ", 1, 1, ["thrown", "down"]),
+  ];
+  const hlT = findTargetHighlights(ult, quoted, 1, ugnt);
+  const wanted = ["Not", "at", "all", "remain", "here", "stone", "upon", "another", "that", "never", "ever", "thrown", "down"];
+  for (const w of wanted) {
+    assert(hlT.has(`${w}|1`), `comma-bearing quote lights ${w} in the target (got ${[...hlT].join(",")})`);
+  }
+  assert(!hlT.has("see|1") && !hlT.has("buildings|1"), `unquoted runs stay dark (got ${[...hlT].join(",")})`);
+  assert(hlT.size === wanted.length, `exactly the quoted runs light (got ${hlT.size})`);
+  assert(
+    [...findTargetHighlights(ult, bare, 1, ugnt)].sort().join(",") === [...hlT].sort().join(","),
+    "target highlight set matches the comma-free quote's set",
+  );
+  // The derived support phrase (flows notes view → tn-quick) comes out whole.
+  assert(
+    extractTargetSelectionText(ult, quoted, 1, ugnt) === wanted.join(" "),
+    `selection text is the full phrase (got ${JSON.stringify(extractTargetSelectionText(ult, quoted, 1, ugnt))})`,
+  );
+
+  // (c) Gap markers still split first — punctuation stripping must never eat
+  // a `...` / `…` / `&` gap, and a comma right before a gap is fine.
+  for (const [label, gapQuote] of [
+    ["&", "ἐπὶ λίθον, & καταλυθῇ"],
+    ["...", "λίθον...καταλυθῇ"],
+    ["… ", "λίθον … καταλυθῇ"],
+  ]) {
+    const got = matchSourceTokens(ugnt, gapQuote, 1).map((t) => t.text);
+    const expect = label === "&" ? ["ἐπὶ", "λίθον", "καταλυθῇ"] : ["λίθον", "καταλυθῇ"];
+    assert(
+      got.join(" ") === expect.join(" "),
+      `gap marker ${label} still resolves (got ${JSON.stringify(got.join(" "))})`,
+    );
+  }
+
+  // (d) Occurrence selection is unaffected by stripping: the repeated phrase
+  // still picks the Nth instance, and a comma-bearing quote indexes the same.
+  const occ1 = matchSourceTokens(ugnt, "οὐ μὴ", 1);
+  const occ2 = matchSourceTokens(ugnt, "οὐ μὴ", 2);
+  assert(
+    occ1.map((t) => t.occurrence).join(",") === "1,1",
+    `οὐ μὴ occ 1 picks the first instance (got ${occ1.map((t) => t.occurrence).join(",")})`,
+  );
+  assert(
+    occ2.map((t) => t.occurrence).join(",") === "2,2",
+    `οὐ μὴ occ 2 picks the second instance (got ${occ2.map((t) => t.occurrence).join(",")})`,
+  );
+  assert(
+    JSON.stringify(matchSourceTokens(ugnt, "οὐ μὴ,", 2)) === JSON.stringify(occ2),
+    "a trailing comma does not shift which occurrence is chosen",
+  );
+  assert(
+    matchSourceTokens(ugnt, "λίθον, ὃς", 1).map((t) => t.text).join(" ") === "λίθον ὃς",
+    "a mid-phrase comma-bearing token stays adjacent to its neighbour",
+  );
+
+  // (e) Hebrew side: sof pasuq / paseq / a trailing comma on the last quoted
+  // word strip too, and NFC + word-joiner folding is unchanged (Case 27).
+  const hw = (text, occurrence = 1, occurrences = 1) => ({
+    type: "word", tag: "w", text,
+    occurrence: String(occurrence), occurrences: String(occurrences),
+  });
+  const hebVo = [hw("דָּבָר"), hw("יְהוָ֑ה"), hw("צְבָאֽוֹת")];
+  for (const [label, hebQuote] of [
+    ["sof pasuq", "יְהוָ֑ה צְבָאֽוֹת׃"],
+    ["paseq", "יְהוָ֑ה ׀ צְבָאֽוֹת"],
+    ["comma", "יְהוָ֑ה צְבָאֽוֹת,"],
+  ]) {
+    const hlHeb = findSourceHighlights(hebVo, hebQuote, 1);
+    assert(
+      hlHeb.has("יְהוָ֑ה|1") && hlHeb.has("צְבָאֽוֹת|1") && hlHeb.size === 2,
+      `Hebrew quote with ${label} lights both words, raw keys (got ${[...hlHeb].join(",")})`,
+    );
+  }
+  // Maqqef is still a SEPARATOR, not stripped punctuation.
+  const maqqefHl = findSourceHighlights(hebVo, "דָּבָר־יְהוָ֑ה", 1);
+  assert(
+    maqqefHl.has("דָּבָר|1") && maqqefHl.has("יְהוָ֑ה|1"),
+    `maqqef still splits a quote into adjacent tokens (got ${[...maqqefHl].join(",")})`,
   );
 }
 
