@@ -57,6 +57,7 @@ import { LockBanner } from "./flows/FlowBanners";
 import { FlowStatusChip } from "./flows/FlowStatusChip";
 import { ReviewRail, railItemsFromRows } from "./flows/ReviewRail";
 import { ReviewContextPanel } from "./flows/ReviewContextPanel";
+import { versionLabel } from "../lib/versionLabels";
 import { ReviewSourceStrip } from "./flows/ReviewSourceStrip";
 import { ReviewHistoryDialog } from "./flows/ReviewHistoryDialog";
 import { ReviewConflictDialog } from "./flows/ReviewConflictDialog";
@@ -1170,7 +1171,14 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       ? { ...gridEdits, [selectedRow.id]: { ...gridEdits[selectedRow.id], response: draftValue } }
       : gridEdits;
   const contextBody = (
-    <ReviewContextPanel ultText={ultText} ustText={ustText} twl={verseTwl} sourceDir={sourceDir} />
+    <ReviewContextPanel
+      ultText={ultText}
+      ustText={ustText}
+      litLabel={versionLabel(projectConfig, "ULT")}
+      simLabel={versionLabel(projectConfig, "UST")}
+      twl={verseTwl}
+      sourceDir={sourceDir}
+    />
   );
 
   const railBlock = (

@@ -18,6 +18,15 @@ import { parseTwId, twShort } from "../../lib/twArticle";
 export interface ReviewContextPanelProps {
   ultText: string | null;
   ustText: string | null;
+  /**
+   * Per-project DISPLAY labels for the two scripture lanes (issue #7). The
+   * caller resolves these via versionLabel(projectConfig, "ULT"/"UST") so a
+   * Gateway Language project shows GLT/GST (or a named literal like "Van Dyke")
+   * instead of the internal role codes. Default to the role codes so the panel
+   * still renders correctly when a caller doesn't pass them.
+   */
+  litLabel?: string;
+  simLabel?: string;
   /** Word links for the active row's verse only — already filtered by caller. */
   twl: TwlRow[];
   /** Direction of the original-language words shown in the TWL list. */
@@ -58,12 +67,19 @@ function Lane({ label, text }: { label: string; text: string | null }) {
   );
 }
 
-export function ReviewContextPanel({ ultText, ustText, twl, sourceDir }: ReviewContextPanelProps) {
+export function ReviewContextPanel({
+  ultText,
+  ustText,
+  litLabel = "ULT",
+  simLabel = "UST",
+  twl,
+  sourceDir,
+}: ReviewContextPanelProps) {
   const { t } = useTranslation();
   return (
     <Box sx={{ textAlign: "start" }}>
-      <Lane label="ULT" text={ultText} />
-      <Lane label="UST" text={ustText} />
+      <Lane label={litLabel} text={ultText} />
+      <Lane label={simLabel} text={ustText} />
 
       <Box sx={{ mt: 1.75, pt: 1.5, borderBlockStart: "1px solid", borderColor: "divider" }}>
         <Typography
