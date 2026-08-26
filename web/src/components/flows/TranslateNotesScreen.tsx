@@ -149,6 +149,10 @@ type CardStatus = "approved" | "skipped";
 // reading measure while giving desktop a little more room for long notes.
 const COLUMN_PX = 480;
 
+// Escape hatch for intro Redo: single-row translate rarely needs this long, but
+// the spinner must not stick forever if onComplete never fires.
+const INTRO_REDO_TIMEOUT_MS = 15 * 60 * 1000;
+
 function verseObjectsOf(v: VerseDto | undefined): unknown[] | null {
   if (!v) return null;
   const vo = (v.content as { verseObjects?: unknown[] } | null)?.verseObjects;
@@ -450,6 +454,13 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
 
   const [busy, setBusy] = useState(false);
   const [redoing, setRedoing] = useState(false);
+  // Intro Redo is async (pipeline). Track the exact job + row we started so
+  // onComplete / timeout only settle *this* Redo — not chapter-wide translate
+  // jobs or a Redo on another note/screen (issue #300 review).
+  const pendingIntroRedoRef = useRef<{ jobId: string; rowId: string } | null>(null);
+  const redoingRef = useRef(false);
+  redoingRef.current = redoing;
+  const introRedoTimerRef = useRef<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; severity: "info" | "warning" } | null>(null);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
@@ -875,34 +886,62 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     needsQuote: t("flowTranslate.redoNeedsQuote"),
   });
 
+  const clearIntroRedoTimer = useCallback(() => {
+    if (introRedoTimerRef.current != null) {
+      window.clearTimeout(introRedoTimerRef.current);
+      introRedoTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearIntroRedoTimer(), [clearIntroRedoTimer]);
+
+  // Settle the in-flight intro Redo only for the job/row we started. Shared by
+  // onComplete, a post-start already-terminal check, and the stuck-spinner timeout.
+  const settleIntroRedo = useCallback(
+    (
+      job: { job_id: string; state: string; error_message?: string | null },
+      opts?: { timedOut?: boolean },
+    ) => {
+      const pending = pendingIntroRedoRef.current;
+      if (!pending || job.job_id !== pending.jobId) return;
+      if (!redoingRef.current && !opts?.timedOut) return;
+      clearIntroRedoTimer();
+      pendingIntroRedoRef.current = null;
+      setRedoing(false);
+      if (opts?.timedOut) {
+        say(t("flowTranslate.redoTimedOut"), "warning");
+        return;
+      }
+      if (job.state === "done") {
+        void drafts.clear(rowKey("tn", book, pending.rowId));
+        void refetch().then(() => setReloadNonce((n) => n + 1));
+        setToast(t("flowTranslate.toastNewDraft"));
+      } else {
+        say(
+          t("flowTranslate.redoFailed", {
+            status: job.error_message ?? job.state,
+          }),
+        );
+      }
+    },
+    [book, clearIntroRedoTimer, refetch, say, t],
+  );
+
   // Intro Redo lands through the pipeline store (async), not a response body.
-  // Same looseness as TranslateWordsScreen: any translate completion for this
-  // user clears the spinner and refreshes the open chapter.
   useEffect(
     () =>
       pipelineStore.onComplete((job) => {
         if (job.pipeline_type !== "translate") return;
-        setRedoing(false);
-        if (job.state === "done") {
-          if (row) void drafts.clear(rowKey("tn", book, row.id));
-          void refetch().then(() => setReloadNonce((n) => n + 1));
-          setToast(t("flowTranslate.toastNewDraft"));
-        } else {
-          say(
-            t("flowTranslate.redoFailed", {
-              status: job.error_message ?? job.state,
-            }),
-          );
-        }
+        settleIntroRedo(job);
       }),
-    [book, refetch, row, say, t],
+    [settleIntroRedo],
   );
 
   async function handleRedo() {
     if (!row || !data || redoing || redoBlockedReason) return;
     setRedoing(true);
     setNotice(null);
-    // Pipeline Redo stays spinning until onComplete; tn-quick (and any
+    // Pipeline Redo stays spinning until settleIntroRedo; tn-quick (and any
     // failure / early return) clears it in finally.
     let keepSpinningForPipeline = false;
     try {
@@ -910,7 +949,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
         // Chapter intros (N:intro → verse 0, chapter ≥ 1). Book front:intro
         // (chapter 0) is out of scope for this flows screen — startChapter
         // must be positive on the pipeline start route.
-        await pipelineStore.start({
+        const started = await pipelineStore.start({
           pipelineType: "translate",
           book,
           startChapter: chapter,
@@ -918,8 +957,28 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
           sessionKey: getSessionKey(),
           translate: { rowIds: [row.id] },
         });
+        pendingIntroRedoRef.current = { jobId: started.jobId, rowId: row.id };
         keepSpinningForPipeline = true;
-        say(t("flowTranslate.redoStarted"), "info");
+        clearIntroRedoTimer();
+        introRedoTimerRef.current = window.setTimeout(() => {
+          settleIntroRedo(
+            { job_id: started.jobId, state: "failed", error_message: "timeout" },
+            { timedOut: true },
+          );
+        }, INTRO_REDO_TIMEOUT_MS);
+        // Race: completion may have fired before the ref was set. If the
+        // store already shows a terminal row, settle now instead of spinning.
+        const existing = pipelineStore.get(started.jobId);
+        if (
+          existing &&
+          (existing.state === "done" ||
+            existing.state === "cancelled" ||
+            existing.state === "failed")
+        ) {
+          settleIntroRedo(existing);
+        } else {
+          say(t("flowTranslate.redoStarted"), "info");
+        }
         return;
       }
       const built = buildTnQuickRequest(row, data);
@@ -941,6 +1000,8 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       setToast(t("flowTranslate.toastNewDraft"));
       if (res.warnings.length > 0) say(res.warnings.join(" "), "info");
     } catch (err) {
+      clearIntroRedoTimer();
+      pendingIntroRedoRef.current = null;
       const code =
         err instanceof ApiError && err.body && typeof err.body === "object" && "error" in err.body
           ? String((err.body as { error?: unknown }).error)
