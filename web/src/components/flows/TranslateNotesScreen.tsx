@@ -96,6 +96,7 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
+import SaveIcon from "@mui/icons-material/Save";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 
 import { LockBanner } from "./FlowBanners";
@@ -835,6 +836,25 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     }
     baselineRef.current = draftValue;
     setEditedIds((prev) => new Set(prev).add(target.id));
+    // Mirror the server's demotion locally so the row object stays consistent
+    // with what a refetch will report: a content edit demotes an AI draft or a
+    // previously-validated target row to 'edited' (see the CASE in
+    // api/src/rows.ts — English-root rows with a NULL state are left untouched,
+    // so we must not invent an 'edited' state for them). The Pending chip itself
+    // is driven by editedIds too, so it shows this session regardless; this keeps
+    // translation_state honest for genuine target rows across a refetch.
+    if (target.translation_state === "ai_draft" || target.translation_state === "validated") {
+      applyLocalRowPatch("tn", target.id, { translation_state: "edited" } as Partial<
+        TnRow & TqRow
+      >);
+    }
+    // Saving without approving demotes the row, so drop any prior Approved status.
+    setStatuses((prev) => {
+      if (prev[target.id] === undefined) return prev;
+      const next = { ...prev };
+      delete next[target.id];
+      return next;
+    });
     return true;
   }
 
@@ -859,6 +879,29 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
             status: err instanceof ApiError ? err.status : t("flowTranslate.genericError"),
           }),
         );
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // "Save" persists the edit to the server without approving it. Editing a note
+  // is not the same as finishing it: a translator can save progress and approve
+  // later, and the row then carries the Pending chip. This replaced "Done",
+  // which only closed the editor and never touched the server — a close that
+  // looked like a save but wasn't.
+  async function handleSave() {
+    if (!row || busy) return;
+    if (!hasDiff) {
+      setEditing(false);
+      return;
+    }
+    setBusy(true);
+    setNotice(null);
+    try {
+      if (await saveDraft(row)) {
+        setEditing(false);
+        setToast(t("flowTranslate.toastSaved"));
       }
     } finally {
       setBusy(false);
@@ -1096,16 +1139,22 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   const isAquiferDraft = row?.translation_state === "ai_draft" && isAquiferDraftRow(row);
 
   const cardStatus = row ? statuses[row.id] : undefined;
+  // Pending = saved but not yet approved (edited this session, or loaded already
+  // 'edited' from a prior one). Distinct from hasDiff, which is the live,
+  // unsaved edit in the open editor.
+  const cardPending = !!row && (editedIds.has(row.id) || row.translation_state === "edited");
   const chip: { kind: FlowStatusKind; label: string } =
     cardStatus === "approved"
       ? { kind: "approved", label: t("flowTranslate.status.approved") }
       : cardStatus === "skipped"
         ? { kind: "skip", label: t("flowTranslate.notNeeded") }
-        : hasDiff || row?.translation_state === "edited"
+        : hasDiff
           ? { kind: "edited", label: t("flowTranslate.status.edited") }
-          : isAquiferDraft
-            ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
-            : { kind: "draft", label: t("flowTranslate.status.draft") };
+          : cardPending
+            ? { kind: "edited", label: t("flowTranslate.status.pending") }
+            : isAquiferDraft
+              ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
+              : { kind: "draft", label: t("flowTranslate.status.draft") };
   const nextChapter = chapter + 1;
   const hasNextChapter = chapterCount === null ? true : nextChapter <= chapterCount;
 
@@ -1487,13 +1536,12 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                   />
                   <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
                     <Button
-                      onClick={() => {
-                        setEditing(false);
-                        if (hasDiff) setToast(t("flowTranslate.toastDraftUpdated"));
-                      }}
+                      disabled={busy}
+                      onClick={() => void handleSave()}
+                      startIcon={<SaveIcon />}
                       sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                     >
-                      {t("flowTranslate.done")}
+                      {t("flowTranslate.save")}
                     </Button>
                   </Stack>
                 </>
@@ -1620,16 +1668,19 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     }
     const st = statuses[id];
     const typeSlug = typeSlugOf(r.support_reference);
+    const rowPending = editedIds.has(id) || r.translation_state === "edited";
     const rowChip: { kind: FlowStatusKind; label: string } =
       st === "approved"
         ? { kind: "approved", label: t("flowTranslate.status.approved") }
         : st === "skipped"
           ? { kind: "skip", label: t("flowTranslate.notNeeded") }
-          : (id === currentId && hasDiff) || r.translation_state === "edited"
+          : id === currentId && hasDiff
             ? { kind: "edited", label: t("flowTranslate.status.edited") }
-            : r.translation_state === "ai_draft" && isAquiferDraftRow(r)
-              ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
-              : { kind: "draft", label: t("flowTranslate.status.draft") };
+            : rowPending
+              ? { kind: "edited", label: t("flowTranslate.status.pending") }
+              : r.translation_state === "ai_draft" && isAquiferDraftRow(r)
+                ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
+                : { kind: "draft", label: t("flowTranslate.status.draft") };
     const isSelected = !done && idx === cursor;
     // Preview the TARGET text — what the translator wrote (their live draft
     // for the open card, else the row's saved note), falling back to the
@@ -1786,7 +1837,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 "&:hover": { bgcolor: ok.main, filter: "brightness(0.95)" },
               }}
             >
-              {t("common.approve")}
+              {t("flowTranslate.saveApprove")}
             </Button>
           </Stack>
         </Box>
