@@ -12,8 +12,10 @@
 //   anything, fail fast — the bot would 422 no_rtl on an empty guess
 //   and the user deserves a clearer message.
 //
-//   Hebrew mode (regenerate path): after the AI has run once, QUOTE
-//   contains Hebrew. We use that Hebrew as `hebrewGuess` and derive
+//   Source-language mode (regenerate path): after the AI has run once,
+//   QUOTE contains the original-language text (Hebrew for OT, Greek
+//   for NT). We use that as `hebrewGuess` (field name predates NT
+//   support; still just "the source-language guess") and derive
 //   ULT/UST selections from it via the same alignment lookup that
 //   drives verse highlighting. Lets a translator tweak the issue
 //   type and re-run without retyping English.
@@ -26,18 +28,33 @@ import type { ChapterPayload, TnRow, TnQuickRequest, VerseDto } from "../sync/ap
 import {
   extractTargetSelectionText,
   findSourceForTargetText,
-} from "./highlight";
-import { shortSupport } from "./supportReference";
-import { buildVerseIndex } from "./verseRange";
+} from "./highlight.ts";
+import { shortSupport } from "./supportReference.ts";
+import { buildVerseIndex } from "./verseRange.ts";
 
 const CONTEXT_WINDOW = 5;
 const HEBREW_GAP = /[&…]+|\.{3}/g;
 // Hebrew Unicode block. Presence of even one char flips us into
 // "regenerate from existing Hebrew quote" mode.
 const HEBREW_CHAR = /[֐-׿]/;
+// Greek and Coptic (U+0370-03FF) plus Greek Extended (U+1F00-1FFF) —
+// covers UGNT quotes (e.g. βλέπεις). Same "presence of even one char"
+// test as Hebrew above.
+const GREEK_CHAR = /[Ͱ-Ͽἀ-῿]/;
 
 function hasHebrew(s: string): boolean {
   return HEBREW_CHAR.test(s);
+}
+
+function hasGreek(s: string): boolean {
+  return GREEK_CHAR.test(s);
+}
+
+// True when the quote is already in an original-language script
+// (Hebrew or Greek) rather than an English support phrase — flips us
+// into "regenerate from existing source quote" mode.
+export function isOriginalLanguageQuote(s: string): boolean {
+  return hasHebrew(s) || hasGreek(s);
 }
 
 function extractPlainText(verseObjects: unknown[]): string {
@@ -93,7 +110,7 @@ function gatherContext(
   return { prev5, next5 };
 }
 
-function cleanHebrew(quote: string): string {
+function cleanSourceQuote(quote: string): string {
   return quote.replace(HEBREW_GAP, " ").replace(/\s+/g, " ").trim();
 }
 
@@ -146,12 +163,12 @@ export function buildTnQuickRequest(
   let ustSelection: string;
   let hebrewGuess: string;
 
-  if (hasHebrew(rawQuote)) {
-    // Regenerate path: the row already has a Hebrew quote (typically
-    // from a previous AI run). Derive English from the same alignment
-    // that drives highlighting.
+  if (isOriginalLanguageQuote(rawQuote)) {
+    // Regenerate path: the row already has an original-language quote
+    // (Hebrew or Greek, typically from a previous AI run). Derive
+    // English from the same alignment that drives highlighting.
     const occurrence = row.occurrence ?? 1;
-    hebrewGuess = cleanHebrew(rawQuote);
+    hebrewGuess = cleanSourceQuote(rawQuote);
     ultSelection =
       (ultVo && extractTargetSelectionText(ultVo, rawQuote, occurrence, sourceVo)) ||
       ultText.slice(0, 500);
