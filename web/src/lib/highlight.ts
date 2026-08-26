@@ -45,14 +45,33 @@ import { isInFlowMarker, isTsMilestone, liftMarkerText, SECTION_HEADER_TAGS } fr
 // Deliberately EXCLUDED: `&`, `\u2026` and `...` (gap markers \u2014 quoteGroups splits
 // on them BEFORE any stripping, so a gap can never be eaten), `\u05be` maqqef (a
 // token separator, same place), and every letter / combining mark (Hebrew
-// pointing and Greek diacritics are part of the word).
+// pointing and Greek diacritics are part of the word) \u2014 with ONE letter-category
+// exception: U+02BC MODIFIER LETTER APOSTROPHE is included because UGNT elision
+// (\u1f00\u03bb\u03bb\u02bc, \u03b4\u03b9\u02bc) drifts between apostrophe characters across corpora, and no real
+// Greek word collapses onto another without it.
+//
+// Greek's own sentence punctuation (U+0387 ano teleia, U+037E question mark) is
+// handled WITHOUT being listed: both have singleton canonical decompositions to
+// U+00B7 / `;`, and matchNorm runs nfc() BEFORE the strip. Keep that order.
+//
+// String.raw means EDGE_PUNCT's literal value is regex SOURCE (backslash-u
+// escape text), only meaningful once compiled by `new RegExp` \u2014 never use it
+// with .includes()/.split(). The two compiled regexes are deliberately
+// non-global: a shared `g` regex carries lastIndex state, so a future
+// `.test()` against it would alternate true/false.
 const EDGE_PUNCT = String.raw`,;:!?.\u00b7\u05c3\u05c0()\[\]{}\u00ab\u00bb\u2039\u203a"'\u201c\u201d\u201e\u201f\u2018\u2019\u201a\u02bc`;
-const EDGE_PUNCT_RE = new RegExp(`^[${EDGE_PUNCT}]+|[${EDGE_PUNCT}]+$`, "gu");
+const EDGE_PUNCT_LEAD = new RegExp(`^[${EDGE_PUNCT}]+`, "u");
+const EDGE_PUNCT_TRAIL = new RegExp(`[${EDGE_PUNCT}]+$`, "u");
 
 function stripEdgePunct(s: string): string {
-  return s.replace(EDGE_PUNCT_RE, "");
+  return s.replace(EDGE_PUNCT_LEAD, "").replace(EDGE_PUNCT_TRAIL, "");
 }
 
+// Contract: matchNorm is for ORIGINAL-LANGUAGE text only (quote words, OL `\w`
+// text, `\zaln-s` x-content). OL tokens never carry edge punctuation (measured
+// zero across the sample corpora), so the strip is an equality-widening no-op
+// there. GL `\w` text DOES carry it (`\u201cWhat` vs `What`), so keying GL tokens
+// through matchNorm/tokenKey would silently collide occurrences \u2014 don't.
 export function matchNorm(s: string): string {
   return stripEdgePunct(nfc(s).replace(/[\u2060\u200d]/g, ""));
 }
@@ -79,10 +98,13 @@ function quoteGroups(quote: string): string[][] {
         .split(/[\s־]+/)
         .map((w) => w.trim())
         // Tokens keep their punctuation here (matchNorm strips it on both sides
-        // downstream), but a token that is NOTHING but punctuation — a stray
-        // `.` left over from a 4-dot gap, an orphan `»` — would normalize to ""
-        // and then match every token, so drop it.
-        .filter((w) => stripEdgePunct(w).length > 0),
+        // downstream), but a token that would normalize to "" — a stray `.`
+        // left over from a 4-dot gap, an orphan `»`, a bare joiner+comma —
+        // would then match every text-less token, so drop it. Filter with the
+        // FULL normalization, not just the punctuation strip: `⁠,`
+        // survives stripEdgePunct (the joiner remains) yet matchNorm folds it
+        // to "".
+        .filter((w) => matchNorm(w).length > 0),
     )
     .filter((g) => g.length > 0);
 }
