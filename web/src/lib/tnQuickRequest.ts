@@ -29,25 +29,23 @@ import {
   extractTargetSelectionText,
   findSourceForTargetText,
 } from "./highlight.ts";
+import { GREEK, HEBREW } from "./scriptDetect.ts";
 import { shortSupport } from "./supportReference.ts";
 import { buildVerseIndex } from "./verseRange.ts";
 
 const CONTEXT_WINDOW = 5;
 const HEBREW_GAP = /[&…]+|\.{3}/g;
-// Hebrew Unicode block. Presence of even one char flips us into
-// "regenerate from existing Hebrew quote" mode.
-const HEBREW_CHAR = /[֐-׿]/;
-// Greek and Coptic (U+0370-03FF) plus Greek Extended (U+1F00-1FFF) —
-// covers UGNT quotes (e.g. βλέπεις). Same "presence of even one char"
-// test as Hebrew above.
-const GREEK_CHAR = /[Ͱ-Ͽἀ-῿]/;
 
+// Presence of even one Hebrew char (or, for NT quotes, one Greek char —
+// Greek and Coptic U+0370-03FF plus Greek Extended U+1F00-1FFF, e.g.
+// βλέπεις) flips us into "regenerate from existing source quote" mode.
+// The script regexes live once in sourceSearch.ts.
 function hasHebrew(s: string): boolean {
-  return HEBREW_CHAR.test(s);
+  return HEBREW.test(s);
 }
 
 function hasGreek(s: string): boolean {
-  return GREEK_CHAR.test(s);
+  return GREEK.test(s);
 }
 
 // True when the quote is already in an original-language script
