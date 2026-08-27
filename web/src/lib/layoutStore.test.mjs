@@ -14,6 +14,7 @@ import {
   mergeOverride,
   setLayoutHidden,
   setLayoutTree,
+  setClassicSplitRatio,
 } from "./layoutStore.ts";
 
 let failed = 0;
@@ -482,6 +483,85 @@ console.log("\nhidden survives a save/load round trip and rejects junk");
   assert(
     loadLayoutStore().overrides["builtin:flexible"] === undefined,
     "a non-boolean hidden value drops that override rather than loading garbage",
+  );
+}
+
+// ─── Classic scripture split (issue #373) ──────────────────────────────
+console.log("\nsetClassicSplitRatio - persist, clamp, clear, and coexistence");
+{
+  installStorage();
+  // Absent by default → Shell falls back to autoSplit.
+  assert(
+    loadLayoutStore().overrides["builtin:classic"]?.scriptureSplit === undefined,
+    "no split stored by default",
+  );
+
+  setClassicSplitRatio("builtin:classic", 0.62);
+  assert(
+    loadLayoutStore().overrides["builtin:classic"].scriptureSplit === 0.62,
+    "a manual drag ratio persists",
+  );
+
+  // Coexists with the other override fields (mode etc.) — no clobber either way.
+  mergeOverride("builtin:classic", { mode: "columns" });
+  const ov = loadLayoutStore().overrides["builtin:classic"];
+  assert(ov.scriptureSplit === 0.62 && ov.mode === "columns", "split and mode coexist");
+  setClassicSplitRatio("builtin:classic", 0.4);
+  assert(
+    loadLayoutStore().overrides["builtin:classic"].mode === "columns",
+    "re-setting the split leaves mode intact",
+  );
+
+  // Out-of-band values clamp to [0.1, 0.9] on write.
+  setClassicSplitRatio("builtin:classic", 0.99);
+  assert(loadLayoutStore().overrides["builtin:classic"].scriptureSplit === 0.9, "high value clamps to 0.9");
+  setClassicSplitRatio("builtin:classic", 0.01);
+  assert(loadLayoutStore().overrides["builtin:classic"].scriptureSplit === 0.1, "low value clamps to 0.1");
+
+  // null CLEARS the field (double-click "reset to auto") without dropping mode.
+  setClassicSplitRatio("builtin:classic", null);
+  const cleared = loadLayoutStore().overrides["builtin:classic"];
+  assert(cleared.scriptureSplit === undefined, "null clears the split (reset to auto)");
+  assert(cleared.mode === "columns", "clearing the split leaves the rest of the override");
+}
+{
+  console.log("\n[scriptureSplit] round-trips and drops only itself when corrupt");
+  installStorage();
+  setClassicSplitRatio("builtin:classic", 0.55);
+  assert(
+    loadLayoutStore().overrides["builtin:classic"].scriptureSplit === 0.55,
+    "split round-trips through localStorage",
+  );
+
+  // A non-numeric / non-finite split drops ONLY the field (like `tree`), keeping
+  // the user's sizes / mode rather than discarding the whole override.
+  installStorage({
+    [KEY]: JSON.stringify({
+      v: 2,
+      activeLayoutId: "builtin:classic",
+      userLayouts: [],
+      overrides: {
+        "builtin:classic": { sizes: { scripture: 0.5 }, mode: "book", scriptureSplit: "wide" },
+        nan: { scriptureSplit: null },
+      },
+    }),
+  });
+  const ov = loadLayoutStore().overrides["builtin:classic"];
+  assert(ov !== undefined, "the override itself is NOT discarded by a bad split");
+  assert(ov.scriptureSplit === undefined, "non-numeric split dropped");
+  assert(ov.sizes.scripture === 0.5 && ov.mode === "book", "sizes and mode preserved");
+  // A stored value beyond the band is clamped on load, not dropped.
+  installStorage({
+    [KEY]: JSON.stringify({
+      v: 2,
+      activeLayoutId: "builtin:classic",
+      userLayouts: [],
+      overrides: { "builtin:classic": { scriptureSplit: 5 } },
+    }),
+  });
+  assert(
+    loadLayoutStore().overrides["builtin:classic"].scriptureSplit === 0.9,
+    "an out-of-band stored split is clamped on load, not discarded",
   );
 }
 

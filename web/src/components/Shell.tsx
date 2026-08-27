@@ -94,6 +94,7 @@ import {
   mergeOverride,
   setLayoutHidden,
   setLayoutTree,
+  setClassicSplitRatio,
   upsertUserLayout,
   deleteUserLayout,
   setActiveLayoutId as persistActiveLayoutId,
@@ -535,7 +536,22 @@ export function Shell({
   const [scrollNonce, setScrollNonce] = useState(0);
   const requestScrollToActive = useCallback(() => setScrollNonce((n) => n + 1), []);
 
-  const [splitRatio, setSplitRatio] = useState<number | null>(null);
+  // Classic's manual scripture/resources split. Seeded from the persisted layout
+  // store so a drag survives reloads (issue #373); `null` until the user first
+  // drags (or after a double-click reset), when the shell uses its computed
+  // `autoSplit` instead. Persisted on drag-commit / reset via the handlers wired
+  // into WorkspaceLayout below — never on every mousemove tick.
+  const [splitRatio, setSplitRatio] = useState<number | null>(
+    () => loadLayoutStore().overrides[CLASSIC_LAYOUT_ID]?.scriptureSplit ?? null,
+  );
+  const commitSplitRatio = useCallback((ratio: number) => {
+    setSplitRatio(ratio);
+    setClassicSplitRatio(CLASSIC_LAYOUT_ID, ratio);
+  }, []);
+  const resetSplitRatio = useCallback(() => {
+    setSplitRatio(null);
+    setClassicSplitRatio(CLASSIC_LAYOUT_ID, null);
+  }, []);
   // TopBar's "More ▸ Export USFM" menu item opens this component's scope/
   // version Menu via its imperative handle — see the trigger-less
   // <ExportUsfmButton hideTrigger /> mounted below.
@@ -1334,7 +1350,6 @@ export function Shell({
         : undefined,
     [bookHook, mode, bookHook?.summary],
   );
-  useEffect(() => { setSplitRatio(null); }, [colsVisible, mode]);
 
   // Pre-load lexicon entries for every UHB Strong's in the loaded chapter
   // AND every loaded chapter in book mode, so the per-word tooltips in the
@@ -3899,6 +3914,8 @@ export function Shell({
         railWidth={railWidth}
         effectiveSplit={effectiveSplit}
         onSplitRatioChange={setSplitRatio}
+        onSplitCommit={commitSplitRatio}
+        onSplitReset={resetSplitRatio}
         band={band}
         bandRegions={bandRegions}
         bandHiddenRegions={bandHiddenRegions}
