@@ -234,6 +234,15 @@ function collectMilestoneRuns(verseObjects: unknown[]): Run[] {
         walk((node["children"] as unknown[] | undefined) ?? []);
         continue;
       }
+      // A `\qs`-style character wrapper can sit OUTSIDE the milestone, not just
+      // inside it: the production ULT Selah shape parses as `qs → zaln → w`
+      // (alignment.test.mjs Case 1). Descend the wrapper looking for milestones,
+      // or the `\zaln` it contains never becomes a run and a quote naming that
+      // source highlights nothing at all (issue #331).
+      if (isCharacterWrapper(node)) {
+        walk(((node as Record<string, unknown>)["children"] as unknown[] | undefined) ?? []);
+        continue;
+      }
       if (!nodeIsMilestone(node)) continue;
       const source = String(node["content"] ?? "");
       const occurrence = parseInt(String(node["occurrence"] ?? "1"), 10) || 1;
@@ -258,9 +267,12 @@ function collectMilestoneRuns(verseObjects: unknown[]): Run[] {
         }
       }
       if (!merged) out.push({ source, occurrence: effOcc, targets });
-      // Recurse into nested milestones as their own runs.
+      // Recurse into nested milestones as their own runs. A character wrapper
+      // between the two levels (`zaln → qs → zaln → w`) must be looked through
+      // here too — walk() descends wrappers, so handing it the wrapper reaches
+      // the inner milestone and keeps its run (issue #331).
       for (const c of children) {
-        if (nodeIsMilestone(c)) walk([c]);
+        if (nodeIsMilestone(c) || isCharacterWrapper(c)) walk([c]);
       }
     }
   }
@@ -270,6 +282,9 @@ function collectMilestoneRuns(verseObjects: unknown[]): Run[] {
 
 // Flatten the verse tree into one bare \w token per entry, in document
 // order. Used for UHB/UGNT highlighting where the verse IS the source.
+// Descends `\qs`-style character wrappers for the same reason the milestone
+// walks do — a wrapped `\w` is verse body, and a source verse can carry the
+// wrapper at any level (issue #331).
 function collectBareWords(verseObjects: unknown[]): WordToken[] {
   const out: WordToken[] = [];
   function walk(nodes: unknown[]) {
@@ -280,7 +295,7 @@ function collectBareWords(verseObjects: unknown[]): WordToken[] {
           occurrence:
             parseInt(String((node as Record<string, unknown>)["occurrence"] ?? "1"), 10) || 1,
         });
-      } else if (nodeIsMilestone(node) || nodeIsPsalmTitle(node)) {
+      } else if (nodeIsMilestone(node) || nodeIsPsalmTitle(node) || isCharacterWrapper(node)) {
         const children = ((node as Record<string, unknown>)["children"] as unknown[] | undefined) ?? [];
         walk(children);
       }
@@ -449,10 +464,14 @@ export function findSourceForTargetText(
         const source = String(o["content"] ?? "");
         const children = (o["children"] as unknown[] | undefined) ?? [];
         walk(children, source ? [...stack, source] : stack);
-      } else if (nodeIsPsalmTitle(o)) {
+      } else if (nodeIsPsalmTitle(o) || isCharacterWrapper(o)) {
         // \d (Psalm superscription) is type:"section" but its content IS
         // alignable verse body — walk its children like a milestone (no
         // source contribution of its own). Mirrors collectMilestoneRuns.
+        // A `\qs`-style character wrapper descends the same way: it holds verse
+        // body and can sit either side of a `\zaln` (issue #331), so without
+        // this the reverse English→Hebrew walk loses every wrapped word and the
+        // tn-quick handoff resolves no source at all.
         walk((o["children"] as unknown[] | undefined) ?? [], stack);
       } else if (nodeIsWord(o)) {
         const text = String(o["text"] ?? "");

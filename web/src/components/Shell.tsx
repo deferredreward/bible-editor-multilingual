@@ -58,6 +58,7 @@ import {
 } from "../lib/alignmentDelta";
 import { buildVerseIndex, concatSourceRange, formatVerseLabel, noteCoveredVerses } from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
+import { versionLabel } from "../lib/versionLabels";
 import { findSourceForTargetText, extractTargetSelectionText, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { buildQuoteFromSelection, selectionFromQuote } from "../lib/quoteBuilder";
 import { resolveSpanToSource } from "../lib/twlResolve";
@@ -3018,16 +3019,23 @@ export function Shell({
       const built = buildTnQuickRequest(aiRow, data);
       if (!built.ok) {
         // NoteCard gates on quote + support_reference. The remaining
-        // reasons (missing ULT/UST or unalignable English) need a
-        // user-actionable message.
+        // reasons (missing ULT/UST, unalignable English, or an
+        // original-language quote that doesn't resolve) need a
+        // user-actionable message — and the two unalignable-quote reasons
+        // need DIFFERENT copy, since "copy the English support phrase" is
+        // meaningless for a Hebrew/Greek quote (#346).
         const message =
           built.error.reason === "missing_ult_verse"
             ? t("appShell.shell.aiMissingUlt")
             : built.error.reason === "missing_ust_verse"
               ? t("appShell.shell.aiMissingUst")
-              : built.error.reason === "hebrew_not_found"
-                ? t("appShell.shell.aiHebrewNotFound")
-                : t("appShell.shell.aiPrereqMissing");
+              : built.error.reason === "source_quote_not_found"
+                ? t("appShell.shell.aiSourceQuoteNotFound", {
+                    label: versionLabel(projectConfig, "ULT"),
+                  })
+                : built.error.reason === "hebrew_not_found"
+                  ? t("appShell.shell.aiHebrewNotFound")
+                  : t("appShell.shell.aiPrereqMissing");
         aiDrafts.pushError(aiRow, message);
         return;
       }

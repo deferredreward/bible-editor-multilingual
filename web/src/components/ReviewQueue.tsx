@@ -958,14 +958,21 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     try {
       const built = buildTnQuickRequest(selectedRow as TnRow, data);
       if (!built.ok) {
+        // The two unalignable-quote reasons need different copy: the
+        // "copy the support phrase exactly from ULT" advice only applies
+        // when the user typed English (#346).
         const msg =
           built.error.reason === "missing_ult_verse"
             ? t("flowReview.queue.missingUltVerse")
             : built.error.reason === "missing_ust_verse"
               ? t("flowReview.queue.missingUstVerse")
-              : built.error.reason === "hebrew_not_found"
-                ? t("flowReview.queue.quoteNotAligned")
-                : t("flowReview.queue.aiPrereqMissing");
+              : built.error.reason === "source_quote_not_found"
+                ? t("flowReview.queue.sourceQuoteNotAligned", {
+                    label: versionLabel(projectConfig, "ULT"),
+                  })
+                : built.error.reason === "hebrew_not_found"
+                  ? t("flowReview.queue.quoteNotAligned")
+                  : t("flowReview.queue.aiPrereqMissing");
         say(msg, "warning");
         return;
       }

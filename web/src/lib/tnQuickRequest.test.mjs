@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { isOriginalLanguageQuote, buildTnQuickRequest } from "./tnQuickRequest.ts";
+
+const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const readWeb = (rel) => readFileSync(path.join(webRoot, rel), "utf8");
 
 test("Greek quote classifies as source-language", () => {
   assert.equal(isOriginalLanguageQuote("βλέπεις"), true);
@@ -198,7 +204,40 @@ test("buildTnQuickRequest fails loudly for a mixed English+Greek quote that reso
   const result = buildTnQuickRequest(row, makeChapterPayload());
   assert.equal(result.ok, false);
   if (!result.ok) {
-    assert.equal(result.error.reason, "hebrew_not_found");
+    // #346: the source-language path reports its OWN reason, so call sites can
+    // render script-appropriate copy instead of "copy the English phrase".
+    assert.equal(result.error.reason, "source_quote_not_found");
+  }
+});
+
+test("mixed English+Greek quote fails loudly even against an ALIGNED verse (#346)", () => {
+  // The #332 fixture has no milestones, so it can't distinguish "the quote
+  // didn't resolve" from "the verse has no alignment at all". Here the ULT verse
+  // IS aligned (and the UGNT source verse is present), so the quote goes through
+  // both the OL-anchored join and the GL set-match degradation — and still
+  // resolves to nothing, because none of "the"/"word"/"λόγος" is a milestone's
+  // source content.
+  const row = makeRow({ quote: "the word λόγος" });
+  const result = buildTnQuickRequest(row, makeAlignedGreekPayload());
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.reason, "source_quote_not_found");
+  }
+});
+
+test("an original-language quote and an English phrase fail with DIFFERENT reasons (#346)", () => {
+  // The whole point of the split: one shared reason is what let Shell and
+  // ReviewQueue show English-only advice for a Hebrew/Greek quote.
+  const olResult = buildTnQuickRequest(makeRow({ quote: "λόγος" }), makeChapterPayload());
+  const enResult = buildTnQuickRequest(
+    makeRow({ quote: "some unrelated english phrase" }),
+    makeChapterPayload(),
+  );
+  assert.equal(olResult.ok, false);
+  assert.equal(enResult.ok, false);
+  if (!olResult.ok && !enResult.ok) {
+    assert.equal(olResult.error.reason, "source_quote_not_found");
+    assert.equal(enResult.error.reason, "hebrew_not_found");
   }
 });
 
@@ -208,5 +247,121 @@ test("buildTnQuickRequest fails with hebrew_not_found for an English phrase that
   assert.equal(result.ok, false);
   if (!result.ok) {
     assert.equal(result.error.reason, "hebrew_not_found");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Copy contract (#346). A unit test can't render the components, but the defect
+// this fixes was purely "a call site forgot that the OL path needs its own
+// message". These guards catch exactly that: every component that consumes
+// buildTnQuickRequest must branch on the OL reason, and the strings it reaches
+// for must not carry the English-only advice.
+// ---------------------------------------------------------------------------
+
+// The call sites are DISCOVERED, not listed: a hardcoded list can't catch the
+// regression this test exists for — someone adding a fourth consumer and
+// forgetting the OL branch. KNOWN_CALL_SITES is only a floor, so a broken walk
+// (wrong root, changed layout) fails loudly instead of vacuously finding none.
+const KNOWN_CALL_SITES = [
+  "src/components/Shell.tsx",
+  "src/components/ReviewQueue.tsx",
+  "src/components/flows/TranslateNotesScreen.tsx",
+];
+
+// Strip LINE comments before the reason check: otherwise a rewrite that deletes
+// the ternary arm but leaves its explanatory comment behind would still
+// "contain" the reason and pass. Same trick adminSurfaceMap.test.mjs uses.
+//
+// Deliberately NOT stripping /* */ blocks. Tried it, and the naive regex
+// `/\/\*[\s\S]*?\*\//` treats a `/*` inside a string or regex literal as a
+// comment opener and swallowed 55KB of TranslateNotesScreen.tsx — including the
+// call it was supposed to find. A line-comment pass is safe here (a `//` inside
+// a URL only eats the rest of that line), and discovery below reads the RAW
+// source so no stripping can hide a call site.
+const stripLineComments = (src) => src.replace(/\/\/[^\n]*/g, "");
+
+function findCallSites(dir = "src") {
+  const out = [];
+  for (const entry of readdirSync(path.join(webRoot, dir), { withFileTypes: true })) {
+    const rel = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      out.push(...findCallSites(rel));
+    } else if (/\.(ts|tsx)$/.test(entry.name)) {
+      if (readWeb(rel).includes("buildTnQuickRequest(")) out.push(rel);
+    }
+  }
+  return out;
+}
+
+test("every buildTnQuickRequest call site handles source_quote_not_found (#346)", () => {
+  // The definition and its own tests call it too; only consumers must branch.
+  const sites = findCallSites().filter((rel) => !rel.startsWith("src/lib/tnQuickRequest"));
+  for (const known of KNOWN_CALL_SITES) {
+    assert.ok(
+      sites.includes(known),
+      `${known} no longer calls buildTnQuickRequest (or the walk missed it). If the file moved ` +
+        `legitimately, update KNOWN_CALL_SITES; otherwise the discovery walk is broken.`,
+    );
+  }
+  for (const rel of sites) {
+    assert.ok(
+      stripLineComments(readWeb(rel)).includes("source_quote_not_found"),
+      `${rel} calls buildTnQuickRequest but never branches on "source_quote_not_found", so an ` +
+        `original-language quote that fails to align falls through to English-specific advice ` +
+        `(or the generic "prerequisites missing"). See #346.`,
+    );
+  }
+});
+
+test("the OL-failure strings name both scripts and give no English-only advice (#346)", () => {
+  const en = JSON.parse(readWeb("src/i18n/locales/en.json"));
+  const ar = JSON.parse(readWeb("src/i18n/locales/ar.json"));
+  const keys = [
+    ["appShell", "shell", "aiSourceQuoteNotFound"],
+    ["flowReview", "queue", "sourceQuoteNotAligned"],
+  ];
+  const at = (obj, keyPath) => keyPath.reduce((o, k) => (o == null ? o : o[k]), obj);
+
+  for (const keyPath of keys) {
+    const value = at(en, keyPath);
+    assert.equal(
+      typeof value,
+      "string",
+      `en.json is missing ${keyPath.join(".")} — the OL-quote failure needs its own copy (#346).`,
+    );
+    // Names both original languages, the way #332 fixed aiDraft.noHebrew.
+    assert.match(value, /Hebrew/, `${keyPath.join(".")} should name Hebrew`);
+    assert.match(value, /Greek/, `${keyPath.join(".")} should name Greek`);
+    // The whole defect: telling a translator to copy an English support phrase
+    // when the quote they have is Hebrew or Greek.
+    assert.doesNotMatch(
+      value,
+      /support phrase/i,
+      `${keyPath.join(".")} still gives the English-path advice (#346)`,
+    );
+    // ar is the one GATED locale (web/src/i18n/coverage.json), so it owes a
+    // real translation, not a fallback to en.
+    const arValue = at(ar, keyPath);
+    assert.equal(
+      typeof arValue,
+      "string",
+      `ar.json is missing ${keyPath.join(".")} — ar is gated in coverage.json, so CI will fail.`,
+    );
+    assert.notEqual(arValue, value, `${keyPath.join(".")} in ar.json is still the English string`);
+    // The anti-advice check has to run on ar too, or the defect can be
+    // reintroduced in translation while en stays clean. "عبارة الدعم" is the
+    // phrase the English-path ar strings use for "the support phrase".
+    assert.doesNotMatch(
+      arValue,
+      /عبارة الدعم/,
+      `${keyPath.join(".")} in ar.json gives the English-path advice ("copy the support phrase") ` +
+        `for a Hebrew/Greek quote (#346)`,
+    );
+    // Both languages must keep the same interpolation contract.
+    assert.deepEqual(
+      arValue.match(/{{\w+}}/g),
+      value.match(/{{\w+}}/g),
+      `${keyPath.join(".")} placeholders differ between en.json and ar.json`,
+    );
   }
 });

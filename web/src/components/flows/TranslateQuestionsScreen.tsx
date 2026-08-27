@@ -101,6 +101,7 @@ import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { resolveSourceRef } from "../../lib/sourceRef";
 import { buildVerseIndex } from "../../lib/verseRange";
 import { realChapters } from "../../lib/bookSummary";
+import { resolveFlowChipStatus, flowChipKind, type FlowChipStatus } from "../../lib/flowStatusChip";
 import { drafts, rowKey } from "../../sync/drafts";
 import { onOutboxResult, outbox } from "../../sync/outbox";
 import { api, ApiError, type ChapterLockedBody, type TqRow } from "../../sync/api";
@@ -971,39 +972,60 @@ export default function TranslateQuestionsScreen({
     (id) => statuses[id] === "approved" && editedIds.has(id),
   ).length;
 
+  // Label copy for a resolved chip status, tq's wording. Precedence lives in
+  // resolveFlowChipStatus (#348); this only maps status → tq label. tq has no
+  // "skipped" verdict today (kept for exhaustiveness). "aquifer" is a defensive
+  // parallel to the notes screen — tq is not an Aquifer target today (#295).
+  const questionChipLabel = (status: FlowChipStatus): string => {
+    switch (status) {
+      case "editing":
+        return t("translation.stateEdited");
+      case "unsaved":
+        return t("flowTranslate.status.unsaved");
+      case "approved":
+        return t("translation.stateApproved");
+      case "skipped":
+        return t("flowTranslate.notNeeded");
+      case "pending":
+        return t("flowTranslate.status.pending");
+      case "aquifer":
+        return t("flowTranslate.status.aquiferImport");
+      case "aiDraft":
+        return t("translation.stateAiDraft");
+      case "draft":
+        return t("translation.draftLabel");
+    }
+  };
   // One chip for the row — both fields share it, because the decision is about
-  // the row and not about a field.
-  function chipFor(id: string, rowForChip: TqRow | null, dirty: boolean) {
+  // the row and not about a field. Unsaved text (the open card's live diff, or a
+  // persisted draft on any other row) wins over the saved verdict (#342): the
+  // resolver judges the current row by its live diff and every other row by
+  // whether a draft is persisted for it — so a drafted row is never hidden
+  // behind "Approved", on desktop OR phone.
+  function chipFor(
+    id: string,
+    rowForChip: TqRow | null,
+    isCurrent: boolean,
+  ): { kind: FlowStatusKind; label: string } {
     const s = statuses[id];
-    // Live, unsaved typing in the open editor reads as "Edited" and wins over
-    // any saved verdict — `dirty` is only ever true for the current row, which
-    // is the one the user jumped to *because* it holds unsaved text, so an
-    // "Approved" chip there would hide exactly what they came to find (#342).
-    // A saved-but-not-yet-approved row (edited this session, or loaded already
-    // 'edited') reads as "Pending" so it's clear which rows still need approval.
-    if (dirty) {
-      return { kind: "edited" as FlowStatusKind, label: t("translation.stateEdited") };
-    }
-    if (s === "approved") return { kind: "approved" as FlowStatusKind, label: t("translation.stateApproved") };
-    if (editedIds.has(id) || rowForChip?.translation_state === "edited") {
-      return { kind: "edited" as FlowStatusKind, label: t("flowTranslate.status.pending") };
-    }
-    // Parity with the notes screen: an untouched Aquifer import (ai_draft with
-    // draft_meta_json.source==="aquifer") is provenance, not an AI-bot draft. tq
-    // is not an Aquifer target today, so this is a defensive parallel guard (#295).
-    if (rowForChip?.translation_state === "ai_draft" && isAquiferDraftRow(rowForChip)) {
-      return { kind: "aquifer" as FlowStatusKind, label: t("flowTranslate.status.aquiferImport") };
-    }
-    const aiDrafted =
-      rowForChip?.translation_state === "ai_draft" || rowForChip?.latest_source === "ai_pipeline";
-    return {
-      kind: "draft" as FlowStatusKind,
-      label: aiDrafted ? t("translation.stateAiDraft") : t("translation.draftLabel"),
-    };
+    const status = resolveFlowChipStatus({
+      isCurrent,
+      hasLiveDiff: hasDiff,
+      draftPresent: draftRowIds.has(id),
+      approved: s === "approved",
+      skipped: false,
+      pending: editedIds.has(id) || rowForChip?.translation_state === "edited",
+      aquifer:
+        rowForChip?.translation_state === "ai_draft" && isAquiferDraftRow(rowForChip),
+      aiDrafted:
+        rowForChip?.translation_state === "ai_draft" ||
+        rowForChip?.latest_source === "ai_pipeline",
+    });
+    return { kind: flowChipKind(status), label: questionChipLabel(status) };
   }
 
   const chip = row
-    ? chipFor(row.id, row, hasDiff)
+    ? chipFor(row.id, row, true)
     : { kind: "draft" as FlowStatusKind, label: t("translation.draftLabel") };
 
   const nextChapter = chapter + 1;
@@ -1044,15 +1066,11 @@ export default function TranslateQuestionsScreen({
   // also re-enters review mode, exactly like the done list's own rows.
   const queueRow = (id: string, i: number) => {
     const r = rowById.get(id) ?? null;
-    // Persisted unsaved typing on a row that is NOT the open card wins over the
-    // saved verdict — a draft means the visible text differs from what the
-    // server holds, and hiding that behind "Approved" recreates the very
-    // can't-find-my-unsaved-edit gap this chip exists to close (the open card's
-    // live diff is chipFor's hasDiff branch). Mirrors the notes list rows.
-    const c =
-      id !== currentId && draftRowIds.has(id)
-        ? { kind: "edited" as FlowStatusKind, label: t("flowTranslate.status.unsaved") }
-        : chipFor(id, r, id === currentId ? hasDiff : false);
+    // Unsaved text wins over the saved verdict — the resolver surfaces it as
+    // "Unsaved" on any non-open drafted row and "Edited" on the open card's live
+    // diff, so a drafted row is never hidden behind "Approved". Mirrors the
+    // notes list rows.
+    const c = chipFor(id, r, id === currentId);
     const isSelected = !done && id === currentId;
     return (
       <Box
@@ -1272,11 +1290,10 @@ export default function TranslateQuestionsScreen({
             <Stack spacing={1.25}>
               {queueIds.map((id, i) => {
                 const r = rowById.get(id) ?? null;
-                // Same Unsaved-wins precedence as the md+ list pane above.
-                const c =
-                  id !== currentId && draftRowIds.has(id)
-                    ? { kind: "edited" as FlowStatusKind, label: t("flowTranslate.status.unsaved") }
-                    : chipFor(id, r, false);
+                // Same Unsaved-wins precedence as the md+ list pane above — via
+                // the shared resolver, so the current row holding a persisted
+                // draft is no longer mislabeled "Approved" here (#348 part 2).
+                const c = chipFor(id, r, id === currentId);
                 return (
                   <Box
                     key={id}

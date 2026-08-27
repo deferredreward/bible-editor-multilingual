@@ -168,6 +168,7 @@ import { drafts as draftStore, articleKey, type DraftRecord } from "../../sync/d
 import { pipelineStore, getSessionKey } from "../../sync/pipelineStore";
 import { MarkdownView } from "../MarkdownView";
 import { realChapterNumbers } from "../../lib/bookSummary";
+import { resolveFlowChipStatus, flowChipKind, type FlowChipStatus } from "../../lib/flowStatusChip";
 
 export interface TranslateWordsScreenProps extends FlowScreenContext {
   book: string;
@@ -259,16 +260,44 @@ function aggregateState(states: ArticleState[]): ArticleState {
   return null;
 }
 
+// Label copy for a resolved chip status, tw's wording. Precedence lives in
+// resolveFlowChipStatus (#348); tw has no current/non-current split, no
+// skipped/aquifer verdicts, and no "unsaved" vs "pending" label distinction —
+// a dirty or saved-edited article both read "Edited". tw feeds `dirty` as the
+// live-diff signal (isCurrent=true) so any dirty article resolves to "editing".
+function wordsChipLabel(status: FlowChipStatus, t: TFunction): string {
+  switch (status) {
+    case "editing":
+    case "unsaved":
+    case "pending":
+      return t("flowWords.chipEdited");
+    case "approved":
+      return t("flowWords.chipApproved");
+    case "aiDraft":
+      return t("flowWords.chipAiDraft");
+    case "skipped":
+    case "aquifer":
+    case "draft":
+      return t("flowWords.chipNotStarted");
+  }
+}
+
 function chipFor(
   state: ArticleState,
   dirty: boolean,
   t: TFunction,
 ): { kind: FlowStatusKind; label: string } {
-  if (dirty) return { kind: "edited", label: t("flowWords.chipEdited") };
-  if (state === "validated") return { kind: "approved", label: t("flowWords.chipApproved") };
-  if (state === "edited") return { kind: "edited", label: t("flowWords.chipEdited") };
-  if (state === "ai_draft") return { kind: "draft", label: t("flowWords.chipAiDraft") };
-  return { kind: "draft", label: t("flowWords.chipNotStarted") };
+  const status = resolveFlowChipStatus({
+    isCurrent: true,
+    hasLiveDiff: dirty,
+    draftPresent: false,
+    approved: state === "validated",
+    skipped: false,
+    pending: state === "edited",
+    aquifer: false,
+    aiDrafted: state === "ai_draft",
+  });
+  return { kind: flowChipKind(status), label: wordsChipLabel(status, t) };
 }
 
 // tA parts order title → sub-title → body; tw is body-only.

@@ -2976,6 +2976,7 @@
       "missingUltVerse": "ULT verse text unavailable for this verse.",
       "missingUstVerse": "UST verse text unavailable for this verse.",
       "quoteNotAligned": "Couldn't match this quote to the ULT alignment — copy the support phrase exactly from ULT.",
+      "sourceQuoteNotAligned": "Couldn't match this Hebrew or Greek quote to the {{label}} alignment — check it against the original-language text, or align those words in {{label}}.",
       "aiPrereqMissing": "AI prerequisites missing.",
       "aiDraftWithWarnings": "AI draft inserted — not saved. {{warnings}}",
       "aiDraftInserted": "AI draft inserted into the editor — click Save to keep it.",
@@ -3319,6 +3320,7 @@
       "aiMissingUlt": "ULT verse text unavailable for this verse.",
       "aiMissingUst": "UST verse text unavailable for this verse.",
       "aiHebrewNotFound": "Couldn't match this English to the ULT alignment — copy the support phrase exactly from ULT.",
+      "aiSourceQuoteNotFound": "Couldn't match this Hebrew or Greek quote to the {{label}} alignment — check it against the original-language text, or align those words in {{label}}.",
       "aiPrereqMissing": "AI prerequisites missing.",
       "panelComingLater": "{{type}} — panel coming in a later pass"
     },
