@@ -9,7 +9,6 @@ import { SyncStatusBar } from "./components/SyncStatusBar";
 import { PipelineStatusBar } from "./components/PipelineStatusBar";
 import { AccountMenu } from "./components/AccountMenu";
 import { TemplateWorkspace } from "./components/TemplateWorkspace";
-import { ReviewQueue } from "./components/ReviewQueue";
 import { PreferencesWorkspace, ALL_SECTIONS as PREFS_SECTIONS, type Section as PrefsSection } from "./components/PreferencesWorkspace";
 import { LocalizationInspector } from "./components/LocalizationInspector";
 import { useBook } from "./hooks/useBook";
@@ -40,20 +39,11 @@ type Location =
   | { view: "article"; resource: "tw" | "ta"; articleId: string | null }
   | { view: "templates"; templateId: string | null }
   | { view: "preferences"; section: PrefsSection }
-  | { view: "review"; book: string; chapter: number }
-  | { view: "home" }
-  | { view: "scripture"; book: string; chapter: number; verse: number }
-  | { view: "align"; book: string; chapter: number; verse: number }
-  | { view: "flowArticles" }
-  | { view: "words"; book: string; chapter: number; verse: number }
   | { view: "ai" }
   | { view: "style" }
   | { view: "curate"; templateId: string | null }
-  | { view: "setup" }
   | { view: "books"; book: string | null }
-  | { view: "team" }
   | { view: "observe" }
-  | { view: "verse"; book: string; chapter: number; verse: number }
   | { view: "notes"; book: string; chapter: number; verse: number | null; rowId: string | null }
   | { view: "questions"; book: string; chapter: number; verse: number | null; rowId: string | null }
   | { view: "package"; book: string }
@@ -90,19 +80,11 @@ function positionFromLoc(loc: Location): { book: string; chapter: number; verse:
 
 // Flow screens (docs/flows port) are lazy so their weight isn't paid on the
 // classic editor routes. Stubs today; replaced screen-by-screen in this stack.
-const HomeScreen = lazy(() => import("./components/flows/HomeScreen"));
-const ScriptureScreen = lazy(() => import("./components/flows/ScriptureScreen"));
-const AlignScreen = lazy(() => import("./components/flows/AlignScreen"));
-const ArticlesScreen = lazy(() => import("./components/flows/ArticlesScreen"));
-const WordsScreen = lazy(() => import("./components/flows/WordsScreen"));
 const AiScreen = lazy(() => import("./components/flows/AiScreen"));
 const StyleScreen = lazy(() => import("./components/flows/StyleScreen"));
 const CurateScreen = lazy(() => import("./components/flows/CurateScreen"));
-const SetupScreen = lazy(() => import("./components/flows/SetupScreen"));
 const BooksScreen = lazy(() => import("./components/flows/BooksScreen"));
-const TeamScreen = lazy(() => import("./components/flows/TeamScreen"));
 const ObserveScreen = lazy(() => import("./components/flows/ObserveScreen"));
-const VerseScreen = lazy(() => import("./components/flows/VerseScreen"));
 const TranslateNotesScreen = lazy(() => import("./components/flows/TranslateNotesScreen"));
 const TranslateQuestionsScreen = lazy(() => import("./components/flows/TranslateQuestionsScreen"));
 const TranslateScriptureScreen = lazy(() => import("./components/flows/TranslateScriptureScreen"));
@@ -146,6 +128,14 @@ function safeDecode(s: string): string {
   }
 }
 
+// Rewrites the URL of a retired route so the stale hash doesn't stick around.
+// replaceState deliberately does NOT fire hashchange, so the Loc the caller
+// returns alongside this call is what actually renders — same contract the
+// legacy #/import redirect below has always used.
+function retire(next: string) {
+  history.replaceState(null, "", location.pathname + next);
+}
+
 function parseHash(): Location {
   const pm = location.hash.match(/^#\/preferences(?:\/(\w+))?$/);
   if (pm) {
@@ -179,9 +169,18 @@ function parseHash(): Location {
     history.replaceState(null, "", location.pathname + next);
     return { view: "books", book };
   }
+  // Retired #/review/BOOK[/CH] — the old flows review queue (ReviewQueue.tsx +
+  // the Review* panels) was deleted with the rest of the old flows screens
+  // (#173). Its only entry points were HomeScreen's two queue cards and the
+  // FlowNav pill bar, both deleted in the same change. Notes are the queue's
+  // main workload, so a stale bookmark lands on the redesigned notes screen for
+  // that chapter; #/questions is one tap away from the package hub.
   const rv = location.hash.match(/^#\/review\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
   if (rv) {
-    return { view: "review", book: rv[1].toUpperCase(), chapter: rv[2] ? parseInt(rv[2], 10) : 1 };
+    const book = rv[1].toUpperCase();
+    const chapter = rv[2] ? parseInt(rv[2], 10) : 1;
+    retire(`#/notes/${book}/${chapter}`);
+    return { view: "notes", book, chapter, verse: null, rowId: null };
   }
   // Optional ?row={id} tail: the SyncStatusBar "N unsaved" jump menu uses it to
   // land on the exact note holding the draft — a verse can carry several notes,
@@ -218,23 +217,39 @@ function parseHash(): Location {
   }
   // Flow screens (docs/flows port). Parameterless routes are single reserved
   // tokens; none collide with 3-letter USFM book codes in the catch-all below.
-  if (/^#\/home$/.test(location.hash)) return { view: "home" };
-  if (/^#\/articles$/.test(location.hash)) return { view: "flowArticles" };
+  // Retired parameterless flows routes (#173): #/home is now Books, the
+  // standalone #/setup and #/team pages are the admin desk's own sections, and
+  // the bare #/articles list is the classic article workspace (which the desk
+  // and the translate screens both still link into as #/articles/tw|ta).
+  if (/^#\/home$/.test(location.hash)) {
+    retire("#/books");
+    return { view: "books", book: null };
+  }
+  if (/^#\/articles$/.test(location.hash)) {
+    retire("#/articles/tw");
+    return { view: "article", resource: "tw", articleId: null };
+  }
+  if (/^#\/setup$/.test(location.hash)) {
+    retire("#/admin/setup");
+    return { view: "admin", section: "setup" };
+  }
+  if (/^#\/team$/.test(location.hash)) {
+    retire("#/admin/team");
+    return { view: "admin", section: "team" };
+  }
   if (/^#\/ai$/.test(location.hash)) return { view: "ai" };
   if (/^#\/style$/.test(location.hash)) return { view: "style" };
-  if (/^#\/setup$/.test(location.hash)) return { view: "setup" };
   const bk = location.hash.match(/^#\/books(?:\/([A-Za-z0-9]+))?$/);
   if (bk) return { view: "books", book: bk[1] ? bk[1].toUpperCase() : null };
-  if (/^#\/team$/.test(location.hash)) return { view: "team" };
   if (/^#\/observe$/.test(location.hash)) return { view: "observe" };
   const cu = location.hash.match(/^#\/curate(?:\/(.+))?$/);
   if (cu) {
     return { view: "curate", templateId: decodeURIComponent(cu[1] ?? "") || null };
   }
-  // Titus-redesign routes. These deliberately claim the short arities of
-  // #/scripture and #/words ahead of the fv catch-all below: the 1–2 segment
-  // forms open the new translate screens, while the 3-segment (verse-level)
-  // forms still open the old flows screens until those are retired.
+  // Titus-redesign routes. #/scripture and #/words used to be arity-split (1–2
+  // segments = the new translate screens, 3 = the old flows screens); the old
+  // screens are gone (#173), so these now claim the route outright and the
+  // legacy verse-level arity is handled as a retired form below.
   const pk = location.hash.match(/^#\/package\/([A-Za-z0-9]+)$/);
   if (pk) {
     return { view: "package", book: pk[1].toUpperCase() };
@@ -256,9 +271,9 @@ function parseHash(): Location {
   if (ad) {
     return { view: "admin", section: ad[1] as "team" | "setup" | "workflow" | "progress" };
   }
-  // #/alignment (redesign) is distinct from the old 3-segment #/align, which
-  // still flows to the fv catch-all below. Must sit above the final book-code
-  // catch-all, which is unanchored and would swallow "alignment" as a book.
+  // #/alignment (redesign) is distinct from the retired #/align handled below.
+  // Must sit above the final book-code catch-all, which is unanchored and would
+  // swallow "alignment" as a book.
   const al = location.hash.match(/^#\/alignment\/([A-Za-z0-9]+)\/(\d+)(?:\/(\d+))?(\/dual)?$/);
   if (al) {
     return {
@@ -269,16 +284,33 @@ function parseHash(): Location {
       mode: al[4] ? "dual" : "single",
     };
   }
+  // Retired verse-level flows arities (#173). These used to open ScriptureScreen
+  // / AlignScreen / WordsScreen / VerseScreen; those files are gone. Without an
+  // explicit redirect a stale bookmark would fall through to the unanchored
+  // book-code catch-all below and render an empty chapter of a book called
+  // "SCRIPTURE" / "ALIGN" / "WORDS" / "VERSE" — a broken screen, not a 404. The
+  // 1–2 segment #/scripture and #/words forms never reach here (claimed above);
+  // only the legacy longer forms and the bare #/align, #/verse do.
   const fv = location.hash.match(
     /^#\/(scripture|align|words|verse)(?:\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?)?$/,
   );
   if (fv) {
-    return {
-      view: fv[1] as "scripture" | "align" | "words" | "verse",
-      book: fv[2] ? fv[2].toUpperCase() : DEFAULT_BOOK,
-      chapter: fv[3] ? parseInt(fv[3], 10) : 1,
-      verse: fv[4] ? parseInt(fv[4], 10) : 1,
-    };
+    const book = fv[2] ? fv[2].toUpperCase() : DEFAULT_BOOK;
+    const chapter = fv[3] ? parseInt(fv[3], 10) : 1;
+    const verse = fv[4] ? parseInt(fv[4], 10) : 1;
+    // #/align keeps its verse (the redesigned aligner is verse-addressable);
+    // #/words is per-book; #/scripture and the verse overview land on the
+    // redesigned scripture queue for that chapter, the closest live surface.
+    if (fv[1] === "align") {
+      retire(`#/alignment/${book}/${chapter}/${verse}`);
+      return { view: "translateAlign", book, chapter, verse, mode: "single" };
+    }
+    if (fv[1] === "words") {
+      retire(`#/words/${book}`);
+      return { view: "translateWords", book };
+    }
+    retire(`#/scripture/${book}/${chapter}`);
+    return { view: "translateScripture", book, chapter };
   }
   const m = location.hash.match(/^#\/?([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?/);
   if (!m) return { view: "books", book: null };
@@ -794,19 +826,10 @@ export function App() {
               location.hash = id ? `#/templates/${encodeURIComponent(id)}` : `#/templates`;
             }}
           />
-        ) : loc.view === "review" ? (
-          <ReviewQueue book={loc.book} chapter={loc.chapter} onNavigate={navigate} />
-        ) : loc.view === "home" ||
-          loc.view === "scripture" ||
-          loc.view === "align" ||
-          loc.view === "flowArticles" ||
-          loc.view === "words" ||
-          loc.view === "ai" ||
+        ) : loc.view === "ai" ||
           loc.view === "style" ||
           loc.view === "curate" ||
-          loc.view === "setup" ||
           loc.view === "books" ||
-          loc.view === "team" ||
           loc.view === "observe" ||
           loc.view === "notes" ||
           loc.view === "questions" ||
@@ -814,8 +837,7 @@ export function App() {
           loc.view === "translateWords" ||
           loc.view === "translateScripture" ||
           loc.view === "translateAlign" ||
-          loc.view === "admin" ||
-          loc.view === "verse" ? (
+          loc.view === "admin" ? (
           // The new-UI flow screens replaced the classic Shell/TopBar, which
           // carried the org (workspace) switcher, the UI-language switcher, the
           // account menu (identity, dark mode, reading text size, sign out), and
@@ -834,8 +856,8 @@ export function App() {
           //
           // The "N unsaved drafts" reminder (UnsavedToasts) is intentionally NOT
           // mounted here — it requires a `book` in scope (Shell resolves it via
-          // its own useChapter instance), but most flow views (home, books, team,
-          // setup, style, curate, ai, observe, package, admin) have no
+          // its own useChapter instance), but most flow views (books, style,
+          // curate, ai, observe, package, admin) have no
           // book/chapter in `loc` at all. Hoisting it needs either new data
           // plumbing or a redesign of its in-place Save action — scoped as a
           // separate follow-up rather than risking a silent no-op or a
@@ -891,24 +913,12 @@ export function App() {
               </Stack>
             }
           >
-            {loc.view === "home" ? (
-              <HomeScreen role={auth.role} me={auth.me} onNavigate={navigate} />
-            ) : loc.view === "scripture" ? (
-              <ScriptureScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
-            ) : loc.view === "align" ? (
-              <AlignScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
-            ) : loc.view === "flowArticles" ? (
-              <ArticlesScreen role={auth.role} me={auth.me} onNavigate={navigate} />
-            ) : loc.view === "words" ? (
-              <WordsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
-            ) : loc.view === "ai" ? (
+            {loc.view === "ai" ? (
               <AiScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "style" ? (
               <StyleScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "curate" ? (
               <CurateScreen role={auth.role} me={auth.me} onNavigate={navigate} templateId={loc.templateId} />
-            ) : loc.view === "setup" ? (
-              <SetupScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "books" ? (
               <BooksScreen
                 role={auth.role}
@@ -922,8 +932,6 @@ export function App() {
                     : null)
                 }
               />
-            ) : loc.view === "team" ? (
-              <TeamScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "observe" ? (
               <ObserveScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "notes" ? (
@@ -938,18 +946,16 @@ export function App() {
               <TranslateScriptureScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
             ) : loc.view === "translateAlign" ? (
               <TranslateAlignScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} mode={loc.mode} />
-            ) : loc.view === "admin" ? (
-              loc.section === "team" ? (
-                <AdminTeamScreen role={auth.role} me={auth.me} onNavigate={navigate} />
-              ) : loc.section === "setup" ? (
-                <AdminSetupScreen role={auth.role} me={auth.me} onNavigate={navigate} />
-              ) : loc.section === "workflow" ? (
-                <AdminWorkflowScreen role={auth.role} me={auth.me} onNavigate={navigate} />
-              ) : (
-                <AdminProgressScreen role={auth.role} me={auth.me} onNavigate={navigate} />
-              )
+            ) : loc.section === "team" ? (
+              // Terminal arm: the guard above admits only the views handled
+              // here, so `admin` is what is left — TS narrows `loc` to it.
+              <AdminTeamScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : loc.section === "setup" ? (
+              <AdminSetupScreen role={auth.role} me={auth.me} onNavigate={navigate} />
+            ) : loc.section === "workflow" ? (
+              <AdminWorkflowScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : (
-              <VerseScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
+              <AdminProgressScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             )}
           </Suspense>
             </Box>

@@ -259,12 +259,13 @@ test("buildTnQuickRequest fails with hebrew_not_found for an English phrase that
 // ---------------------------------------------------------------------------
 
 // The call sites are DISCOVERED, not listed: a hardcoded list can't catch the
-// regression this test exists for — someone adding a fourth consumer and
+// regression this test exists for — someone adding another consumer and
 // forgetting the OL branch. KNOWN_CALL_SITES is only a floor, so a broken walk
 // (wrong root, changed layout) fails loudly instead of vacuously finding none.
+// ReviewQueue.tsx was a third call site until the old flows review queue was
+// retired with the rest of the old flows screens (#173).
 const KNOWN_CALL_SITES = [
   "src/components/Shell.tsx",
-  "src/components/ReviewQueue.tsx",
   "src/components/flows/TranslateNotesScreen.tsx",
 ];
 

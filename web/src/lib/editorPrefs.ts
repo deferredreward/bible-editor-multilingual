@@ -114,10 +114,11 @@ export function useNotePairAxis(): [NotePairAxis, (next: NotePairAxis) => void] 
 
 // ── Article rail collapse ───────────────────────────────────────────────────
 //
-// Whether the tW/tA article list rail (ArticleWorkspace.tsx and
-// ArticlesScreen.tsx) is fully collapsed to a slim strip. Shared between both
-// article viewers so collapsing it in one carries into the other. Defaults OFF
-// (rail shown) so nothing changes appearance until a translator opts in.
+// Whether the tW/tA article list rail (ArticleWorkspace.tsx) is fully collapsed
+// to a slim strip. The flows ArticlesScreen shared this key until it was retired
+// (#173); the pref stays a module-level setting so any future article viewer
+// inherits the same collapse state. Defaults OFF (rail shown) so nothing changes
+// appearance until a translator opts in.
 const ARTICLE_RAIL_COLLAPSED_KEY = "be:articleRailCollapsed";
 
 export function getArticleRailCollapsed(): boolean {
