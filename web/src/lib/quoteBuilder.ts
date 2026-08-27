@@ -45,16 +45,33 @@ interface UhbWord {
   trailing: string;
 }
 
-function collectUhbWords(verseObjects: unknown[]): UhbWord[] {
-  const out: UhbWord[] = [];
+// One raw \w node in document order, with the inter-word separator text that
+// trails it. This is the single source-word traversal the picker family shares
+// — quoteBuilder's `collectUhbWords` and QuoteBuilderPopper's chip list both
+// project off it, so POSITION means the same thing to every consumer and the
+// wrapper-descent rule lives in exactly one place (issue #364).
+export interface SourceWordNode {
+  node: Record<string, unknown>;
+  // 0-based document position among all \w tokens in this verse.
+  position: number;
+  // Text node(s) between this \w and the next one (space, or a Hebrew maqqef
+  // ־ for joined words). Callers that don't rejoin runs can ignore it.
+  trailing: string;
+}
+
+// Flatten the verse tree to its bare \w nodes in document order, descending
+// milestones, `\qs`-style character wrappers, and `\d` (Psalm superscription)
+// the same way `matchSourceTokens` / `highlight.ts` do. A `\qs`-wrapped source
+// \w is verse body, so it MUST be walked or the picker diverges from the
+// wrapper-aware matcher (post-#354) and pre-seeded chips can't be deselected.
+export function collectSourceWordNodes(verseObjects: unknown[]): SourceWordNode[] {
+  const out: SourceWordNode[] = [];
   function walk(nodes: unknown[]) {
     for (const node of nodes ?? []) {
       const o = node as Record<string, unknown> | null;
       if (!o) continue;
       if (o["type"] === "word" && o["tag"] === "w") {
-        const text = String(o["text"] ?? "");
-        const occurrence = parseInt(String(o["occurrence"] ?? "1"), 10) || 1;
-        out.push({ text, key: tokenKey(text, occurrence), occurrence, position: out.length, trailing: "" });
+        out.push({ node: o, position: out.length, trailing: "" });
       } else if (o["type"] === "text") {
         // Attach to the most recent word as its separator. usfm-js emits the
         // maqqef / inter-word space as a bare text sibling of the \w tokens.
@@ -62,23 +79,23 @@ function collectUhbWords(verseObjects: unknown[]): UhbWord[] {
         if (prev) prev.trailing += String(o["text"] ?? "");
       } else if (
         o["type"] === "milestone" ||
-        // \qs (Selah) and other character wrappers wrap alignable \w / \zaln
-        // content — descend them the same way matchSourceTokens does, or a
-        // \qs-wrapped source \w is invisible to the picker while the matcher
-        // (post-#354) sees it. CHARACTER_WRAPPER_TAGS is today just `qs`, so
-        // wrapper-less trees take the identical path.
         isCharacterWrapper(o) ||
-        // \d (Psalm superscription) is `type:"section"` but its content IS
-        // alignable verse body — descend like the highlight matchers do.
         (o["type"] === "section" && o["tag"] === "d")
       ) {
-        const children = (o["children"] as unknown[] | undefined) ?? [];
-        walk(children);
+        walk((o["children"] as unknown[] | undefined) ?? []);
       }
     }
   }
   walk(verseObjects);
   return out;
+}
+
+function collectUhbWords(verseObjects: unknown[]): UhbWord[] {
+  return collectSourceWordNodes(verseObjects).map(({ node, position, trailing }) => {
+    const text = String(node["text"] ?? "");
+    const occurrence = parseInt(String(node["occurrence"] ?? "1"), 10) || 1;
+    return { text, key: tokenKey(text, occurrence), occurrence, position, trailing };
+  });
 }
 
 export interface BuiltQuote {

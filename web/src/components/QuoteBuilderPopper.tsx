@@ -30,7 +30,7 @@ import {
   Tooltip,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
-import { collectTargetTokens, buildQuoteFromSelection, tokenKey } from "../lib/quoteBuilder";
+import { collectTargetTokens, buildQuoteFromSelection, tokenKey, collectSourceWordNodes } from "../lib/quoteBuilder";
 import type { HighlightKey } from "../lib/highlight";
 import type { SourceAncestor, TargetToken } from "../lib/quoteBuilder";
 import type { LexiconEntry } from "../hooks/useLexicon";
@@ -509,11 +509,13 @@ function chainSelected(
   return sources.every((a) => selectedKeys.has(a.key));
 }
 
-// Helper analogue of collectUhbWords (which is private in quoteBuilder).
-// We need the same shape here so the picker's UHB row mirrors what the
-// quote builder operates on, plus the per-word strong/lemma/morph so the
-// chip can render a SourceTooltipBody-driven lexicon hovercard. Kept
-// inline rather than exporting the internal helper.
+// The picker's UHB chip shape: the shared source-word walk plus the per-word
+// strong/lemma/morph the chip's SourceTooltipBody lexicon hovercard needs.
+// Projected off quoteBuilder's exported `collectSourceWordNodes` so the chip
+// list, the builder, and the wrapper-descent rule stay one traversal — a
+// private copy here silently diverged from the post-#354 wrapper-aware matcher
+// (it skipped `\qs` wrappers), so a pre-seeded wrapped chip couldn't be
+// deselected and positions drifted (issue #364).
 interface UhbChip {
   text: string;
   occurrence: number;
@@ -526,35 +528,13 @@ interface UhbChip {
 
 function collectUhbWords(verseObjects: unknown[] | null): UhbChip[] {
   if (!Array.isArray(verseObjects)) return [];
-  const out: UhbChip[] = [];
-  function walk(nodes: unknown[]) {
-    for (const node of nodes ?? []) {
-      const o = node as Record<string, unknown> | null;
-      if (!o) continue;
-      if (o["type"] === "word" && o["tag"] === "w") {
-        const text = String(o["text"] ?? "");
-        const occurrence = parseInt(String(o["occurrence"] ?? "1"), 10) || 1;
-        const occurrences = parseInt(String(o["occurrences"] ?? "1"), 10) || 1;
-        out.push({
-          text,
-          occurrence,
-          occurrences,
-          position: out.length,
-          strong: String(o["strong"] ?? ""),
-          lemma: String(o["lemma"] ?? ""),
-          morph: String(o["morph"] ?? ""),
-        });
-      } else if (
-        o["type"] === "milestone" ||
-        // \d (Psalm superscription) is `type:"section"` but its content IS
-        // alignable verse body — descend like the highlight matchers do.
-        (o["type"] === "section" && o["tag"] === "d")
-      ) {
-        const children = (o["children"] as unknown[] | undefined) ?? [];
-        walk(children);
-      }
-    }
-  }
-  walk(verseObjects);
-  return out;
+  return collectSourceWordNodes(verseObjects).map(({ node, position }) => ({
+    text: String(node["text"] ?? ""),
+    occurrence: parseInt(String(node["occurrence"] ?? "1"), 10) || 1,
+    occurrences: parseInt(String(node["occurrences"] ?? "1"), 10) || 1,
+    position,
+    strong: String(node["strong"] ?? ""),
+    lemma: String(node["lemma"] ?? ""),
+    morph: String(node["morph"] ?? ""),
+  }));
 }

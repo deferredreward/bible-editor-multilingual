@@ -99,6 +99,15 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, prevHighlight
         // Character wrappers (\qs Selah) hold \zaln / \w content; descend
         // them like milestones so a \qs-wrapped source \w still renders and
         // can carry the highlight key findSourceHighlights now emits for it.
+        // usfm-js also parks a childless `\qs Selah\qs*` (and an unclosed
+        // `\qs Selah`) as {tag:"qs", text:"Selah"} with NO children — mirror
+        // highlight.ts's wrapper branch and emit the wrapper's own text so
+        // Selah stays visible in those shapes (issue #364).
+        if (isCharacterWrapper(o) && typeof o["text"] === "string" && o["text"] !== "") {
+          items.push(
+            <span key={`t${items.length}`}>{String(o["text"])}</span>,
+          );
+        }
         walk((o["children"] as unknown[] | undefined) ?? []);
       }
     }
