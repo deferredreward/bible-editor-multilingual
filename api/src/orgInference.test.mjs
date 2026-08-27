@@ -6,6 +6,8 @@ import {
   parseManifestFacts,
   inferFromRepoList,
   selectCandidateRepos,
+  shortLabelFromTitle,
+  laneLabelFor,
 } from "./orgInference.ts";
 
 // ── Manifest fixtures ────────────────────────────────────────────────────────
@@ -371,4 +373,166 @@ test("fetchManifest: 404 is not_found and does not retry", async () => {
   const res = await fetchManifest({ DCS_SERVICE_TOKEN: "t" }, "Org", "repo", { fetch: fakeFetch });
   assert.equal(res.status, "not_found");
   assert.equal(count, 1);
+});
+
+// ── dublin_core.title → lane label (#365) ────────────────────────────────────
+
+const TITLED_LIT_MANIFEST = `
+dublin_core:
+  identifier: "glt"
+  title: "Gateway Literal Translation"
+  language:
+    identifier: "ar"
+    title: "العربية"
+    direction: "rtl"
+  subject: "Aligned Bible"
+  relation: []
+`;
+
+const TITLED_SIM_MANIFEST = `
+dublin_core:
+  identifier: "gst"
+  title: "Gateway Simplified Translation"
+  language: "ar"
+  subject: "Aligned Bible"
+  relation: []
+`;
+
+test("parseManifestFacts: extracts top-level dublin_core.title", () => {
+  const facts = parseManifestFacts(TITLED_LIT_MANIFEST);
+  assert.ok(facts);
+  assert.equal(facts.title, "Gateway Literal Translation");
+});
+
+test("parseManifestFacts: title is null when dublin_core has no title", () => {
+  // UW_BLOCK_MANIFEST (defined above) carries no top-level title.
+  const facts = parseManifestFacts(UW_BLOCK_MANIFEST);
+  assert.ok(facts);
+  assert.equal(facts.title, null);
+});
+
+test("shortLabelFromTitle: multi-word title becomes the acronym of initials", () => {
+  assert.equal(shortLabelFromTitle("Gateway Literal Translation"), "GLT");
+  assert.equal(shortLabelFromTitle("Gateway Simplified Translation"), "GST");
+  assert.equal(shortLabelFromTitle("Arabic Van Dyke"), "AVD");
+});
+
+test("shortLabelFromTitle: single-word title is truncated and uppercased", () => {
+  assert.equal(shortLabelFromTitle("Ketab"), "KETAB");
+  assert.equal(shortLabelFromTitle("Interconfessional"), "INTERCON"); // capped at 8
+});
+
+test("shortLabelFromTitle: a long acronym is capped at the badge limit", () => {
+  // 10 words -> 10 initials, capped to 8 chars.
+  assert.equal(
+    shortLabelFromTitle("One Two Three Four Five Six Seven Eight Nine Ten"),
+    "OTTFFSSE",
+  );
+});
+
+test("shortLabelFromTitle: the cap never splits a surrogate pair", () => {
+  // CJK Extension B letters are astral (2 UTF-16 units each): a UTF-16
+  // .slice(0, 8) would keep only 4 characters and cut the 5th in half,
+  // emitting a lone surrogate.
+  const cps = [];
+  for (let i = 0; i < 10; i++) cps.push(0x20000 + i);
+  const astral = String.fromCodePoint(...cps);
+  assert.equal(astral.length, 20); // 10 code points, 20 UTF-16 units
+  const label = shortLabelFromTitle(astral);
+  assert.equal(Array.from(label).length, 8);
+  assert.equal(label, String.fromCodePoint(...cps.slice(0, 8)));
+  for (const ch of label) assert.ok(ch.codePointAt(0) > 0xffff, "no lone surrogate");
+});
+
+test("shortLabelFromTitle: punctuation is stripped, empty/whitespace -> null", () => {
+  assert.equal(shortLabelFromTitle("  the Holy Bible!  "), "THB");
+  assert.equal(shortLabelFromTitle(""), null);
+  assert.equal(shortLabelFromTitle("   "), null);
+  assert.equal(shortLabelFromTitle(null), null);
+  assert.equal(shortLabelFromTitle(undefined), null);
+});
+
+const AVD_MANIFEST = `
+dublin_core:
+  identifier: "avd"
+  title: "الكتاب المقدس باللغة العربية، فان دايك"
+  language:
+    identifier: "ar"
+    title: "العربية"
+    direction: "rtl"
+  subject: "Bible"
+  relation: []
+`;
+
+test("laneLabelFor: the real BSOJ Arabic title yields AVD via identifier-first", () => {
+  const facts = parseManifestFacts(AVD_MANIFEST);
+  assert.ok(facts);
+  // The title heuristic alone is wrong here: Arabic titles front definite
+  // articles, so the 6 word initials collapse to mostly repeated alefs and the
+  // badge is Arabic script with no admin UI field to correct it. (Asserted
+  // structurally rather than as an RTL string literal, which mangles in source.)
+  const fromTitle = shortLabelFromTitle(facts.title);
+  assert.equal(Array.from(fromTitle).length, 6);
+  assert.ok(/^[؀-ۿ]+$/.test(fromTitle));
+  // identifier-first gives the resource's own ASCII short code instead.
+  assert.equal(laneLabelFor(facts, "ar_avd", "ar"), "AVD");
+});
+
+test("laneLabelFor: falls back title -> repo name when no identifier", () => {
+  assert.equal(
+    laneLabelFor({ identifier: null, title: "Gateway Literal Translation" }, "ar_glt", "ar"),
+    "GLT",
+  );
+  assert.equal(laneLabelFor({ identifier: "  ", title: null }, "ar_glt", "ar"), "GLT");
+  assert.equal(laneLabelFor(null, "ar_gst", "ar"), "GST");
+});
+
+test("inferFromRepoList: lane labels derive from the lit/sim manifest title", () => {
+  const repos = [
+    { name: "ar_tn" }, { name: "ar_tq" }, { name: "ar_twl" },
+    { name: "ar_tw" }, { name: "ar_ta" },
+    { name: "ar_glt" }, { name: "ar_gst" },
+  ];
+  const manifests = manifestMap({
+    ar_glt: parseManifestFacts(TITLED_LIT_MANIFEST),
+    ar_gst: parseManifestFacts(TITLED_SIM_MANIFEST),
+  });
+  const inf = inferFromRepoList("SomeNewOrg", repos, manifests);
+  assert.equal(inf.litRepo, "ar_glt");
+  assert.equal(inf.simRepo, "ar_gst");
+  assert.equal(inf.litLabel, "GLT"); // dublin_core.identifier "glt"
+  assert.equal(inf.simLabel, "GST"); // dublin_core.identifier "gst"
+});
+
+test("inferFromRepoList: the manifest identifier beats the repo name", () => {
+  // Only reachable difference inside inferFromRepoList: a repo named ar_glt
+  // whose manifest identifies as "ult" (still a valid lit identifier, so it is
+  // auto-assigned) labels ULT, not GLT.
+  const repos = [
+    { name: "ar_tn" }, { name: "ar_tq" }, { name: "ar_twl" },
+    { name: "ar_tw" }, { name: "ar_ta" },
+    { name: "ar_glt" },
+  ];
+  const manifests = manifestMap({
+    ar_glt: { language: "ar", relation: [], identifier: "ult", subject: "Aligned Bible", title: null },
+  });
+  const inf = inferFromRepoList("SomeNewOrg", repos, manifests);
+  assert.equal(inf.litRepo, "ar_glt");
+  assert.equal(inf.litLabel, "ULT");
+});
+
+test("inferFromRepoList: lane labels fall back to the repo name when the manifest has no title", () => {
+  const repos = [
+    { name: "ar_tn" }, { name: "ar_tq" }, { name: "ar_twl" },
+    { name: "ar_tw" }, { name: "ar_ta" },
+    { name: "ar_glt" }, { name: "ar_gst" },
+  ];
+  // Manifests verify the Bible subject but carry no top-level title.
+  const manifests = manifestMap({
+    ar_glt: { language: "ar", relation: [], identifier: "glt", subject: "Aligned Bible", title: null },
+    ar_gst: { language: "ar", relation: [], identifier: "gst", subject: "Aligned Bible", title: null },
+  });
+  const inf = inferFromRepoList("SomeNewOrg", repos, manifests);
+  assert.equal(inf.litLabel, "GLT"); // ar_glt -> GLT (repo-name slice)
+  assert.equal(inf.simLabel, "GST"); // ar_gst -> GST
 });
