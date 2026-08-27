@@ -1,8 +1,11 @@
 // Bulk chapter / whole-book review state for tn + tq (issue #296).
 //
 //   POST /api/books/:book/review-state        (admin only)
-//   body: { resources: ("tn"|"tq")[], chapter?: number,
-//           state: "validated" | "needs_review" }
+//   body: { resources: ("tn"|"tq")[], state: "validated" | "needs_review",
+//           chapter?: number, allChapters?: true }
+//
+//   One of `chapter` or `allChapters: true` is required — a whole-book sweep is
+//   thousands of rows and must be asked for, not arrived at by omission.
 //
 // Why this exists: when we import a body of existing work (Aquifer notes, a
 // partner's ar_tn, a prior gatewayEdit run) we sometimes DO know its real
@@ -42,12 +45,17 @@
 //    undo an approve. Rows that were validated by a HUMAN (no stamp) clear to
 //    'edited', matching per-row un-approve.
 //
-// 5. pre_draft_json: approval snapshots the now-published content, exactly like
-//    the per-row helper — for a never-drafted row there is no draft to preserve,
-//    and the snapshot of its current content is the right baseline: if a human
-//    later edits it (demoting it to 'edited'), the export ships the last
-//    approved content. Un-approve leaves the snapshot in place, matching per-row
-//    un-approve (docs/plan Design 2).
+// 5. pre_draft_json is written only where there is NONE (COALESCE), which is
+//    where this route deliberately parts company with the per-row helper. The
+//    per-row helper overwrites the snapshot on every approval — safe, because a
+//    human read that one row and approved its content. A sweep touches thousands
+//    of rows nobody read, and for an ai_draft/edited row the existing snapshot IS
+//    the last PUBLISHED content (Design 2, preDraftSnapshot.ts). Overwriting it
+//    would destroy that content permanently and make the sweep un-undoable: the
+//    clear would restore the state but the export would then ship the AI draft
+//    instead of the human's published text. So: a never-drafted row (no snapshot)
+//    gets one, giving it an approved baseline; a drafted row keeps the snapshot
+//    it had, and a clear puts its export behaviour back exactly where it was.
 //
 // 6. Trashed tn rows are never touched (`trashed_at IS NULL`), nor are
 //    tombstones (`deleted_at IS NULL`) — matching every other query. Nothing is
@@ -59,11 +67,33 @@
 // values). Every write here is set-based — one UPDATE and one INSERT..SELECT
 // audit per category — so the statement count is constant (<= 6 per resource)
 // no matter how many rows are in scope, and they go out in a single DB.batch().
+//
+// ── Known limits, accepted ───────────────────────────────────────────────────
+// - "Needs review" is not a rollback of everything an approve set in motion. If
+//   the nightly export already published the swept rows to master, clearing them
+//   SHRINKS the next render, which the TSV shrink guard (exportWorkflow.ts) will
+//   refuse — the book's export stalls with an alert until someone runs it with
+//   the shrink override. Undo the label promptly or expect that alert.
+// - The sweep writes one edit_log row per changed row, and chapters.ts reads the
+//   LATEST edit_log source per row for the 'ai_pipeline' chip — so an approve
+//   clears that chip across the scope, exactly as a per-row human approval does
+//   (rows.ts). A later clear does not bring the chip back.
+// - A bulk-approved row that no human has ever edited is still `updated_by NULL`,
+//   so the nightly reimport can still refresh its content from master while the
+//   row stays labelled 'validated' (isReimportableRow, reimportClassify.ts).
+//   Tracked separately; approving is a statement about review status, not a lock.
+// - The counts come from a SELECT taken just before the batch, so a concurrent
+//   write between the two can make the "already"/"skipped" numbers disagree with
+//   what was written by a hair. The `changed` figures come from the UPDATEs
+//   themselves and are exact.
+// - Multi-resource calls are not atomic across resources: tn is swept, then tq.
+//   A failure on the second leaves the first applied.
 
 import type { Context } from "hono";
 import type { Env } from "./index";
 import { currentUserId } from "./auth.ts";
 import { BOOK_NUMBERS } from "./dcsSources.ts";
+import { PRE_SWEEP_STATE, CAPTURE_PRE_SWEEP_STATE, RETIRE_STAMP } from "./adminBulkStamp.ts";
 
 /** edit_log.source written by this route — the audit-trail marker. */
 export const ADMIN_BULK_SOURCE = "admin_bulk_state";
@@ -85,6 +115,12 @@ export type ReviewStateCounts = {
   unvalidated: number;
   /** clear: rows already outside the approved set, left alone. */
   alreadyNeedsReview: number;
+  /**
+   * clear: rows carrying a stale stamp (swept, then moved on by a human edit or
+   * a new AI draft). Their state is left alone — only the stamp is retired — so
+   * they are counted in `alreadyNeedsReview` too, not in `changed`.
+   */
+  stampRetired: number;
   /** tn only — trashed rows are never touched. */
   skippedTrashed: number;
 };
@@ -98,6 +134,7 @@ function emptyCounts(total = 0, skippedTrashed = 0): ReviewStateCounts {
     restored: 0,
     unvalidated: 0,
     alreadyNeedsReview: 0,
+    stampRetired: 0,
     skippedTrashed,
   };
 }
@@ -148,7 +185,7 @@ function scope(
   return { where: parts.join(" AND "), binds };
 }
 
-type ScopeCounts = { total: number; trashed: number; validated: number; stamped: number };
+type ScopeCounts = { total: number; trashed: number; validated: number };
 
 /** Statement + binds pair, kept together so DB.batch() ordering is explicit. */
 type Stmt = { sql: string; binds: unknown[] };
@@ -162,8 +199,10 @@ function auditStmt(
   chapter: number | null,
   extraWhere: string,
 ): Stmt {
-  // Written BEFORE its UPDATE in the batch: the UPDATE changes the very columns
-  // this SELECT matches on, so afterwards the predicate would find nothing.
+  // Written BEFORE its UPDATE in the batch, because this UPDATE changes the very
+  // columns the SELECT matches on — afterwards the predicate would find nothing.
+  // (The per-row helpers in rows.ts audit AFTER their UPDATE; they can, because
+  // their guard column is one the UPDATE leaves matching.)
   // Version is carried unchanged (prev = new): a state flip is not a content
   // edit and must not invalidate an in-flight If-Match, exactly like the
   // per-row validate route.
@@ -201,8 +240,7 @@ export async function applyReviewState(
   const pre = await env.DB.prepare(
     `SELECT COUNT(*) AS total,
             ${spec.hasTrashed ? "SUM(CASE WHEN trashed_at IS NOT NULL THEN 1 ELSE 0 END)" : "0"} AS trashed,
-            SUM(CASE WHEN ${spec.hasTrashed ? "trashed_at IS NULL AND " : ""}translation_state = 'validated' THEN 1 ELSE 0 END) AS validated,
-            SUM(CASE WHEN ${spec.hasTrashed ? "trashed_at IS NULL AND " : ""}admin_bulk_state IS NOT NULL THEN 1 ELSE 0 END) AS stamped
+            SUM(CASE WHEN ${spec.hasTrashed ? "trashed_at IS NULL AND " : ""}translation_state = 'validated' THEN 1 ELSE 0 END) AS validated
        FROM ${spec.table} WHERE ${countScope.where}`,
   )
     .bind(...countScope.binds)
@@ -222,8 +260,8 @@ export async function applyReviewState(
         .prepare(
           `UPDATE ${spec.table}
               SET translation_state = 'validated',
-                  admin_bulk_state = COALESCE(translation_state, 'none'),
-                  pre_draft_json = ${spec.snapshotJson},
+                  admin_bulk_state = ${CAPTURE_PRE_SWEEP_STATE},
+                  pre_draft_json = COALESCE(pre_draft_json, ${spec.snapshotJson}),
                   updated_at = ?1
             WHERE ${up.where} AND ${NOT_YET_VALIDATED}`,
         )
@@ -245,13 +283,13 @@ export async function applyReviewState(
   const humanAudit = auditStmt(spec, resource, "unvalidate", userId, book, chapter, HUMAN_VALIDATED);
   const human = scope(spec, [now], book, chapter, { liveOnly: true });
 
-  const [, restored, , , unvalidated] = await env.DB.batch([
+  const [, restored, stampRetired, , unvalidated] = await env.DB.batch([
     env.DB.prepare(restoreAudit.sql).bind(...restoreAudit.binds),
     env.DB
       .prepare(
         `UPDATE ${spec.table}
-            SET translation_state = CASE admin_bulk_state WHEN 'none' THEN NULL ELSE admin_bulk_state END,
-                admin_bulk_state = NULL,
+            SET translation_state = ${PRE_SWEEP_STATE},
+                ${RETIRE_STAMP},
                 updated_at = ?1
           WHERE ${restore.where} AND ${SWEPT_AND_STILL_VALIDATED}`,
       )
@@ -262,7 +300,7 @@ export async function applyReviewState(
     env.DB
       .prepare(
         `UPDATE ${spec.table}
-            SET admin_bulk_state = NULL, updated_at = ?1
+            SET ${RETIRE_STAMP}, updated_at = ?1
           WHERE ${dropStamp.where} AND ${SWEPT_BUT_MOVED_ON}`,
       )
       .bind(...dropStamp.binds),
@@ -278,6 +316,10 @@ export async function applyReviewState(
 
   counts.restored = Number(restored.meta.changes ?? 0);
   counts.unvalidated = Number(unvalidated.meta.changes ?? 0);
+  counts.stampRetired = Number(stampRetired.meta.changes ?? 0);
+  // `changed` counts translation_state changes only — retiring a stale stamp
+  // leaves the row's state alone, so those rows are still "already needs
+  // review", just reported separately rather than looking untouched.
   counts.changed = counts.restored + counts.unvalidated;
   counts.alreadyNeedsReview = Math.max(0, total - trashed - counts.changed);
   return counts;
@@ -288,6 +330,13 @@ type ParsedBody = {
   chapter: number | null;
   state: "validated" | "needs_review";
 };
+
+// A whole-book sweep is thousands of rows, so it must be ASKED for: omitting
+// `chapter` is not enough, the caller also has to send allChapters: true. A
+// client that forgets to put the selected chapter in the body (or sends
+// `chapter: undefined` because nothing is selected) then gets a 400 instead of
+// silently sweeping the entire book.
+const CHAPTER_REQUIRED = "chapter_or_all_chapters_required";
 
 /** Hand-rolled instead of zod so the shape is testable without a Worker. */
 export function parseReviewStateBody(raw: unknown): { ok: true; body: ParsedBody } | { ok: false; error: string } {
@@ -311,6 +360,8 @@ export function parseReviewStateBody(raw: unknown): { ok: true; body: ParsedBody
     // Chapter 0 is real here (front-matter rows), so the floor is 0, not 1.
     if (!Number.isInteger(n) || n < 0 || n > 999) return { ok: false, error: "invalid_chapter" };
     chapter = n;
+  } else if (o.allChapters !== true) {
+    return { ok: false, error: CHAPTER_REQUIRED };
   }
 
   return { ok: true, body: { resources, chapter, state } };

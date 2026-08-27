@@ -37,6 +37,8 @@ import {
   VALIDATED_TN_EXAMPLES_SQL,
   VALIDATED_TQ_EXAMPLES_SQL,
 } from "./contextExport.ts";
+import { perRowStateExpr, RETIRE_STAMP } from "./adminBulkStamp.ts";
+import { exportGateDecision } from "./preDraftSnapshot.ts";
 
 let failed = 0;
 function assert(cond, msg) {
@@ -385,6 +387,7 @@ console.log("[needs_review] a swept row a human has since edited keeps its state
   assert(n1.note === "human rewrote it", "content untouched");
   assert(out.counts.tn.restored === 2, `only the still-swept rows are restored (got ${out.counts.tn.restored})`);
   assert(out.counts.tn.alreadyNeedsReview === 1, `the moved-on row counts as already needing review (got ${out.counts.tn.alreadyNeedsReview})`);
+  assert(out.counts.tn.stampRetired === 1, `the stale stamp is reported, not silently dropped (got ${out.counts.tn.stampRetired})`);
 }
 
 // ── whole-book sweep (chapter omitted) ──────────────────────────────────────
@@ -399,13 +402,120 @@ console.log("[scope] omitting chapter sweeps the whole book");
 
   const res = await post(app, env, "/api/books/ZEC/review-state", {
     token: tok,
-    body: { resources: ["tn"], state: "validated" },
+    body: { resources: ["tn"], state: "validated", allChapters: true },
   });
   const out = await res.json();
   assert(out.chapter === null, "response echoes chapter: null for a whole-book sweep");
   assert(row(db, "tn_rows", "n7").translation_state === "validated", "chapter 2 swept too");
   assert(out.counts.tn.total === 6, `whole-book total = 6 live rows (got ${out.counts.tn.total})`);
   assert(out.counts.tn.validated === 4, `whole-book validated = 4 (got ${out.counts.tn.validated})`);
+}
+
+// ── the sweep must not destroy a real pre_draft_json ────────────────────────
+
+console.log("[snapshot] approve never overwrites an existing pre_draft_json");
+{
+  const db = freshDb();
+  seed(db);
+  // n4 is an ai_draft whose snapshot holds the human text that was published
+  // before the AI overwrote it — Design 2's whole point.
+  db.prepare(`UPDATE tn_rows SET pre_draft_json = ? WHERE id = 'n4'`).run(
+    JSON.stringify({ note: "HUMAN PUBLISHED", tags: null }),
+  );
+  const app = buildApp();
+  const env = baseEnv(db);
+  const tok = await makeToken();
+
+  await post(app, env, "/api/books/ZEC/review-state", {
+    token: tok,
+    body: { resources: ["tn"], chapter: 1, state: "validated" },
+  });
+  assert(
+    JSON.parse(row(db, "tn_rows", "n4").pre_draft_json).note === "HUMAN PUBLISHED",
+    "the last-published snapshot survives the sweep",
+  );
+  // The never-drafted row had no snapshot, so it gets one (its approved baseline).
+  assert(
+    JSON.parse(row(db, "tn_rows", "n1").pre_draft_json).note === "imported",
+    "a row with no snapshot gets one on approval",
+  );
+
+  await post(app, env, "/api/books/ZEC/review-state", {
+    token: tok,
+    body: { resources: ["tn"], chapter: 1, state: "needs_review" },
+  });
+  // Round trip: the export gate's decision must be exactly what it was before
+  // the sweep, or a clear cannot undo an approve.
+  const n4 = row(db, "tn_rows", "n4");
+  const d = exportGateDecision(n4.translation_state, n4.pre_draft_json);
+  assert(
+    d.kind === "snapshot" && d.snapshot.note === "HUMAN PUBLISHED",
+    `after approve+clear the export still ships the human text (got ${d.kind})`,
+  );
+  const n1 = row(db, "tn_rows", "n1");
+  assert(
+    exportGateDecision(n1.translation_state, n1.pre_draft_json).kind === "current",
+    "the never-drafted row is back to its pre-sweep export decision",
+  );
+}
+
+// ── the per-row helpers share the stamp fragment (rows.ts) ──────────────────
+
+console.log("[per-row] un-approving a swept row restores its pre-sweep state");
+{
+  // Exercises the REAL fragment rows.ts builds its UPDATE from, the way
+  // trashedRowPatch.test.mjs exercises contentPatchClearClauses.
+  const db = freshDb();
+  seed(db);
+  const app = buildApp();
+  const env = baseEnv(db);
+  const tok = await makeToken();
+  await post(app, env, "/api/books/ZEC/review-state", {
+    token: tok,
+    body: { resources: ["tn"], chapter: 1, state: "validated" },
+  });
+
+  // setTnTranslationState's UPDATE, built from the shared fragments.
+  const perRow = (id, target) =>
+    db
+      .prepare(
+        `UPDATE tn_rows
+            SET translation_state = ${perRowStateExpr(1)}, updated_at = ?2, ${RETIRE_STAMP}
+          WHERE id = ?3 AND deleted_at IS NULL AND translation_state IS NOT NULL`,
+      )
+      .run(target, 1780000001, id);
+
+  perRow("n1", "edited"); // a translator un-approves the swept never-drafted row
+  const n1 = row(db, "tn_rows", "n1");
+  assert(n1.translation_state === null, "per-row un-approve restores the pre-sweep NULL, not 'edited'");
+  assert(n1.admin_bulk_state === null, "and retires the stamp");
+
+  perRow("n2", "edited"); // pre-sweep state was 'edited' anyway
+  assert(row(db, "tn_rows", "n2").translation_state === "edited", "pre-sweep 'edited' comes back as 'edited'");
+
+  perRow("n4", "validated"); // a human approves it for real
+  const n4 = row(db, "tn_rows", "n4");
+  assert(n4.translation_state === "validated", "per-row approve still validates");
+  assert(n4.admin_bulk_state === null, "a human approval retires the stamp");
+  assert(
+    db.prepare(VALIDATED_TN_EXAMPLES_SQL).all().map((r) => r.id).includes("n4"),
+    "the human-approved row is training gold again",
+  );
+
+  // An unstamped row is untouched by the CASE — nothing predating 0070 changes.
+  perRow("n3", "edited");
+  assert(row(db, "tn_rows", "n3").translation_state === "edited", "unstamped row falls through to the plain target state");
+}
+
+console.log("[per-row] rows.ts really uses the shared fragment");
+{
+  // Without this, deleting the rows.ts change leaves the whole suite green while
+  // the design's escape hatch (a human approval makes a swept row gold again,
+  // and an un-approval restores the pre-sweep state) silently stops working.
+  const src = readFileSync(new URL("./rows.ts", import.meta.url), "utf8");
+  assert(src.includes(`from "./adminBulkStamp.ts"`), "rows.ts imports the shared stamp fragments");
+  assert(src.split("perRowStateExpr(1)").length - 1 === 2, "both per-row state helpers (tn + tq) use perRowStateExpr");
+  assert(src.split("${RETIRE_STAMP}").length - 1 === 2, "both retire the stamp");
 }
 
 // ── request validation ──────────────────────────────────────────────────────
@@ -424,6 +534,9 @@ console.log("[validation] bad requests are rejected before any write");
     [{ resources: ["twl"], state: "validated" }, "invalid_resources"],
     [{ resources: ["tn"], chapter: -1, state: "validated" }, "invalid_chapter"],
     [{ resources: ["tn"], chapter: 1.5, state: "validated" }, "invalid_chapter"],
+    // A whole-book sweep must be asked for, not arrived at by omission.
+    [{ resources: ["tn"], state: "validated" }, "chapter_or_all_chapters_required"],
+    [{ resources: ["tn"], state: "validated", allChapters: false }, "chapter_or_all_chapters_required"],
   ];
   for (const [body, expected] of cases) {
     const r = await post(app, env, "/api/books/ZEC/review-state", { token: tok, body });
@@ -432,7 +545,7 @@ console.log("[validation] bad requests are rejected before any write");
   }
   const unknown = await post(app, env, "/api/books/XYZ/review-state", {
     token: tok,
-    body: { resources: ["tn"], state: "validated" },
+    body: { resources: ["tn"], state: "validated", allChapters: true },
   });
   assert(unknown.status === 400 && (await unknown.json()).error === "unknown_book", "unknown book -> 400");
 
@@ -446,8 +559,8 @@ console.log("[parser] chapter 0 is accepted, resources dedupe");
   const ok = parseReviewStateBody({ resources: ["tn", "tn", "tq"], chapter: 0, state: "validated" });
   assert(ok.ok && ok.body.chapter === 0, "chapter 0 accepted (front-matter rows)");
   assert(ok.ok && ok.body.resources.join(",") === "tn,tq", "duplicate resources deduped");
-  const noChap = parseReviewStateBody({ resources: ["tn"], state: "needs_review" });
-  assert(noChap.ok && noChap.body.chapter === null, "omitted chapter -> null (whole book)");
+  const noChap = parseReviewStateBody({ resources: ["tn"], state: "needs_review", allChapters: true });
+  assert(noChap.ok && noChap.body.chapter === null, "allChapters -> chapter null (whole book)");
 }
 
 if (failed) {

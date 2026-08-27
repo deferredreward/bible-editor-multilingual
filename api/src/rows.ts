@@ -9,6 +9,7 @@ import { newRowId } from "./rowId.ts";
 import { reopenLaneChecks } from "./laneReopen.ts";
 import { refParts, coveredVersesFromRef } from "./importParsers.ts";
 import { contentPatchClearClauses } from "./contentPatchClauses.ts";
+import { perRowStateExpr, RETIRE_STAMP } from "./adminBulkStamp.ts";
 import { normalizeBookCode, CHAPTER_EXISTS_SQL } from "./rowsCreateGuard.ts";
 import { boundHistoryToLastCreate } from "./rowHistoryBoundary.ts";
 
@@ -980,7 +981,10 @@ async function setTnTranslationState(
     : "";
   // A per-row human decision retires any admin-sweep provenance stamp (#296,
   // migration 0070): this row's state is a human's now, so it is eligible to be
-  // few-shot gold again (or, on un-approve, is a plain unapproved draft).
+  // few-shot gold again. Un-approving a row the sweep validated restores its
+  // PRE-SWEEP state rather than 'edited' — see perRowStateExpr in
+  // adminBulkStamp.ts. Unstamped rows (everything predating 0070) are
+  // unaffected: the CASE falls through to the plain target state.
   // Only rows that are ALREADY translation drafts (state non-NULL) can be
   // validated/un-validated. Without this guard a validate on a row the
   // translate pipeline never touched (translation_state IS NULL — e.g. a
@@ -992,7 +996,7 @@ async function setTnTranslationState(
     env.DB
       .prepare(
         `UPDATE tn_rows
-           SET translation_state = ?1, updated_at = ?2, admin_bulk_state = NULL${snapshotClause}
+           SET translation_state = ${perRowStateExpr(1)}, updated_at = ?2, ${RETIRE_STAMP}${snapshotClause}
          WHERE id = ?3 AND deleted_at IS NULL AND translation_state IS NOT NULL${bookClause(4)}`,
       )
       .bind(state, now, id, book),
@@ -1033,7 +1037,7 @@ async function setTqTranslationState(
     env.DB
       .prepare(
         `UPDATE tq_rows
-           SET translation_state = ?1, updated_at = ?2, admin_bulk_state = NULL${snapshotClause}
+           SET translation_state = ${perRowStateExpr(1)}, updated_at = ?2, ${RETIRE_STAMP}${snapshotClause}
          WHERE id = ?3 AND deleted_at IS NULL AND translation_state IS NOT NULL${bookClause(4)}`,
       )
       .bind(state, now, id, book),
