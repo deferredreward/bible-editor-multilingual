@@ -25,7 +25,7 @@
 // matches raw with no further work.
 
 import { nfc } from "./hebrew.ts";
-import { isInFlowMarker, isTsMilestone, liftMarkerText, SECTION_HEADER_TAGS } from "./usfm.ts";
+import { isCharacterWrapper, isInFlowMarker, isTsMilestone, liftMarkerText, SECTION_HEADER_TAGS } from "./usfm.ts";
 
 // U+2060 WORD JOINER glues UHB clitic morphemes to their host word
 // (הָ⁠אֶ֧בֶן); U+200D ZERO WIDTH JOINER plays the same role in some corpora.
@@ -173,11 +173,14 @@ function nodeIsPsalmTitle(n: unknown): n is Record<string, unknown> {
   return !!o && o["type"] === "section" && o["tag"] === "d";
 }
 
-// Collect every `\w` token in a subtree (descending through nested milestones
-// and \d sections), in document order. A merge group serializes as a chain of
-// nested `\zaln-s` with ALL its target words at the innermost level, so a run's
-// `targets` must be its whole subtree — see collectMilestoneRuns / atomic-group
-// note below.
+// Collect every `\w` token in a subtree (descending through nested milestones,
+// \d sections, and \qs-style character wrappers), in document order. A merge
+// group serializes as a chain of nested `\zaln-s` with ALL its target words at
+// the innermost level, so a run's `targets` must be its whole subtree — see
+// collectMilestoneRuns / atomic-group note below. A character wrapper
+// (`isCharacterWrapper`, e.g. a Selah aligned as `zaln → qs → w`) holds
+// alignable `\w` children too, so descend it or the wrapped words never enter
+// any run's target set and a quote naming that milestone highlights nothing.
 function collectSubtreeWords(children: unknown[]): WordToken[] {
   const out: WordToken[] = [];
   function walk(nodes: unknown[]) {
@@ -188,7 +191,7 @@ function collectSubtreeWords(children: unknown[]): WordToken[] {
           occurrence:
             parseInt(String((c as Record<string, unknown>)["occurrence"] ?? "1"), 10) || 1,
         });
-      } else if (nodeIsMilestone(c) || nodeIsPsalmTitle(c)) {
+      } else if (nodeIsMilestone(c) || nodeIsPsalmTitle(c) || isCharacterWrapper(c)) {
         walk(((c as Record<string, unknown>)["children"] as unknown[] | undefined) ?? []);
       }
     }
@@ -521,9 +524,12 @@ export function extractTargetSelectionText(
           seen.add(key);
           words.push(text);
         }
-      } else if (nodeIsMilestone(o) || nodeIsPsalmTitle(o)) {
+      } else if (nodeIsMilestone(o) || nodeIsPsalmTitle(o) || isCharacterWrapper(o)) {
         // \d (Psalm superscription) descends like a milestone — its inner
-        // \w tokens are alignable verse body. Mirrors collectMilestoneRuns.
+        // \w tokens are alignable verse body. A \qs-style character wrapper
+        // (isCharacterWrapper) likewise holds alignable \w children (e.g. a
+        // Selah aligned as `zaln → qs → w`). Mirrors collectSubtreeWords /
+        // collectMilestoneRuns.
         const children = (o["children"] as unknown[] | undefined) ?? [];
         walk(children);
       }
