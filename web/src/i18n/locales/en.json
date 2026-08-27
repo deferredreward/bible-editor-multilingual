@@ -3616,7 +3616,7 @@
     "aiDraft": {
       "unknownIssueType": "Issue type not recognized.",
       "unknownBook": "Unknown book code.",
-      "noHebrew": "Quote has no Hebrew characters.",
+      "noHebrew": "Quote has no Hebrew or Greek characters.",
       "hebrewNotValidated": "Couldn't validate Hebrew against the verse.",
       "contextTooLarge": "Verse context too large.",
       "rateLimited": "Rate limited — wait 30 s.",

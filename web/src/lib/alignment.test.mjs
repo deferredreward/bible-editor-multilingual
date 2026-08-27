@@ -3342,6 +3342,60 @@ const srcWordContents = (st) => st.groups.flatMap((g) => g.source).map((s) => ({
   );
 }
 
+// ─── Case: quote highlight descends \qs character wrappers (issue #331) ──
+//
+// A `\w` aligned inside a `\qs` character wrapper nested under a `\zaln-s`
+// milestone must still highlight. The real-world instance is a Selah aligned
+// as `zaln(ס) → qs → w("Selah")` (Psalms/Habakkuk). Before the fix,
+// collectSubtreeWords / extractTargetSelectionText descended only word / zaln
+// / \d nodes, so the wrapped word never entered the milestone run's target
+// set and a quote naming `ס` highlighted nothing.
+{
+  console.log("\n[Case] issue #331 — quote highlight inside \\qs wrapper (zaln → qs → w)");
+  // Built directly to isolate the highlight walk: a target verse whose single
+  // aligned word "Selah" sits inside a well-closed \qs wrapper (endTag "\\qs*")
+  // under a \zaln-s milestone carrying source content "ס".
+  const verseObjects = [
+    {
+      type: "milestone",
+      tag: "zaln",
+      content: "ס",
+      occurrence: 1,
+      occurrences: 1,
+      children: [
+        {
+          type: "quote",
+          tag: "qs",
+          endTag: "\\qs*",
+          children: [
+            {
+              type: "word",
+              tag: "w",
+              text: "Selah",
+              occurrence: 1,
+              occurrences: 1,
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const hl = findTargetHighlights(verseObjects, "ס", 1);
+  assert(
+    hl.has("Selah|1"),
+    `issue #331: quote "ס" highlights the \\qs-wrapped word Selah (got ${[...hl].join(",") || "<empty>"})`,
+  );
+
+  // The parallel walk in extractTargetSelectionText must descend the wrapper
+  // too, or the derived selection text is empty even when the highlight lit up.
+  const sel = extractTargetSelectionText(verseObjects, "ס", 1);
+  assert(
+    sel === "Selah",
+    `issue #331: extractTargetSelectionText resolves the \\qs-wrapped selection (got ${JSON.stringify(sel)})`,
+  );
+}
+
 // ─── Case 34: MRK 13:2 — punctuation inside a Greek quote (issue #322) ────
 //
 // Upstream en_tn quotes are cut straight out of the verse, so they carry the

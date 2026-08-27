@@ -109,6 +109,18 @@ import { SCRIPTURE_FONT_STACK } from "../../theme";
 export interface TranslateQuestionsScreenProps extends FlowScreenContext {
   book: string;
   chapter: number;
+  // Optional deep-link verse (a manual URL edit, or browser Back/Forward).
+  // Seeds the queue cursor to the first queue entry at or after this verse on
+  // mount/chapter change, and re-seeks it on any later same-chapter change to
+  // this prop (see the dedicated seek effect below) — without rebuilding the
+  // queue. Mirrors TranslateNotesScreen's `verse`.
+  verse?: number;
+  // Optional deep-link row id (#/questions/{book}/{ch}/{vs}?row={id}) — the
+  // SyncStatusBar "N unsaved" jump menu sends it so the cursor lands on the
+  // exact question holding the draft, not just the verse's first card. When the
+  // id isn't in the queue (a stale link) the verse seek still applies. Mirrors
+  // TranslateNotesScreen's `rowId`.
+  rowId?: string;
 }
 
 // A card finishes exactly one way: approved. "Edited" is a chip, not a terminal
@@ -403,6 +415,8 @@ function Lane({ label, text, labelFontFamily }: LaneProps) {
 export default function TranslateQuestionsScreen({
   book,
   chapter,
+  verse,
+  rowId,
 }: TranslateQuestionsScreenProps) {
   const { t } = useTranslation();
   const theme = useTheme();
@@ -477,9 +491,30 @@ export default function TranslateQuestionsScreen({
     setQueue({ key: chapterKey, ids: ordered.map((r) => r.id) });
     setStatuses(seed);
     setEditedIds(new Set());
-    setCursor(firstOpen < 0 ? 0 : firstOpen);
-    setView(ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
+    const rowIdx = rowId != null ? ordered.findIndex((r) => r.id === rowId) : -1;
+    if (rowIdx >= 0) {
+      // An exact question id wins over the verse seek — several questions can
+      // share a verse, and the id names the one the deep link (e.g. the
+      // "N unsaved" jump menu) actually meant. Mirrors TranslateNotesScreen.
+      setCursor(rowIdx);
+    } else if (verse != null) {
+      // A verse past the last question's verse has no >= match (-1); clamp to
+      // the last card rather than falling back to index 0.
+      const seekIdx = ordered.findIndex((r) => r.verse >= verse);
+      setCursor(seekIdx < 0 ? (ordered.length > 0 ? ordered.length - 1 : 0) : seekIdx);
+    } else {
+      setCursor(firstOpen < 0 ? 0 : firstOpen);
+    }
+    // A deep-linked verse or question always lands on the card view, even when
+    // every question is already approved — "done" would otherwise discard the
+    // requested target.
+    setView(verse != null || rowIdx >= 0 ? "cards" : ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
     setReviewing(false);
+    // `verse`/`rowId` deliberately not deps beyond this — this effect builds the
+    // queue and seeds its cursor once per mount/chapter change (the
+    // `queue?.key === chapterKey` guard above). A later same-chapter change to
+    // either is handled by the dedicated re-seek effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, book, chapter, queue, chapterKey]);
 
   const rowById = useMemo(() => {
@@ -493,6 +528,70 @@ export default function TranslateQuestionsScreen({
   const currentId = queueIds && cursor < queueIds.length ? queueIds[cursor] : null;
   const row = currentId ? (rowById.get(currentId) ?? null) : null;
   const statusedCount = queueIds ? queueIds.filter((id) => statuses[id]).length : 0;
+
+  // Re-seek the cursor when `verse`/`rowId` change while the queue is already
+  // built for the current chapter — e.g. editing the URL from #/questions/RUT/1
+  // to #/questions/RUT/1/9, or a second "N unsaved" jump to a different question
+  // in the same chapter. Cross-chapter deep links are handled by the queue
+  // rebuild above. Guarded on an actual change (via the refs) so it never fires
+  // on plain Prev/Next, a status change, or unrelated re-renders. Mirrors the
+  // notes screen's re-seek effect; `rowId` wins over `verse`.
+  const prevVerseRef = useRef(verse);
+  const prevRowIdRef = useRef(rowId);
+  useEffect(() => {
+    if (prevVerseRef.current === verse && prevRowIdRef.current === rowId) return;
+    prevVerseRef.current = verse;
+    prevRowIdRef.current = rowId;
+    if (!queueIds || queueIds.length === 0) return;
+    if (rowId != null) {
+      const rowIdx = queueIds.indexOf(rowId);
+      if (rowIdx >= 0) {
+        setCursor(rowIdx);
+        setView("cards");
+        return;
+      }
+    }
+    if (verse == null) {
+      // The verse segment was dropped (Back/Forward or a manual URL edit).
+      // Restore the same no-verse init the queue-build path uses.
+      const firstOpen = queueIds.findIndex((id) => !statuses[id]);
+      setCursor(firstOpen < 0 ? 0 : firstOpen);
+      setView(firstOpen < 0 ? "done" : "cards");
+      return;
+    }
+    const seekIdx = queueIds.findIndex((id) => (rowById.get(id)?.verse ?? -Infinity) >= verse);
+    setCursor(seekIdx < 0 ? queueIds.length - 1 : seekIdx);
+    setView("cards");
+  }, [verse, rowId, queueIds, rowById, statuses]);
+
+  // Question rows in THIS book holding persisted unsaved typing (IndexedDB
+  // drafts from this browser). Drives the list pane's "Unsaved" chip so a
+  // translator following the top bar's "N unsaved" jump can see exactly which
+  // question it meant — the open card's own live diff is covered by hasDiff.
+  // Mirrors TranslateNotesScreen's draftRowIds.
+  const [draftRowIds, setDraftRowIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    // `active` fences the subscription's initial async snapshot: subscribe()
+    // fires from a listAll() promise that unsubscribe does NOT cancel, so on a
+    // book change the outgoing effect's late snapshot could otherwise mark
+    // colliding row ids (ids are only unique per book) Unsaved.
+    let active = true;
+    const unsub = drafts.subscribe((list) => {
+      if (!active) return;
+      const ids = new Set<string>();
+      for (const d of list) {
+        if (d.quarantined) continue;
+        if (d.meta.kind === "row" && d.meta.rowKind === "tq" && d.meta.book === book) {
+          ids.add(d.meta.id);
+        }
+      }
+      setDraftRowIds(ids);
+    });
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, [book]);
 
   // ── editor state ─────────────────────────────────────────────────────────
   // One value + one baseline per field; one drafts record for the pair.
@@ -945,7 +1044,15 @@ export default function TranslateQuestionsScreen({
   // also re-enters review mode, exactly like the done list's own rows.
   const queueRow = (id: string, i: number) => {
     const r = rowById.get(id) ?? null;
-    const c = chipFor(id, r, id === currentId ? hasDiff : false);
+    // Persisted unsaved typing on a row that is NOT the open card wins over the
+    // saved verdict — a draft means the visible text differs from what the
+    // server holds, and hiding that behind "Approved" recreates the very
+    // can't-find-my-unsaved-edit gap this chip exists to close (the open card's
+    // live diff is chipFor's hasDiff branch). Mirrors the notes list rows.
+    const c =
+      id !== currentId && draftRowIds.has(id)
+        ? { kind: "edited" as FlowStatusKind, label: t("flowTranslate.status.unsaved") }
+        : chipFor(id, r, id === currentId ? hasDiff : false);
     const isSelected = !done && id === currentId;
     return (
       <Box
@@ -1165,7 +1272,11 @@ export default function TranslateQuestionsScreen({
             <Stack spacing={1.25}>
               {queueIds.map((id, i) => {
                 const r = rowById.get(id) ?? null;
-                const c = chipFor(id, r, false);
+                // Same Unsaved-wins precedence as the md+ list pane above.
+                const c =
+                  id !== currentId && draftRowIds.has(id)
+                    ? { kind: "edited" as FlowStatusKind, label: t("flowTranslate.status.unsaved") }
+                    : chipFor(id, r, false);
                 return (
                   <Box
                     key={id}
