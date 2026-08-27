@@ -423,16 +423,30 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
     () => indexLaneChecks(data?.verseLaneChecks ?? []),
     [data],
   );
+  // The chapter's highest real verse number, so a mistyped free-text ref
+  // ("1:2-200") clamps to the verses that exist instead of flooding the checkoff
+  // set up to NOTE_SPAN_CAP (issue #385). Includes verse_end so a range row at
+  // the chapter's tail isn't undercounted.
+  const maxVerse = useMemo(() => {
+    let max = 0;
+    for (const byStart of Object.values(data?.verses ?? {})) {
+      for (const dto of Object.values(byStart)) {
+        const end = dto.verse_end ?? dto.verse;
+        if (end > max) max = end;
+      }
+    }
+    return max;
+  }, [data?.verses]);
   const versesWithTn = useMemo(() => {
     const s = new Set<number>();
-    for (const r of data?.tn ?? []) for (const v of noteCoveredVerses(r)) s.add(v);
+    for (const r of data?.tn ?? []) for (const v of noteCoveredVerses(r, { maxVerse })) s.add(v);
     return s;
-  }, [data]);
+  }, [data, maxVerse]);
   const versesWithTq = useMemo(() => {
     const s = new Set<number>();
-    for (const r of data?.tq ?? []) for (const v of noteCoveredVerses(r)) s.add(v);
+    for (const r of data?.tq ?? []) for (const v of noteCoveredVerses(r, { maxVerse })) s.add(v);
     return s;
-  }, [data]);
+  }, [data, maxVerse]);
 
   const tiles = useMemo<VerseTile[]>(() => {
     if (!data) return [];

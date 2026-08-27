@@ -140,6 +140,30 @@ function mkVerse(verse, verseEnd, voCount = 1) {
   assert(cv(0, "1:intro") === "[0]", "intro ref → [0]");
   // Malformed huge range from free-text input is bounded (no runaway loop).
   assert(noteCoveredVerses({ verse: 1, ref_raw: "1:1-1000000000" }).length <= 402, "huge range is bounded");
+  // Without opts the 400-cap fallback is unchanged: "1:1-500" caps at a+400.
+  assert(
+    noteCoveredVerses({ verse: 1, ref_raw: "1:1-500" }).length === 401,
+    "no opts → 400-cap fallback (1..401)",
+  );
+  // opts.maxVerse clamps to the chapter's real size (issue #385): a mistyped
+  // "1:1-200" in a 20-verse chapter yields only verses 1..20.
+  {
+    const clamped = noteCoveredVerses({ verse: 2, ref_raw: "1:1-200" }, { maxVerse: 20 });
+    assert(clamped.length === 20, "maxVerse:20 clamps 1:1-200 to 20 verses");
+    assert(JSON.stringify(clamped) === JSON.stringify([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]), "clamped list is 1..20");
+    assert(clamped.every((v) => v <= 20), "no verse exceeds maxVerse");
+  }
+  // Single out-of-range segments are clamped too, but the leading row.verse is
+  // always kept even if ref_raw drifts above maxVerse.
+  assert(
+    JSON.stringify(noteCoveredVerses({ verse: 2, ref_raw: "1:205" }, { maxVerse: 20 })) === "[2]",
+    "maxVerse drops out-of-range single segment, keeps leading verse",
+  );
+  // A legitimate in-range ref is untouched by the clamp.
+  assert(
+    JSON.stringify(noteCoveredVerses({ verse: 2, ref_raw: "1:2-3" }, { maxVerse: 20 })) === "[2,3]",
+    "in-range bridge 1:2-3 unaffected by maxVerse:20",
+  );
 }
 
 // --- noteOverlapsRange ---

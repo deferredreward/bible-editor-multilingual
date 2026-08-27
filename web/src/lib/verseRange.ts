@@ -64,10 +64,31 @@ export function buildVerseIndex(
 // ref_raw on save). Contiguous ranges expand to every verse; comma segments are
 // unioned; "intro"/"front", cross-chapter ("3:2"), and malformed segments are
 // skipped. Returns a sorted, unique list — `[verse]` for the common singleton.
+//
+// `opts.maxVerse` — when a finite positive number, every added verse (both range
+// endpoints and single-segment numbers) is clamped to `<= maxVerse`, so a
+// mistyped free-text ref like "1:1-200" can't flood a chapter's flows lanes with
+// verses that don't exist. Callers that know the chapter's highest real verse
+// (from its `verses` map) should pass it; without it the `NOTE_SPAN_CAP` bound
+// below is the only backstop and behaviour is unchanged. The authoritative
+// leading `row.verse` is always included regardless of `maxVerse`.
 const NOTE_SPAN_CAP = 400;
 
-export function noteCoveredVerses(row: { verse: number; ref_raw?: string | null }): number[] {
+export function noteCoveredVerses(
+  row: { verse: number; ref_raw?: string | null },
+  opts?: { maxVerse?: number },
+): number[] {
   const covered = new Set<number>([row.verse]);
+  const max =
+    typeof opts?.maxVerse === "number" && Number.isFinite(opts.maxVerse) && opts.maxVerse > 0
+      ? opts.maxVerse
+      : null;
+  // Add v to the set, dropping anything past the chapter's real last verse when
+  // maxVerse is known. The leading row.verse is added unconditionally above.
+  const add = (v: number) => {
+    if (max != null && v > max) return;
+    covered.add(v);
+  };
   const ref = row.ref_raw;
   if (ref) {
     const colon = ref.indexOf(":");
@@ -80,22 +101,23 @@ export function noteCoveredVerses(row: { verse: number; ref_raw?: string | null 
       const dash = seg.indexOf("-");
       if (dash < 0) {
         const n = parseInt(seg, 10);
-        if (Number.isFinite(n)) covered.add(n);
+        if (Number.isFinite(n)) add(n);
         continue;
       }
       const a = parseInt(seg.slice(0, dash), 10);
       const b = parseInt(seg.slice(dash + 1), 10);
       if (!Number.isFinite(a)) continue;
       if (!Number.isFinite(b) || b < a) {
-        covered.add(a);
+        add(a);
         continue;
       }
       // Bound expansion so a malformed free-text ref (e.g. "1:1-1000000000"
       // typed into the TQ reference field) can't build a huge Set and hang the
-      // render/checkoff pass. NOTE_SPAN_CAP sits well above the largest real
-      // chapter (~176 verses).
-      const end = Math.min(b, a + NOTE_SPAN_CAP);
-      for (let v = a; v <= end; v++) covered.add(v);
+      // render/checkoff pass. When maxVerse is known the clamp in `add` bounds
+      // this to the chapter's real size; NOTE_SPAN_CAP sits well above the
+      // largest real chapter (~176 verses) as the fallback backstop.
+      const end = Math.min(b, a + NOTE_SPAN_CAP, max ?? Infinity);
+      for (let v = a; v <= end; v++) add(v);
     }
   }
   return [...covered].sort((x, y) => x - y);

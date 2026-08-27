@@ -1101,16 +1101,30 @@ export function Shell({
   // ("1:2-3") makes the Notes/Questions checkoff lane applicable on each verse
   // it renders under — matching noteOverlapsRange in ResourceColumn. Singletons
   // contribute one verse, the common case.
+  // The chapter's highest real verse number, so a mistyped free-text ref
+  // ("1:2-200") clamps to the verses that exist instead of flooding the checkoff
+  // set up to NOTE_SPAN_CAP (issue #385). Includes verse_end so a range row at
+  // the chapter's tail isn't undercounted.
+  const maxVerse = useMemo(() => {
+    let max = 0;
+    for (const byStart of Object.values(versesForTiles ?? {})) {
+      for (const dto of Object.values(byStart)) {
+        const end = dto.verse_end ?? dto.verse;
+        if (end > max) max = end;
+      }
+    }
+    return max;
+  }, [versesForTiles]);
   const versesWithTn = useMemo(() => {
     const s = new Set<number>();
-    for (const r of tnRowsForTiles ?? []) for (const v of noteCoveredVerses(r)) s.add(v);
+    for (const r of tnRowsForTiles ?? []) for (const v of noteCoveredVerses(r, { maxVerse })) s.add(v);
     return s;
-  }, [tnRowsForTiles]);
+  }, [tnRowsForTiles, maxVerse]);
   const versesWithTq = useMemo(() => {
     const s = new Set<number>();
-    for (const r of tqRowsForTiles ?? []) for (const v of noteCoveredVerses(r)) s.add(v);
+    for (const r of tqRowsForTiles ?? []) for (const v of noteCoveredVerses(r, { maxVerse })) s.add(v);
     return s;
-  }, [tqRowsForTiles]);
+  }, [tqRowsForTiles, maxVerse]);
   const tileSet = useMemo<VerseTile[]>(() => {
     if (!versesForTiles) return [];
     const versesWithSomething = new Set<number>();

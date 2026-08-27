@@ -725,7 +725,23 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   // single-verse `Index[row.verse]` lookup silently dropped the rest (issue
   // #341). `noteCoveredVerses` returns `[row.verse]` for the common singleton
   // (and for intro rows), so those lanes are unchanged.
-  const coveredVerses = useMemo(() => (row ? noteCoveredVerses(row) : []), [row]);
+  // The chapter's highest real verse number, so a mistyped free-text ref
+  // ("1:2-200") is clamped to the verses that actually exist instead of flooding
+  // the lanes up to NOTE_SPAN_CAP (issue #385).
+  const maxVerse = useMemo(() => {
+    let max = 0;
+    for (const byStart of Object.values(data?.verses ?? {})) {
+      for (const dto of Object.values(byStart)) {
+        const end = dto.verse_end ?? dto.verse;
+        if (end > max) max = end;
+      }
+    }
+    return max;
+  }, [data?.verses]);
+  const coveredVerses = useMemo(
+    () => (row ? noteCoveredVerses(row, { maxVerse }) : []),
+    [row, maxVerse],
+  );
   const ultLane = useMemo(
     () => coveredLaneSlices(ultIndex, sourceIndex, coveredVerses),
     [ultIndex, sourceIndex, coveredVerses],
