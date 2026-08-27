@@ -118,7 +118,7 @@ import {
   noteRefLabel,
 } from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
-import { tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
+import { introRedoTimeoutMs, tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
 import { resolveFlowChipStatus, flowChipKind, type FlowChipStatus } from "../../lib/flowStatusChip";
 import { flowLaneSegmentsAcross, type FlowSegment } from "../../lib/flowHighlight";
 import { isHebrewBook } from "../../lib/sourceSearch";
@@ -159,10 +159,6 @@ type CardStatus = "approved" | "skipped";
 // Content width. The mockup is a 430px phone shell; 480 keeps the same one-column
 // reading measure while giving desktop a little more room for long notes.
 const COLUMN_PX = 480;
-
-// Escape hatch for intro Redo: single-row translate rarely needs this long, but
-// the spinner must not stick forever if onComplete never fires.
-const INTRO_REDO_TIMEOUT_MS = 15 * 60 * 1000;
 
 // tA article type, derived from the row's support reference:
 // "rc://*/ta/man/translate/figs-metaphor" → slug "figs-metaphor". The display
@@ -1122,12 +1118,18 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
         setEditing(false);
         keepSpinningForPipeline = true;
         clearIntroRedoTimer();
+        // Scale the stuck-spinner budget to what start() actually returned. An
+        // `already_running` answer means we latched onto a broader in-flight
+        // job (chapter-wide, ~1h) instead of a fresh single-row run; the old
+        // fixed 15-minute timer misreported that healthy job as a `timeout`
+        // failure (#376). A cancel/dismiss still settles early via the store
+        // subscriptions; this timer is only the last-resort backstop.
         introRedoTimerRef.current = window.setTimeout(() => {
           settleIntroRedo(
             { job_id: started.jobId, state: "failed", error_message: "timeout" },
             { timedOut: true },
           );
-        }, INTRO_REDO_TIMEOUT_MS);
+        }, introRedoTimeoutMs(started.status));
         // Race: completion may have fired before the ref was set. If the
         // store already shows a terminal row, settle now instead of spinning.
         const existing = pipelineStore.get(started.jobId);
