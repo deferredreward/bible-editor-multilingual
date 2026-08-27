@@ -11,7 +11,8 @@ import {
   concatSourceRange,
   noteCoveredVerses,
   noteOverlapsRange,
-  combineCoveredLane,
+  coveredLaneSlices,
+  noteRefLabel,
 } from "./verseRange.ts";
 
 let failed = 0;
@@ -157,7 +158,8 @@ function mkVerse(verse, verseEnd, voCount = 1) {
   assert(!noteOverlapsRange(single, 6, 6), "singleton hidden elsewhere");
 }
 
-// --- combineCoveredLane (issue #341: flows notes multi-verse text) ---
+// --- coveredLaneSlices (issue #341: flows notes multi-verse text; the slices
+// stay separate so per-verse occurrence numbering can't double-mark — #344) ---
 {
   const dto = (verse, text, tokens, verse_end = null) => ({
     book: "MRK",
@@ -172,51 +174,126 @@ function mkVerse(verse, verseEnd, voCount = 1) {
     content: { verseObjects: tokens },
   });
   const w = (t) => ({ type: "word", tag: "w", text: t });
+  const noSource = buildVerseIndex({});
 
-  // Singleton note: one verse in, that verse's text/tokens out (no change).
+  // Singleton note: one verse in, one slice out carrying that verse's text/tokens.
   {
     const index = buildVerseIndex({ 26: dto(26, "the Son", [w("the"), w("Son")]) });
-    const out = combineCoveredLane(index, noteCoveredVerses({ verse: 26, ref_raw: "13:26" }));
+    const out = coveredLaneSlices(
+      index,
+      noSource,
+      noteCoveredVerses({ verse: 26, ref_raw: "13:26" }),
+    );
+    assert(out.slices.length === 1, "singleton note → one lane slice");
     assert(out.plainText === "the Son", "singleton lane plain_text unchanged");
-    assert(Array.isArray(out.verseObjects) && out.verseObjects.length === 2, "singleton lane keeps its 2 tokens");
+    assert(
+      Array.isArray(out.slices[0].verseObjects) && out.slices[0].verseObjects.length === 2,
+      "singleton lane keeps its 2 tokens",
+    );
   }
 
-  // Bridged note 13:26-27: both verses' text and tokens are concatenated, with a
-  // separator text node inserted between them.
+  // Bridged note 13:26-27: one slice per verse, trees kept separate, plain_text
+  // joined for the lane's unhighlighted rendering.
   {
     const index = buildVerseIndex({
       26: dto(26, "in clouds", [w("in"), w("clouds")]),
       27: dto(27, "the Son of Man", [w("the"), w("Son"), w("of"), w("Man")]),
     });
-    const out = combineCoveredLane(index, noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }));
-    assert(out.plainText === "in clouds the Son of Man", "bridge lane concatenates both verses' plain_text");
-    // 2 + 1 separator + 4 = 7 nodes.
-    assert(out.verseObjects.length === 7, "bridge lane concatenates tokens with a separator");
-    const sep = out.verseObjects[2];
-    assert(sep && sep.type === "text" && sep.text === " ", "separator text node between verses");
+    const out = coveredLaneSlices(
+      index,
+      noSource,
+      noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }),
+    );
+    assert(out.slices.length === 2, "bridge note → one slice per covered verse");
+    assert(out.slices[0].verseObjects.length === 2, "first slice keeps verse 26's tokens only");
+    assert(out.slices[1].verseObjects.length === 4, "second slice keeps verse 27's tokens only");
+    assert(
+      out.plainText === "in clouds the Son of Man",
+      "bridge lane joins both verses' plain_text",
+    );
   }
 
   // A scripture row that is itself a USFM bridge (verse_end) is mapped under
-  // every integer it spans by buildVerseIndex; it must be combined only ONCE.
+  // every integer it spans by buildVerseIndex; it must yield ONE slice.
   {
     const index = buildVerseIndex({ 26: dto(26, "bridged text", [w("bridged"), w("text")], 27) });
-    const out = combineCoveredLane(index, noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }));
+    const out = coveredLaneSlices(
+      index,
+      noSource,
+      noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }),
+    );
+    assert(out.slices.length === 1, "bridge scripture row yields one slice");
     assert(out.plainText === "bridged text", "bridge scripture row not duplicated");
-    assert(out.verseObjects.length === 2, "bridge scripture row tokens counted once");
+    assert(out.slices[0].verseObjects.length === 2, "bridge scripture row tokens counted once");
+  }
+
+  // The OL verse of every covered verse rides along on its own slice, so each
+  // verse is highlighted against its own source.
+  {
+    const src = (verse, tokens) => ({ ...dto(verse, null, tokens), bible_version: "UGNT" });
+    const index = buildVerseIndex({
+      26: dto(26, "v26", [w("a")]),
+      27: dto(27, "v27", [w("b")]),
+    });
+    const sourceIndex = buildVerseIndex({
+      26: src(26, [w("ἐγώ")]),
+      27: src(27, [w("αὐτός")]),
+    });
+    const out = coveredLaneSlices(
+      index,
+      sourceIndex,
+      noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }),
+    );
+    assert(out.slices[0].sourceVerseObjects[0].text === "ἐγώ", "slice 26 carries verse 26's source");
+    assert(
+      out.slices[1].sourceVerseObjects[0].text === "αὐτός",
+      "slice 27 carries verse 27's source",
+    );
   }
 
   // Missing verse in the range is skipped without blanking the lane.
   {
     const index = buildVerseIndex({ 26: dto(26, "only 26", [w("only")]) });
-    const out = combineCoveredLane(index, noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }));
+    const out = coveredLaneSlices(
+      index,
+      noSource,
+      noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }),
+    );
+    assert(out.slices.length === 1, "missing verse 27 → only verse 26 sliced");
     assert(out.plainText === "only 26", "missing verse 27 → verse 26 text still shown");
   }
 
-  // No matching verses at all → null lane (Lane renders its empty state).
+  // No matching verses at all → no slices (Lane renders its empty state).
   {
-    const out = combineCoveredLane(buildVerseIndex({}), [26, 27]);
-    assert(out.verseObjects === null && out.plainText === null, "empty index → null lane");
+    const out = coveredLaneSlices(buildVerseIndex({}), noSource, [26, 27]);
+    assert(out.slices.length === 0 && out.plainText === null, "empty index → empty lane");
   }
+}
+
+// --- noteRefLabel (#344 review: the chip must name what the lanes show) ---
+{
+  assert(
+    noteRefLabel({ chapter: 13, verse: 26, ref_raw: "13:26" }) === "13:26",
+    "singleton ref_raw rendered verbatim",
+  );
+  assert(
+    noteRefLabel({ chapter: 13, verse: 26, ref_raw: "13:26-27" }) === "13:26-27",
+    "same-chapter bridge shows the range",
+  );
+  assert(
+    noteRefLabel({ chapter: 13, verse: 26, ref_raw: "13:26,28" }) === "13:26,28",
+    "discontinuous same-chapter ref shows both verses",
+  );
+  // noteCoveredVerses deliberately drops the cross-chapter segment, so the lanes
+  // show verse 26 only — the label must not advertise 14:2.
+  assert(
+    noteRefLabel({ chapter: 13, verse: 26, ref_raw: "13:26-14:2" }) === "13:26",
+    "cross-chapter range falls back to the leading verse",
+  );
+  assert(
+    noteRefLabel({ chapter: 13, verse: 26, ref_raw: null }) === "13:26",
+    "absent ref_raw falls back to chapter:verse",
+  );
 }
 
 if (failed) {

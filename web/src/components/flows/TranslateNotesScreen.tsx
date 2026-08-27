@@ -111,10 +111,15 @@ import { useProjectConfig, isTranslationProject } from "../../hooks/useProjectCo
 import { useSourceNotes } from "../../hooks/useSourceNotes";
 import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { resolveSourceRef } from "../../lib/sourceRef";
-import { buildVerseIndex, combineCoveredLane, noteCoveredVerses } from "../../lib/verseRange";
+import {
+  buildVerseIndex,
+  coveredLaneSlices,
+  noteCoveredVerses,
+  noteRefLabel,
+} from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
 import { tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
-import { flowLaneSegments, type FlowSegment } from "../../lib/flowHighlight";
+import { flowLaneSegmentsAcross, type FlowSegment } from "../../lib/flowHighlight";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { realChapters } from "../../lib/bookSummary";
 import { drafts, rowKey } from "../../sync/drafts";
@@ -720,21 +725,14 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   // #341). `noteCoveredVerses` returns `[row.verse]` for the common singleton
   // (and for intro rows), so those lanes are unchanged.
   const coveredVerses = useMemo(() => (row ? noteCoveredVerses(row) : []), [row]);
-  const sourceLane = useMemo(
-    () => combineCoveredLane(sourceIndex, coveredVerses),
-    [sourceIndex, coveredVerses],
-  );
   const ultLane = useMemo(
-    () => combineCoveredLane(ultIndex, coveredVerses),
-    [ultIndex, coveredVerses],
+    () => coveredLaneSlices(ultIndex, sourceIndex, coveredVerses),
+    [ultIndex, sourceIndex, coveredVerses],
   );
   const ustLane = useMemo(
-    () => combineCoveredLane(ustIndex, coveredVerses),
-    [ustIndex, coveredVerses],
+    () => coveredLaneSlices(ustIndex, sourceIndex, coveredVerses),
+    [ustIndex, sourceIndex, coveredVerses],
   );
-  const sourceVo = sourceLane.verseObjects;
-  const ultVo = ultLane.verseObjects;
-  const ustVo = ustLane.verseObjects;
   const ultText = ultLane.plainText;
   const ustText = ustLane.plainText;
 
@@ -747,15 +745,19 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   // `text|occurrence` key is highlighted gets its own <mark>. The old
   // contiguous-substring search over plain_text highlighted nothing when the
   // matched words scattered, and hit the wrong instance for occurrence > 1.
+  //
+  // Across a bridged note's span each verse is highlighted on its own —
+  // occurrence numbers are per verse, so one combined tree double-marks tokens
+  // that share a surface form across the boundary (#344 review).
   const rowQuote = row?.quote ?? null;
   const rowOccurrence = row?.occurrence ?? 1;
   const ultSegments = useMemo(
-    () => flowLaneSegments(ultVo, ultText, rowQuote, rowOccurrence, sourceVo),
-    [ultVo, ultText, rowQuote, rowOccurrence, sourceVo],
+    () => flowLaneSegmentsAcross(ultLane.slices, rowQuote, rowOccurrence),
+    [ultLane, rowQuote, rowOccurrence],
   );
   const ustSegments = useMemo(
-    () => flowLaneSegments(ustVo, ustText, rowQuote, rowOccurrence, sourceVo),
-    [ustVo, ustText, rowQuote, rowOccurrence, sourceVo],
+    () => flowLaneSegmentsAcross(ustLane.slices, rowQuote, rowOccurrence),
+    [ustLane, rowQuote, rowOccurrence],
   );
 
   const mark = useCallback(
@@ -1514,11 +1516,10 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
                   ? t("flowTranslate.introRefLong", { book, chapter: row.chapter })
                   : // `ref_raw` ("13:26" or bridged "13:26-27") is the authoritative
                     // reference and the only place a note's range lives (tn_rows has
-                    // no verse_end); render it like the classic NoteCard, falling back
-                    // to the leading-verse form when it's absent. (issue #341)
-                    row.ref_raw
-                    ? `${book} ${row.ref_raw}`
-                    : `${book} ${row.chapter}:${row.verse}`}
+                    // no verse_end); render it like the classic NoteCard, but only
+                    // when it names the span the lanes actually show — see
+                    // noteRefLabel. (issue #341)
+                    `${book} ${noteRefLabel(row)}`}
               </Typography>
               <Lane
                 label={litLabel}
@@ -1822,7 +1823,9 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
           <Typography sx={{ fontWeight: 600, fontSize: "0.97rem" }}>
             {r.verse === 0
               ? t("flowTranslate.introRef", { chapter: r.chapter })
-              : `${r.chapter}:${r.verse}`}
+              : // Same range-aware label as the card's chip, so a bridged row
+                // reads "13:26-27" in the list too (#344 review).
+                noteRefLabel(r)}
           </Typography>
           <Typography
             variant="body2"
