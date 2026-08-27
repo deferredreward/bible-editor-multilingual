@@ -91,7 +91,9 @@ interface Props {
   // origin version so the server can mark the new edit_log entry + row
   // column for chip-label purposes.
   onSave: (patch: Partial<TnRow>, opts?: { restoredFromVersion?: number }) => void;
-  onDelete: () => void;
+  // Resolves false when the trash request failed, so handleDelete can leave the
+  // user's unsaved text alone (see the comment there).
+  onDelete: () => void | Promise<boolean | void>;
   onRestore: () => void;
   onInsertAfter: () => void;
   onFocus?: () => void;
@@ -756,13 +758,34 @@ function NoteCardInner({
     });
   };
 
-  const handleDelete = () => {
+  // Trash discards any unsaved edits — but only AFTER the server accepts the
+  // trash. Discarding up front destroyed the user's typing whenever the request
+  // failed (the parent reverts its optimistic flip and the card is editable
+  // again, so there is nothing left to restore it from). The parent owns the
+  // drafts.clear on its success path; the card only has to stop holding the
+  // discarded text — the optimistic trashed_at flips `readOnly` immediately, so
+  // the persist effect above can't re-create the record in the meantime (issue
+  // #359, mirroring the flows fix in #349/#353). A later restore then brings
+  // back the server note, not the discarded text.
+  const handleDelete = async () => {
+    const ok = await onDelete();
+    if (ok === false) return;
     pendingRef.current = {};
     setSessionSnapshot(null);
-    // Drop any draft so the delete doesn't get followed by a phantom save
-    // from a still-dirty buffer.
-    void drafts.clear(rowKey("tn", row.book, row.id));
-    onDelete();
+    const savedQuote = savedRef.current.quote ?? "";
+    const savedNote = savedRef.current.note;
+    const savedSupportRef = savedRef.current.support_reference;
+    setQuote(tsvToDisplay(savedQuote));
+    setNote(tsvToDisplay(savedNote));
+    setSupportRef(savedSupportRef);
+    // Mirror handleUndo: the parent row cache carries mid-typing optimistic
+    // values from stashEdit, so reset it too or a remount re-inflates the text
+    // we just discarded.
+    onChange({
+      quote: savedQuote,
+      note: savedNote,
+      support_reference: savedSupportRef,
+    });
   };
 
   // Apply a historical snapshot. The patch goes through the normal save
@@ -1379,7 +1402,7 @@ function NoteCardInner({
               </IconButton>
             </Tooltip>
             <Tooltip title={t("noteCard.deleteNote")}>
-              <IconButton size="small" aria-label={t("noteCard.deleteNote")} onClick={handleDelete} color="error" sx={{ p: 0.25 }}>
+              <IconButton size="small" aria-label={t("noteCard.deleteNote")} onClick={() => void handleDelete()} color="error" sx={{ p: 0.25 }}>
                 <DeleteOutlineIcon fontSize="inherit" />
               </IconButton>
             </Tooltip>
