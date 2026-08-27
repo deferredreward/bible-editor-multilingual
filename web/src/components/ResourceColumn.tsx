@@ -91,7 +91,9 @@ interface Props {
     patch: Partial<TnRow>,
     opts?: { restoredFromVersion?: number },
   ) => void;
-  onNoteDelete: (id: string) => void;
+  // Resolves false when the trash request failed — NoteCard keeps the user's
+  // unsaved text in that case (see NoteCard.handleDelete).
+  onNoteDelete: (id: string) => void | Promise<boolean | void>;
   onNoteRestore: (id: string) => void;
   onNoteInsertAfter: (refId: string) => void;
   onNoteReorder: (draggedId: string, refId: string, position: DropPosition) => void;

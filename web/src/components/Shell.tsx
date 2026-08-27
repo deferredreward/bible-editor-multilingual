@@ -40,7 +40,7 @@ import {
   type TextLaneCheck,
 } from "../lib/laneChecks";
 import { ChapterBoard } from "./ChapterBoard";
-import { drafts, verseKey } from "../sync/drafts";
+import { drafts, rowKey, verseKey } from "../sync/drafts";
 import { generationForSavedPlain } from "../sync/draftSaveState";
 import { alignmentDrafts, alignmentDraftKey } from "../sync/alignmentDrafts";
 import {
@@ -1012,13 +1012,24 @@ export function Shell({
       try {
         const updated = await api.trashNote(id, book);
         applyLocalRowReplacement("tn", updated);
+        // Trash discards unsaved edits — drop any orphan draft record for the
+        // row so it stops counting toward the "N unsaved" reminder (issue
+        // #359). This is the ONLY drafts.clear on the trash path, deliberately
+        // on the success side: a failed trash must leave the user's unsaved
+        // text intact. NoteCard.handleDelete waits on the boolean below before
+        // snapping its own editor buffer to server truth (and the card is
+        // already `readOnly` from the optimistic trashed_at, so its persist
+        // effect can't re-create this record in between).
+        void drafts.clear(rowKey("tn", book, id));
         // Trash bypasses the outbox, so refresh the lint chip directly — a
         // trashed note leaves the lint set (trashed_at IS NULL filter).
         scheduleLintRefetch();
+        return true;
       } catch (e) {
         applyLocalRowPatch("tn", id, { trashed_at: null });
         const msg = e instanceof Error ? e.message : t("appShell.common.unknownError");
         pushPipelineToast(t("shell.couldntDeleteNote", { message: msg }), "error");
+        return false;
       }
     },
     [book, applyLocalRowPatch, applyLocalRowReplacement, pushPipelineToast, scheduleLintRefetch, t],
