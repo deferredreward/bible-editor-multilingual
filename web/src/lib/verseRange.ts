@@ -13,6 +13,9 @@
 // reading `verses[bv][n]` directly.
 
 import type { VerseDto } from "../sync/api";
+// Explicit `.ts` — these modules are run directly by the node --strip-types
+// test runner, where extensionless specifiers don't resolve.
+import { extractPlainText } from "./usfm.ts";
 
 export type VerseSpan = readonly [start: number, end: number];
 
@@ -169,14 +172,31 @@ export function concatSourceRange(
   };
 }
 
-function verseObjectsOf(dto: VerseDto | undefined): unknown[] | null {
+// The verse tree of a scripture row, or null when the row carries none. The
+// same `content.verseObjects` cast was hand-rolled in a dozen components; this
+// is the one copy (#351).
+export function verseObjectsOf(dto: VerseDto | null | undefined): unknown[] | null {
   const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
   return Array.isArray(vo) ? vo : null;
 }
 
+// Marker between two verses inside a lane that renders several verses as one
+// run of text. Without it a discontinuous ref like "13:26,28" reads as one
+// continuous sentence with verse 27 silently elided, and a wide range
+// concatenates with nothing to say where each verse begins (#351). Subtle on
+// purpose — a broken bar plus the number of the verse that follows, which is
+// what a printed Bible interleaves. `verse` is the first verse of the text
+// that follows the marker.
+export function verseBoundaryText(verse: number): string {
+  return ` ¦${verse} `;
+}
+
 // One verse's slice of a scripture lane, paired with the original-language
-// verse the highlighter should anchor against.
+// verse the highlighter should anchor against. `verse` is the leading verse of
+// the lane row this slice renders (the row's own start, so a USFM bridge row
+// reports the verse its text actually begins at).
 export interface CoveredLaneSlice {
+  verse: number;
   verseObjects: unknown[] | null;
   plainText: string | null;
   sourceVerseObjects: unknown[] | null;
@@ -204,7 +224,7 @@ export interface CoveredLaneSlice {
 // ("2,4") covers only its listed verses.
 export function coveredLaneSlices(
   laneIndex: Record<number, VerseDto>,
-  sourceIndex: Record<number, VerseDto>,
+  sourceIndex: Record<number, VerseDto> | undefined,
   coveredVerses: number[],
 ): { slices: CoveredLaneSlice[]; plainText: string | null } {
   const sliceOf = new Map<VerseDto, CoveredLaneSlice>();
@@ -216,16 +236,25 @@ export function coveredLaneSlices(
     let slice = sliceOf.get(laneDto);
     if (!slice) {
       const vo = verseObjectsOf(laneDto);
+      const verseObjects = vo && vo.length > 0 ? vo : null;
+      // `plainText` must cover exactly the verses the tree renders. A row whose
+      // `plain_text` column is empty but whose tree carries tokens used to
+      // contribute to the rendered slice yet vanish from the joined string —
+      // silently partial for any lane that renders the string (tq) or falls
+      // back to it (#351). Extract from the tree instead, the same walk
+      // flowHighlight mirrors, so both paths show the same verses.
+      const stored = typeof laneDto.plain_text === "string" ? laneDto.plain_text : "";
+      const plain = stored || (verseObjects ? extractPlainText(verseObjects) : "");
       slice = {
-        verseObjects: vo && vo.length > 0 ? vo : null,
-        plainText:
-          typeof laneDto.plain_text === "string" && laneDto.plain_text ? laneDto.plain_text : null,
+        verse: laneDto.verse,
+        verseObjects,
+        plainText: plain ? plain : null,
         sourceVerseObjects: null,
       };
       sliceOf.set(laneDto, slice);
       slices.push(slice);
     }
-    const sourceDto = sourceIndex[v];
+    const sourceDto = sourceIndex?.[v];
     if (!sourceDto || seenSource.has(sourceDto)) continue;
     seenSource.add(sourceDto);
     const sourceVo = verseObjectsOf(sourceDto);
@@ -242,10 +271,18 @@ export function coveredLaneSlices(
       slice.sourceVerseObjects = sourceVo;
     }
   }
-  const texts = slices
-    .map((s) => s.plainText)
-    .filter((tx): tx is string => typeof tx === "string" && tx.length > 0);
-  return { slices, plainText: texts.length > 0 ? texts.join(" ") : null };
+  // Join with a verse marker rather than a bare space so a multi-verse lane
+  // says where each verse starts (#351). A single slice is untouched, so the
+  // common singleton note's lane text is byte-identical to `plain_text`.
+  let plainText: string | null = null;
+  for (const slice of slices) {
+    if (!slice.plainText) continue;
+    plainText =
+      plainText === null
+        ? slice.plainText
+        : plainText + verseBoundaryText(slice.verse) + slice.plainText;
+  }
+  return { slices, plainText };
 }
 
 // The reference label for a note/question row: `ref_raw` when it names exactly
