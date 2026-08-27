@@ -1203,6 +1203,151 @@ const qsWrap = (selahStrong = "H5542") => ({
   assert(selahAfter && selahAfter.strongs.includes("H5542"), "'Selah' keeps its \\zaln (H5542) alignment through the edit");
 }
 
+// ─── Case 47c: an inline wrapper span must not cross a segment boundary (#357) ─
+// `\qs Selah` with no `\qs*` is a real corpus shape (Case 47), and usfm-js nests
+// EVERYTHING that follows — including the next `\q1` line — under the unclosed
+// wrapper. segmentByParagraphs opened `<span class="be-qs">`, then walk(children)
+// pushed a NEW segment (a new block-level <div>) for that `\q1`, and appended the
+// `</span>` to whichever segment was current by then: crossing HTML
+// (`<div>…<span></div><div></span>…`). The browser repairs that by dropping the
+// following line's text from the render, while extractEditableText still surfaces
+// it — so Shell's no-op guard sees a difference it did not cause and a blur/Save
+// can silently delete that line. The pre-existing `\d` branch had the same shape.
+// Fix: close the open spans in the segment that opened them and re-open them
+// inside the new segment.
+//
+// A generic tag-nesting validator, not a substring match: the failure mode IS the
+// nesting, and a substring check ("does the html contain Selah") passed on the
+// broken output too.
+function nestingErrors(html) {
+  const errs = [];
+  const stack = [];
+  const re = /<(\/?)([A-Za-z][\w-]*)\b[^>]*?(\/?)>/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const [, closing, name, selfClosing] = m;
+    if (selfClosing) continue;
+    if (closing) {
+      const top = stack.pop();
+      if (top !== name) errs.push(`</${name}> closes <${top ?? "nothing"}> in ${JSON.stringify(html)}`);
+    } else {
+      stack.push(name);
+    }
+  }
+  if (stack.length > 0) errs.push(`unclosed <${stack.join(">, <")}> in ${JSON.stringify(html)}`);
+  return errs;
+}
+// textContent of an HTML string — what the contenteditable's DOM actually holds,
+// which is what Shell.saveVerseDraft diffs against extractEditableText.
+const htmlTextContent = (html) =>
+  html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&#8203;/g, "​")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+
+{
+  console.log("\n[Case 47c] Unclosed \\qs wrapper: span stays inside its segment (#357)");
+  const target = String.raw`\id PSA
+\c 3
+\q1
+\v 8 \zaln-s |x-strong="H3068" x-content="יְהוָה"\*\w Salvation|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*. \qs \zaln-s |x-strong="H5542" x-lemma="סֶלָה" x-content="סֶלָה"\*\w Selah|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*
+\q1 next line here
+`;
+  const tvo = usfm.toJSON(target).chapters["3"]["8"].verseObjects;
+  // Guard the premise: usfm-js really did nest the \q1 under the unclosed \qs.
+  const qs = tvo.find((n) => n && n.tag === "qs");
+  assert(!!qs && qs.endTag === "", "usfm-js parsed \\qs as an unclosed wrapper");
+  assert(
+    !!qs && (qs.children ?? []).some((c) => c && c.tag === "q1"),
+    "usfm-js nested the following \\q1 UNDER the unclosed \\qs (the shape under test)",
+  );
+
+  for (const [label, html] of [
+    ["renderHighlightedHTML", renderHighlightedHTML(tvo, new Set())],
+    ["renderEditableHTML", renderEditableHTML(tvo, new Set())],
+  ]) {
+    assert(nestingErrors(html).length === 0, `${label}: valid nesting — ${nestingErrors(html).join("; ")}`);
+    assert(html.includes("Selah"), `${label}: renders "Selah" (got ${JSON.stringify(html)})`);
+    assert(
+      html.includes("next line here"),
+      `${label}: renders the line that follows the unclosed wrapper (got ${JSON.stringify(html)})`,
+    );
+    assert(html.includes('class="be-qs"'), `${label}: the wrapper still carries its .be-qs styling class`);
+  }
+
+  // The save-path guard, in the style of Case 47b (c1): the DOM textContent the
+  // contenteditable holds must equal the diff baseline, or Shell's no-op guard
+  // misses and a zero-typing blur fires a PATCH that drops the missing line.
+  const baseline = extractEditableText({ verseObjects: tvo });
+  const displayed = htmlTextContent(renderEditableHTML(tvo, new Set()));
+  assert(
+    normalizeEditable(displayed) === baseline,
+    `displayed textContent matches the diff baseline (displayed ${JSON.stringify(normalizeEditable(displayed))} vs baseline ${JSON.stringify(baseline)})`,
+  );
+
+  // And a real edit far from the wrapper still round-trips both halves.
+  const typed = displayed.replace("Salvation", "Rescue");
+  assert(typed !== displayed, "the edit landed on the displayed text");
+  const edited = smartEditVerse({ verseObjects: tvo }, baseline, typed);
+  assert(edited.plainText.includes("Selah"), `edit keeps "Selah" (got ${JSON.stringify(edited.plainText)})`);
+  assert(edited.plainText.includes("next line here"), "edit keeps the line after the unclosed wrapper");
+  const selahKept = alignedWords(edited.content).find((x) => x.text === "Selah");
+  assert(selahKept && selahKept.strongs.includes("H5542"), "'Selah' keeps its \\zaln alignment through the edit");
+}
+
+// ─── Case 47d: the same span-crossing shape in the \d branch (#357) ────────────
+// `\d` (Psalm superscription) is handled by its own `.be-d` inline span, with the
+// identical open-span / walk-children / close-span structure, so it carried the
+// identical latent bug.
+//
+// The node shape is assembled rather than parsed end-to-end, and that is
+// deliberate: usfm-js 3.5.0 assigns `type:"section"` ONLY to \s…\s5
+// (node_modules/usfm-js/lib/js/USFM.js — `d:` carries just `display:true`), so
+// `usfm.toJSON` never emits the `{type:"section", tag:"d"}` node this branch and
+// every other \d-descending walk in the codebase keys on. The CHILDREN — which
+// are what the bug is about — are parsed from real USFM, so the nested-marker
+// shape under test is genuine and not hand-invented.
+{
+  console.log("\n[Case 47d] \\d superscription: span stays inside its segment (#357)");
+  const inner = String.raw`\id PSA
+\c 3
+\p
+\v 1 \zaln-s |x-strong="H4210" x-content="מִזְמוֹר"\*\w A psalm|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*
+\q1 next line here
+`;
+  const innerVo = usfm.toJSON(inner).chapters["3"]["1"].verseObjects;
+  assert(
+    innerVo.some((n) => n && n.tag === "q1"),
+    "the parsed \\d children really contain a nested in-flow \\q1 marker",
+  );
+  const tvo = [{ type: "section", tag: "d", children: innerVo }];
+
+  for (const [label, html] of [
+    ["renderHighlightedHTML", renderHighlightedHTML(tvo, new Set())],
+    ["renderEditableHTML", renderEditableHTML(tvo, new Set())],
+  ]) {
+    assert(nestingErrors(html).length === 0, `${label}: valid nesting — ${nestingErrors(html).join("; ")}`);
+    assert(html.includes("A psalm"), `${label}: renders the superscription (got ${JSON.stringify(html)})`);
+    assert(
+      html.includes("next line here"),
+      `${label}: renders the line nested after the \\d (got ${JSON.stringify(html)})`,
+    );
+    assert(html.includes('class="be-d"'), `${label}: the superscription still carries its .be-d styling class`);
+  }
+
+  const baseline = extractEditableText({ verseObjects: tvo });
+  const displayed = htmlTextContent(renderEditableHTML(tvo, new Set()));
+  assert(
+    normalizeEditable(displayed) === baseline,
+    `displayed textContent matches the diff baseline (displayed ${JSON.stringify(normalizeEditable(displayed))} vs baseline ${JSON.stringify(baseline)})`,
+  );
+}
+
 // Transplant detector: for the ORIGINAL verse, record the set of milestone
 // strongs each aligned surface text ever sat under. A result \w is a TRANSPLANT
 // iff its innermost milestone strong was never held by ANY aligned instance of

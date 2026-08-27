@@ -692,6 +692,54 @@ function segmentByParagraphs(
   const segments: Segment[] = [{ wrapper: "", tag: null, html: "", isBlank: false }];
   let current = segments[0];
 
+  // Inline styling spans (`.be-qs`, `.be-d`) that are currently open, innermost
+  // last. Each segment becomes its own block-level <div>, so a span may never
+  // cross a segment boundary — but an in-flow marker NESTED inside one of these
+  // wrappers does push a new segment mid-span. usfm-js nests everything that
+  // follows an unclosed `\qs Selah` under the wrapper, including the next
+  // `\q1`, so this is a real corpus shape (see Case 47/47b). Emitting the
+  // `</span>` into whatever segment happened to be current then produced
+  // crossing HTML (`<div>…<span></div><div></span>…`), which the browser
+  // repairs by dropping the following line's text — while extractEditableText
+  // still surfaces it, so Shell's no-op guard misses and a blur/Save can
+  // silently delete that line (#357). Instead: close the open spans in the
+  // segment that opened them and re-open them inside the new segment, which
+  // both keeps the HTML well-formed and keeps the unclosed wrapper's styling
+  // applied to the content it actually still wraps.
+  const openSpans: string[] = [];
+  // True when `openSpans` have been carried into `current` but not yet written
+  // to its html. Re-opening lazily keeps a segment that ends up with no content
+  // genuinely empty, so segmentsToHtml's empty-segment drop still fires.
+  let pendingSpans = false;
+
+  function emit(html: string) {
+    if (pendingSpans) {
+      for (const cls of openSpans) current.html += `<span class="${cls}">`;
+      pendingSpans = false;
+    }
+    current.html += html;
+  }
+  function openSpan(cls: string) {
+    emit(`<span class="${cls}">`);
+    openSpans.push(cls);
+  }
+  function closeSpan() {
+    openSpans.pop();
+    // Nothing was written into this segment yet, so there is no tag to close.
+    if (pendingSpans) {
+      pendingSpans = openSpans.length > 0;
+      return;
+    }
+    current.html += "</span>";
+  }
+  function switchSegment(seg: Segment) {
+    if (!pendingSpans) {
+      for (let i = 0; i < openSpans.length; i++) current.html += "</span>";
+    }
+    current = seg;
+    pendingSpans = openSpans.length > 0;
+  }
+
   function walk(nodes: unknown[]) {
     for (const node of nodes ?? []) {
       const o = node as Record<string, unknown> | null;
@@ -710,14 +758,14 @@ function segmentByParagraphs(
         // `\d` handling and the isInFlowMarker(...) && !isCharacterWrapper(...)
         // guard the other walks (extractPlainText/extractEditableText,
         // collectSubtreeWords) already use.
-        current.html += '<span class="be-qs">';
+        openSpan("be-qs");
         if (typeof o["text"] === "string" && o["text"] !== "") {
-          current.html += escapeHtml(String(o["text"]));
+          emit(escapeHtml(String(o["text"])));
         }
         if (Array.isArray(o["children"])) {
           walk(o["children"] as unknown[]);
         }
-        current.html += "</span>";
+        closeSpan();
         continue;
       }
       if (isInFlowMarker(o)) {
@@ -734,10 +782,21 @@ function segmentByParagraphs(
           // \ts\* is a standalone chunk divider — anything that follows
           // (text, the next paragraph marker, ...) belongs to a fresh
           // segment, not inside the divider block.
-          current = { wrapper: "", tag: null, html: "", isBlank: false };
-          segments.push(current);
+          const after: Segment = { wrapper: "", tag: null, html: "", isBlank: false };
+          segments.push(after);
+          switchSegment(after);
         } else {
-          current = seg;
+          switchSegment(seg);
+        }
+        // Leading text usfm-js parked on the marker node (`\q1 next line here`).
+        // liftMarkerText splits this out into a following text node, but only at
+        // the TOP level — it does not descend — so a marker nested under an
+        // unclosed `\qs` still carries its whole line here. Dropping it lost that
+        // line from the render while extractEditableText kept it, which is the
+        // other half of the #357 content-drop. No-op on already-lifted top-level
+        // markers (they carry no text); mirrors extractEditableText.
+        if (typeof o["text"] === "string" && o["text"] !== "") {
+          emit(escapeHtml(String(o["text"])));
         }
         continue;
       }
@@ -752,21 +811,21 @@ function segmentByParagraphs(
       // alignable Hebrew. Render inline with `.be-d` styling so children
       // (\zaln-s milestones, \w words) still walk and align.
       if (o["type"] === "section" && o["tag"] === "d") {
-        current.html += '<span class="be-d">';
+        openSpan("be-d");
         if (Array.isArray(o["children"]) && (o["children"] as unknown[]).length > 0) {
           walk(o["children"] as unknown[]);
         } else if (typeof o["text"] === "string") {
-          current.html += escapeHtml(String(o["text"]));
+          emit(escapeHtml(String(o["text"])));
         }
-        current.html += "</span>";
+        closeSpan();
         continue;
       }
       if (o["type"] === "text") {
-        current.html += escapeHtml(String(o["text"] ?? ""));
+        emit(escapeHtml(String(o["text"] ?? "")));
       } else if (nodeIsWord(o)) {
         const text = String(o["text"] ?? "");
         const occurrence = parseInt(String(o["occurrence"] ?? "1"), 10) || 1;
-        current.html += renderWord(text, occurrence);
+        emit(renderWord(text, occurrence));
       } else if (nodeIsMilestone(o)) {
         const children = (o["children"] as unknown[] | undefined) ?? [];
         walk(children);
