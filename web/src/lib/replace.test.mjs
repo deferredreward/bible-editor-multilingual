@@ -1213,8 +1213,9 @@ const qsWrap = (selahStrong = "H5542") => ({
 // following line's text from the render, while extractEditableText still surfaces
 // it — so Shell's no-op guard sees a difference it did not cause and a blur/Save
 // can silently delete that line. The pre-existing `\d` branch had the same shape.
-// Fix: close the open spans in the segment that opened them and re-open them
-// inside the new segment.
+// Fix: a segment switch closes every span open in the segment that opened it,
+// and does not re-open it in the new one — the content still renders, and the
+// wrapper's styling stays scoped to the line it was written on.
 //
 // A generic tag-nesting validator, not a substring match: the failure mode IS the
 // nesting, and a substring check ("does the html contain Selah") passed on the
@@ -1278,6 +1279,14 @@ const htmlTextContent = (html) =>
       `${label}: renders the line that follows the unclosed wrapper (got ${JSON.stringify(html)})`,
     );
     assert(html.includes('class="be-qs"'), `${label}: the wrapper still carries its .be-qs styling class`);
+    // The styling is scoped to the segment that opened it. Re-opening the span
+    // in the new segment would also balance, but it renders every remaining line
+    // of the verse in Selah's italic/muted treatment — an unclosed `\qs` is
+    // malformed data, not an instruction to style the rest of the verse.
+    assert(
+      (html.match(/class="be-qs"/g) ?? []).length === 1,
+      `${label}: .be-qs does not leak onto the following line (got ${JSON.stringify(html)})`,
+    );
   }
 
   // The save-path guard, in the style of Case 47b (c1): the DOM textContent the
@@ -1338,6 +1347,10 @@ const htmlTextContent = (html) =>
       `${label}: renders the line nested after the \\d (got ${JSON.stringify(html)})`,
     );
     assert(html.includes('class="be-d"'), `${label}: the superscription still carries its .be-d styling class`);
+    assert(
+      (html.match(/class="be-d"/g) ?? []).length === 1,
+      `${label}: .be-d does not leak onto the following line (got ${JSON.stringify(html)})`,
+    );
   }
 
   const baseline = extractEditableText({ verseObjects: tvo });

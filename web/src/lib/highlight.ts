@@ -692,52 +692,57 @@ function segmentByParagraphs(
   const segments: Segment[] = [{ wrapper: "", tag: null, html: "", isBlank: false }];
   let current = segments[0];
 
-  // Inline styling spans (`.be-qs`, `.be-d`) that are currently open, innermost
-  // last. Each segment becomes its own block-level <div>, so a span may never
-  // cross a segment boundary — but an in-flow marker NESTED inside one of these
-  // wrappers does push a new segment mid-span. usfm-js nests everything that
-  // follows an unclosed `\qs Selah` under the wrapper, including the next
-  // `\q1`, so this is a real corpus shape (see Case 47/47b). Emitting the
-  // `</span>` into whatever segment happened to be current then produced
-  // crossing HTML (`<div>…<span></div><div></span>…`), which the browser
-  // repairs by dropping the following line's text — while extractEditableText
-  // still surfaces it, so Shell's no-op guard misses and a blur/Save can
-  // silently delete that line (#357). Instead: close the open spans in the
-  // segment that opened them and re-open them inside the new segment, which
-  // both keeps the HTML well-formed and keeps the unclosed wrapper's styling
-  // applied to the content it actually still wraps.
-  const openSpans: string[] = [];
-  // True when `openSpans` have been carried into `current` but not yet written
-  // to its html. Re-opening lazily keeps a segment that ends up with no content
-  // genuinely empty, so segmentsToHtml's empty-segment drop still fires.
-  let pendingSpans = false;
+  // Inline styling spans (`.be-qs`, `.be-d`) currently open, innermost last.
+  // Each segment becomes its own block-level <div>, so a span may never cross a
+  // segment boundary — but an in-flow marker NESTED inside one of these wrappers
+  // does push a new segment mid-span. usfm-js nests everything that follows an
+  // unclosed `\qs Selah` under the wrapper, including the next `\q1`, so this is
+  // a real corpus shape (see Case 47/47b). Emitting the `</span>` into whatever
+  // segment happened to be current then produced crossing HTML
+  // (`<div>…<span></div><div></span>…`), which the browser repairs by dropping
+  // the following line's text — while extractEditableText still surfaces it, so
+  // Shell's no-op guard misses and a blur/Save can silently delete that line
+  // (#357).
+  //
+  // So a segment switch CLOSES every span open in the segment that opened it,
+  // and does not re-open it in the new one. The styling is deliberately scoped
+  // to the opening segment: an unclosed `\qs` is malformed data whose author
+  // meant to write `\qs Selah\qs*`, and re-opening would render every remaining
+  // line of the verse in Selah's italic/muted treatment. Closing degrades
+  // gracefully instead — Selah keeps its cue, the rest of the verse reads as
+  // ordinary body text.
+  //
+  // `live` is false once a segment switch has retired the span — it stays on the
+  // stack so the matching `closeSpan` still balances, but it never styles
+  // anything again. `emitted` says whether its opening tag is actually written
+  // into `current`; opening lazily means an empty wrapper leaves no
+  // `<span></span>` husk to defeat segmentsToHtml's empty-segment drop, and
+  // `closeSpan` never writes a closer for a tag that was never opened.
+  const openSpans: { cls: string; live: boolean; emitted: boolean }[] = [];
 
   function emit(html: string) {
-    if (pendingSpans) {
-      for (const cls of openSpans) current.html += `<span class="${cls}">`;
-      pendingSpans = false;
+    for (const s of openSpans) {
+      if (s.live && !s.emitted) {
+        current.html += `<span class="${s.cls}">`;
+        s.emitted = true;
+      }
     }
     current.html += html;
   }
   function openSpan(cls: string) {
-    emit(`<span class="${cls}">`);
-    openSpans.push(cls);
+    openSpans.push({ cls, live: true, emitted: false });
   }
   function closeSpan() {
-    openSpans.pop();
-    // Nothing was written into this segment yet, so there is no tag to close.
-    if (pendingSpans) {
-      pendingSpans = openSpans.length > 0;
-      return;
-    }
-    current.html += "</span>";
+    const s = openSpans.pop();
+    if (s?.emitted) current.html += "</span>";
   }
   function switchSegment(seg: Segment) {
-    if (!pendingSpans) {
-      for (let i = 0; i < openSpans.length; i++) current.html += "</span>";
+    for (let i = openSpans.length - 1; i >= 0; i--) {
+      if (openSpans[i].emitted) current.html += "</span>";
+      openSpans[i].emitted = false;
+      openSpans[i].live = false;
     }
     current = seg;
-    pendingSpans = openSpans.length > 0;
   }
 
   function walk(nodes: unknown[]) {
@@ -794,8 +799,11 @@ function segmentByParagraphs(
         // unclosed `\qs` still carries its whole line here. Dropping it lost that
         // line from the render while extractEditableText kept it, which is the
         // other half of the #357 content-drop. No-op on already-lifted top-level
-        // markers (they carry no text); mirrors extractEditableText.
-        if (typeof o["text"] === "string" && o["text"] !== "") {
+        // markers (they carry no text). `ts` is excluded to match
+        // extractEditableText, which emits `\ts\* ` and never a ts node's text:
+        // emitting it here would put text in the render that the diff baseline
+        // does not have, which is the very mismatch this fix is closing.
+        if (tag !== "ts" && typeof o["text"] === "string" && o["text"] !== "") {
           emit(escapeHtml(String(o["text"])));
         }
         continue;
