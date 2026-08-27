@@ -990,16 +990,19 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
       applyLocalRowReplacement("tn", updated);
       setStatuses((prev) => ({ ...prev, [row.id]: "skipped" }));
       setEditing(false);
-      // A trashed row must not leave an orphan draft behind (#349). Mirror the
-      // two clears that already exist for this row's other exits: set the
-      // baseline to the live value (as saveDraft does at :894) so hasDiff drops
-      // and the current-row chip reads "Not needed" instead of the post-#343
-      // "Edited" when advanceAfter holds position under a type filter; and
-      // explicitly clear the IndexedDB draft (as the redraft settle does at the
-      // drafts.clear below) so it stops counting toward the "N unsaved"
-      // reminder — the persist effect can't clear it once the cursor advances
-      // and the effect re-keys to the next row.
-      baselineRef.current = draftValue;
+      // A trashed row must not leave an orphan draft behind (#349), and must
+      // not keep showing the user's discarded text if advanceAfter holds
+      // position (type filter exhausted). Snap both the editor value and the
+      // baseline to server truth — the same derivation the hydration effect
+      // uses — so hasDiff drops, the current-row chip reads "Not needed"
+      // instead of "Edited", and there's no stale-closure window if the user
+      // types while the request is in flight. Also explicitly clear the
+      // IndexedDB draft so it stops counting toward the "N unsaved" reminder
+      // — the persist effect can't clear it once the cursor advances and
+      // re-keys to the next row (the drafts.clear immediately below).
+      const next = unescapeNewlines(updated.note);
+      setDraftValue(next);
+      baselineRef.current = next;
       void drafts.clear(rowKey("tn", book, row.id));
       setToast(t("flowTranslate.toastNotNeeded"));
       advanceAfter(row.id, "skipped");
