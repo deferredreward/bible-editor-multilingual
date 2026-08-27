@@ -10,7 +10,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { flowLaneSegments } from "./flowHighlight.ts";
+import { flowLaneSegments, flowLaneSegmentsAcross } from "./flowHighlight.ts";
 import { extractPlainText } from "./usfm.ts";
 
 // ── fixture builders (usfm-js node shapes) ───────────────────────────────────
@@ -209,4 +209,91 @@ test("whitespace normalization matches extractPlainText across a line marker", (
   const segs = flowLaneSegments(vo, plain, "ב", 1);
   assert.equal(joined(segs), plain);
   assert.deepEqual(marks(segs), ["second"]);
+});
+
+// ── 7. multi-verse span: each verse highlighted on its own ──────────────────
+// The regression this pins (#344 review): concatenating two verses'
+// verseObjects into ONE tree before highlighting double-marks tokens, because
+// occurrence numbers are counted per verse — both verses' أَنَا carry
+// occurrence "1", so the single highlight key "أَنَا|1" marks both even though
+// the quote resolves in verse 26 only. A bridged note (ref_raw "13:26-27") must
+// still mark exactly one token.
+const SPAN_V26_VO = [
+  z("ἐγώ", "1", "1", [w("أَنَا", "1", "1")]),
+  x(" "),
+  z("εἶπεν", "1", "1", [w("قَالَ", "1", "1")]),
+];
+const SPAN_V26_PLAIN = "أَنَا قَالَ";
+// Verse 27 repeats the same Arabic surface form, aligned to a DIFFERENT Greek
+// word — so the quote below must not touch it.
+const SPAN_V27_VO = [
+  z("αὐτός", "1", "1", [w("أَنَا", "1", "1")]),
+  x(" "),
+  z("ἦλθεν", "1", "1", [w("جَاءَ", "1", "1")]),
+];
+const SPAN_V27_PLAIN = "أَنَا جَاءَ";
+
+test("combined span marks one token per resolving verse, not the shared surface form", () => {
+  const segs = flowLaneSegmentsAcross(
+    [
+      { verseObjects: SPAN_V26_VO, plainText: SPAN_V26_PLAIN, sourceVerseObjects: null },
+      { verseObjects: SPAN_V27_VO, plainText: SPAN_V27_PLAIN, sourceVerseObjects: null },
+    ],
+    "ἐγώ",
+    1,
+  );
+  assert.deepEqual(marks(segs), ["أَنَا"]);
+  // The whole span's text is still rendered, verses joined by a single space.
+  assert.equal(joined(segs), `${SPAN_V26_PLAIN} ${SPAN_V27_PLAIN}`);
+});
+
+test("concatenating the two verses into one tree is what double-marks (defect pin)", () => {
+  // Same inputs, the pre-fix shape: one tree with a separator between verses.
+  const combined = [...SPAN_V26_VO, { type: "text", text: " " }, ...SPAN_V27_VO];
+  const segs = flowLaneSegments(
+    combined,
+    `${SPAN_V26_PLAIN} ${SPAN_V27_PLAIN}`,
+    "ἐγώ",
+    1,
+  );
+  assert.equal(marks(segs).length, 2, "combined tree marks both verses' أَنَا");
+});
+
+test("a single slice is the plain single-verse path", () => {
+  const across = flowLaneSegmentsAcross(
+    [
+      {
+        verseObjects: MRK_13_2_ULT_VO,
+        plainText: MRK_13_2_ULT_PLAIN,
+        sourceVerseObjects: MRK_13_2_UGNT_VO,
+      },
+    ],
+    "βλέπεις ταύτας τὰς μεγάλας οἰκοδομάς",
+    1,
+  );
+  const direct = flowLaneSegments(
+    MRK_13_2_ULT_VO,
+    MRK_13_2_ULT_PLAIN,
+    "βλέπεις ταύτας τὰς μεγάλας οἰκοδομάς",
+    1,
+    MRK_13_2_UGNT_VO,
+  );
+  assert.deepEqual(across, direct);
+});
+
+test("a slice whose quote doesn't resolve contributes its plain text unmarked", () => {
+  const segs = flowLaneSegmentsAcross(
+    [
+      { verseObjects: SPAN_V26_VO, plainText: SPAN_V26_PLAIN, sourceVerseObjects: null },
+      { verseObjects: null, plainText: SPAN_V27_PLAIN, sourceVerseObjects: null },
+    ],
+    "ἐγώ",
+    1,
+  );
+  assert.deepEqual(marks(segs), ["أَنَا"]);
+  assert.equal(joined(segs), `${SPAN_V26_PLAIN} ${SPAN_V27_PLAIN}`);
+});
+
+test("no slices renders nothing", () => {
+  assert.deepEqual(flowLaneSegmentsAcross([], "ἐγώ", 1), []);
 });
