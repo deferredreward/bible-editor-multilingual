@@ -2367,13 +2367,15 @@ export async function storedResourceSha(
     // source_owner/source_repo are DCS names (case-insensitive);
     // source_generation and source_ref (a git ref) are NOT.
     //
-    // The WRITE (recordResourceSync) upserts against a BINARY primary key, so a
-    // case-only drift can leave TWO rows for one repo. The ORDER BY therefore
-    // prefers the row whose casing matches this lookup exactly — identical to the
-    // pre-NOCASE behaviour whenever such a row exists — and falls back to the
-    // case-variant row only when it does not, which is the whole point: an
-    // existing watermark stored under the old casing must still count, instead of
-    // reading as "never imported" and re-pulling the book.
+    // Migration 0069 made book_resource_syncs.source_owner (part of the PK)
+    // COLLATE NOCASE, so both the explicit `COLLATE NOCASE` in the WHERE clause
+    // and the bare `source_owner = ?4` in the ORDER BY tiebreak are now
+    // case-insensitive — the tiebreak no longer distinguishes rows by exact
+    // casing the way it did when the column was BINARY. That's fine: 0069's
+    // preflight aborts the migration if any two rows already differ only by
+    // source_owner casing, so no case-variant duplicate PK can survive into a
+    // NOCASE column, and this ORDER BY is left in place only as defense in
+    // depth for a lookup that can no longer actually see two candidate rows.
     `SELECT source_sha FROM book_resource_syncs
       WHERE book = ?1 AND resource = ?2
         AND source_generation = ?3 AND source_owner = ?4 COLLATE NOCASE
