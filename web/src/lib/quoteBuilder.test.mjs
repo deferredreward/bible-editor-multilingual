@@ -18,7 +18,10 @@ import {
   collectTargetTokens,
   buildQuoteFromSelection,
   tokenKey,
+  collectSourceWordNodes,
 } from "./quoteBuilder.ts";
+import { matchSourceTokens } from "./highlight.ts";
+import { isCharacterWrapper } from "./usfm.ts";
 
 let failed = 0;
 function assert(cond, msg) {
@@ -126,6 +129,98 @@ function verseObjectsOf(rawUsfm, ch, v) {
   const tvo = verseObjectsOf(target, "1", "1");
   const tokens = collectTargetTokens(tvo);
   assert(tokens.length === 1 && tokens[0].text === "Blessed", "wrapper-less target verse collects unchanged");
+}
+
+// ─── Case D (issue #364): the shared source-word walk `collectSourceWordNodes`
+//     descends the `\qs` wrapper, keeps every word's document position, and its
+//     order matches `matchSourceTokens`. This is the ONE traversal the picker
+//     chips (QuoteBuilderPopper) and the flows spine (VerseSpineModel) now
+//     project off, so a drift here is a drift in both.
+{
+  console.log("\n[Case D] collectSourceWordNodes descends \\qs; positions align with matchSourceTokens (#364)");
+  // plain — wrapped — plain, so a dropped/shifted wrapped word would misplace
+  // the word AFTER it (the exact #354 divergence this closes).
+  const source = String.raw`\id PSA
+\c 3
+\v 8 \w אֶחָד|x-strong="H0259" x-occurrence="1" x-occurrences="1"\w* \qs \w סֶלָה|x-strong="H5542" x-occurrence="1" x-occurrences="1"\w*\qs* \w שָׁלוֹם|x-strong="H7965" x-occurrence="1" x-occurrences="1"\w*
+`;
+  const svo = verseObjectsOf(source, "3", "8");
+
+  const qs = svo.find((o) => o && o.tag === "qs");
+  assert(!!qs, "premise: a top-level \\qs node exists");
+  assert(!!qs && isCharacterWrapper(qs), "premise: the \\qs node is a character wrapper");
+
+  const nodes = collectSourceWordNodes(svo);
+  const texts = nodes.map((n) => String(n.node.text ?? ""));
+  const positions = nodes.map((n) => n.position);
+  // Before the fix the popper/spine copies skipped the wrapper → 2 words and a
+  // gap at position 1.
+  assert(nodes.length === 3, `all three source words collected across the wrapper (got ${nodes.length})`);
+  assert(
+    texts.join("|") === "אֶחָד|סֶלָה|שָׁלוֹם",
+    `words are in document order incl. the wrapped one (got ${texts.join("|")})`,
+  );
+  assert(positions.join(",") === "0,1,2", `positions are contiguous 0..2 (got ${positions.join(",")})`);
+
+  // The wrapped word sits at position 1 and the word AFTER it at 2 — no drift.
+  const selahPos = nodes.findIndex((n) => n.node.text === "סֶלָה");
+  const shalomPos = nodes.findIndex((n) => n.node.text === "שָׁלוֹם");
+  assert(selahPos === 1 && shalomPos === 2, `wrapped word at 1, following word at 2 (got ${selahPos}, ${shalomPos})`);
+
+  // matchSourceTokens walks the SAME order (it uses the wrapper-aware
+  // collectBareWords). A quote spanning the wrapper boundary resolves the two
+  // words adjacently, matching their consecutive positions above.
+  const m = matchSourceTokens(svo, "סֶלָה שָׁלוֹם", 1);
+  assert(m.length === 2, `matchSourceTokens spans the wrapper boundary (got ${m.length})`);
+  assert(
+    m.map((t) => t.text).join("|") === "סֶלָה|שָׁלוֹם",
+    `matcher order matches the walk across the wrapper (got ${m.map((t) => t.text).join("|")})`,
+  );
+  assert(shalomPos === selahPos + 1, "walk adjacency matches the matcher's adjacency");
+}
+
+// ─── Case E (issue #364, item 2): a CHILDLESS \qs parks its text on the wrapper
+//     node itself, so the renderer must emit that text — the walk finds no \w.
+//     This is the parsed-USFM premise behind the HebrewLine.tsx fix (the render
+//     itself is a browser check; the node runner can't mount React/JSX).
+{
+  console.log("\n[Case E] childless / unclosed \\qs parks its text on the node, no \\w child (#364 item 2)");
+  const closed = verseObjectsOf(
+    String.raw`\id PSA
+\c 3
+\v 8 \w foo|x-occurrence="1" x-occurrences="1"\w* \qs Selah\qs*
+`,
+    "3",
+    "8",
+  );
+  const closedQs = closed.find((o) => o && o.tag === "qs");
+  assert(!!closedQs && isCharacterWrapper(closedQs), "premise: childless \\qs is a character wrapper");
+  assert(closedQs.text === "Selah", `childless \\qs carries its text on the node (got ${JSON.stringify(closedQs && closedQs.text)})`);
+  assert(
+    !Array.isArray(closedQs.children) || closedQs.children.length === 0,
+    "childless \\qs has no children — descending children alone renders nothing",
+  );
+  // The wrapper is not a \w, so the source-word walk yields nothing for it: the
+  // text is only recoverable by emitting the wrapper node's own `text`.
+  assert(
+    collectSourceWordNodes(closed).every((n) => n.node.text !== "Selah"),
+    "the walk yields no word for a childless-wrapper's text (renderer must emit node.text)",
+  );
+
+  const unclosed = verseObjectsOf(
+    String.raw`\id PSA
+\c 3
+\v 8 \w foo|x-occurrence="1" x-occurrences="1"\w* \qs Selah
+`,
+    "3",
+    "8",
+  );
+  const unclosedQs = unclosed.find((o) => o && o.tag === "qs");
+  assert(!!unclosedQs && isCharacterWrapper(unclosedQs), "premise: unclosed \\qs is still a character wrapper");
+  assert(
+    typeof unclosedQs.text === "string" && unclosedQs.text.startsWith("Selah"),
+    `unclosed \\qs also parks its text on the node (got ${JSON.stringify(unclosedQs && unclosedQs.text)})`,
+  );
 }
 
 if (failed > 0) {

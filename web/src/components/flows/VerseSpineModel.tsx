@@ -25,6 +25,7 @@ import type { TFunction } from "i18next";
 
 import { parseAlignment, type SourceWord } from "../../lib/alignment";
 import { matchNorm, matchSourceTokens } from "../../lib/highlight";
+import { collectSourceWordNodes } from "../../lib/quoteBuilder";
 import { decodeMorph, morphemeText, type DecodedMorph } from "../../lib/morph";
 import { parseTaRef } from "../../lib/taArticle";
 import { twShort } from "../../lib/twArticle";
@@ -57,51 +58,33 @@ export interface OriginalWord {
 
 const CONTENT_POS = new Set(["noun", "verb", "adjective", "adverb", "pronoun"]);
 
-function nodeIsWord(n: Record<string, unknown> | null): boolean {
-  return !!n && n["type"] === "word" && n["tag"] === "w";
-}
-function nodeIsMilestone(n: Record<string, unknown> | null): boolean {
-  return !!n && n["type"] === "milestone" && n["tag"] === "zaln";
-}
-function nodeIsPsalmTitle(n: Record<string, unknown> | null): boolean {
-  return !!n && n["type"] === "section" && n["tag"] === "d";
-}
-
-// Deliberately mirrors highlight.ts's `collectBareWords` traversal (word /
-// milestone / `\d` section) so POSITION here means the same thing it means to
-// `matchSourceTokens` — the quote anchoring below maps between the two.
+// Projects off quoteBuilder's shared `collectSourceWordNodes` — the SAME
+// document-order source-word walk the picker uses — so POSITION here means the
+// exact same thing it means to `matchSourceTokens`, and the quote anchoring
+// below maps between the two. This used to be a private word/milestone/`\d`
+// walk; #354 made the shared walk `\qs`-wrapper-aware, and delegating keeps
+// this copy from drifting a position after any wrapped word (issue #364).
 export function collectOriginalWords(verseObjects: unknown[] | null | undefined): OriginalWord[] {
   if (!Array.isArray(verseObjects)) return [];
-  const out: OriginalWord[] = [];
-  const walk = (nodes: unknown[]) => {
-    for (const node of nodes ?? []) {
-      const o = node as Record<string, unknown> | null;
-      if (!o) continue;
-      if (nodeIsWord(o)) {
-        const morph = String(o["morph"] ?? "");
-        const decoded = decodeMorph(morph);
-        const glosses = (decoded?.morphemes ?? []).map(morphemeText).filter(Boolean);
-        const isContentWord =
-          glosses.length === 0 ||
-          (decoded?.morphemes ?? []).some((m) => CONTENT_POS.has(m.pos));
-        out.push({
-          position: out.length,
-          text: String(o["text"] ?? ""),
-          strong: String(o["strong"] ?? ""),
-          lemma: String(o["lemma"] ?? ""),
-          morph,
-          occurrence: parseInt(String(o["occurrence"] ?? "1"), 10) || 1,
-          decoded,
-          glosses,
-          isContentWord,
-        });
-      } else if (nodeIsMilestone(o) || nodeIsPsalmTitle(o)) {
-        walk((o["children"] as unknown[] | undefined) ?? []);
-      }
-    }
-  };
-  walk(verseObjects);
-  return out;
+  return collectSourceWordNodes(verseObjects).map(({ node: o, position }) => {
+    const morph = String(o["morph"] ?? "");
+    const decoded = decodeMorph(morph);
+    const glosses = (decoded?.morphemes ?? []).map(morphemeText).filter(Boolean);
+    const isContentWord =
+      glosses.length === 0 ||
+      (decoded?.morphemes ?? []).some((m) => CONTENT_POS.has(m.pos));
+    return {
+      position,
+      text: String(o["text"] ?? ""),
+      strong: String(o["strong"] ?? ""),
+      lemma: String(o["lemma"] ?? ""),
+      morph,
+      occurrence: parseInt(String(o["occurrence"] ?? "1"), 10) || 1,
+      decoded,
+      glosses,
+      isContentWord,
+    };
+  });
 }
 
 // ─── the join: alignment source word → original-word position ───────────────
