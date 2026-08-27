@@ -1019,6 +1019,7 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
       clearIntroRedoTimer();
       pendingIntroRedoRef.current = null;
       setIntroRedoRowId(null);
+      redoingRef.current = false;
       setRedoing(false);
       if (opts?.timedOut) {
         say(t("flowTranslate.redoTimedOut"), "warning");
@@ -1066,6 +1067,8 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
 
   async function handleRedo() {
     if (!row || !data || redoing || redoBlockedReason) return;
+    // settleIntroRedo may run sync on the post-start already-terminal race before React re-renders; a stale false would drop the settle.
+    redoingRef.current = true;
     setRedoing(true);
     setNotice(null);
     // Pipeline Redo stays spinning until settleIntroRedo; tn-quick (and any
@@ -1155,7 +1158,10 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
         );
       }
     } finally {
-      if (!keepSpinningForPipeline) setRedoing(false);
+      if (!keepSpinningForPipeline) {
+        redoingRef.current = false;
+        setRedoing(false);
+      }
     }
   }
 
