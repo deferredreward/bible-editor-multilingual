@@ -446,10 +446,19 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRo
           // can share a verse, and the point of this jump is telling them apart.
           location.hash = `#/notes/${m.book}/${m.chapter}/${m.verse}?row=${encodeURIComponent(m.id)}`;
         } else if (m.rowKind === "tq") {
-          // Questions hash is chapter-scoped (no verse segment in parseHash).
-          location.hash = `#/questions/${m.book}/${m.chapter}`;
+          // Carry verse + exact row id (like tn) so the questions screen lands
+          // on the question holding the draft, not just the chapter — several
+          // questions can share a verse, and telling them apart is the point of
+          // this jump. parseHash accepts the verse and ?row= tail (#335).
+          location.hash = `#/questions/${m.book}/${m.chapter}/${m.verse}?row=${encodeURIComponent(m.id)}`;
         } else {
-          // Words & Articles is book-scoped (#/words/{book} -> translateWords).
+          // twl row-level parity is deferred (#335): the #/words/{book} route
+          // opens the flows TranslateWordsScreen, which edits tW/tA *article*
+          // content and has no twl-row queue to seek or badge. twl row drafts
+          // are authored by the classic WordsTable/WordsScreen (a structurally
+          // different 3-column editor), so mirroring the tn/tq pattern here
+          // would be a broad cross-surface change. Left book-scoped until that
+          // screen grows row-level seeking.
           location.hash = `#/words/${m.book}`;
         }
       } else {
