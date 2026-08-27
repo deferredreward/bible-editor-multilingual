@@ -70,6 +70,7 @@ import type { HighlightKey } from "../../lib/highlight";
 import { nfc } from "../../lib/hebrew";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { buildVerseIndex, formatVerseLabel, isRangeRow } from "../../lib/verseRange";
+import { versionLabel } from "../../lib/versionLabels";
 import { SCRIPTURE_FONT_STACK } from "../../theme";
 import { QuoteBuilderPopper } from "../QuoteBuilderPopper";
 import { TwlSuggestions } from "../TwlSuggestions";
@@ -565,9 +566,9 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
   function targetContext(quote: string) {
     if (!ultVo) {
       return ultLanePending ? (
-        <em>{t("flowVerse.words.ultPending", { lane: "ULT" })}</em>
+        <em>{t("flowVerse.words.ultPending", { lane: versionLabel(projectConfig, "ULT") })}</em>
       ) : (
-        <em>{t("flowScripture.laneNoText", { lane: "ULT" })}</em>
+        <em>{t("flowScripture.laneNoText", { lane: versionLabel(projectConfig, "ULT") })}</em>
       );
     }
     const tokens = collectTargetTokens(ultVo);
@@ -723,7 +724,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
             component="div"
             sx={{ fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "text.secondary" }}
           >
-            {t("flowVerse.words.inTarget", { lane: "ULT" })}
+            {t("flowVerse.words.inTarget", { lane: versionLabel(projectConfig, "ULT") })}
             {ultRow && isRangeRow(ultRow)
               ? ` ${t("flowVerse.words.versesSuffix", { label: formatVerseLabel(ultRow) })}`
               : ""}
@@ -1098,17 +1099,17 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
             </IconButton>
           </Stack>
           <Typography variant="caption" color="text.secondary">
-            ULT
+            {versionLabel(projectConfig, "ULT")}
           </Typography>
           <Typography variant="body2" sx={{ bgcolor: "action.hover", borderRadius: 1, p: 1, mb: 1.5, textAlign: "start" }}>
-            {ultPlain ?? <em>{t("flowVerse.words.laneUnavailable", { lane: "ULT" })}</em>}
+            {ultPlain ?? <em>{t("flowVerse.words.laneUnavailable", { lane: versionLabel(projectConfig, "ULT") })}</em>}
           </Typography>
           <Divider sx={{ mb: 1.5 }} />
           <Typography variant="caption" color="text.secondary">
-            UST
+            {versionLabel(projectConfig, "UST")}
           </Typography>
           <Typography variant="body2" sx={{ bgcolor: "action.hover", borderRadius: 1, p: 1, textAlign: "start" }}>
-            {ustPlain ?? <em>{t("flowVerse.words.laneUnavailable", { lane: "UST" })}</em>}
+            {ustPlain ?? <em>{t("flowVerse.words.laneUnavailable", { lane: versionLabel(projectConfig, "UST") })}</em>}
           </Typography>
         </Box>
       </Drawer>

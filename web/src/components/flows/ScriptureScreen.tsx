@@ -635,7 +635,7 @@ export default function ScriptureScreen({ role, me, book, chapter, verse }: Scri
     }
     try {
       await navigator.clipboard.writeText(lines.join("\n"));
-      setNotice(t("appShell.scripture.copiedVerses", { count: lines.length, lane: "ULT" }));
+      setNotice(t("appShell.scripture.copiedVerses", { count: lines.length, lane: versionLabel(projectConfig, "ULT") }));
     } catch {
       setNotice(t("appShell.scripture.copyFailed"));
     }
