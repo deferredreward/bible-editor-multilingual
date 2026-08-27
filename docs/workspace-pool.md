@@ -69,6 +69,25 @@ admin team (`BE-Admins`, or `DCS_TEAM_ADMIN`): being an org **Owner** in Door43
 is not enough, and editors never claim — onboarding an org is an administrative
 act.
 
+**Two preconditions, both deliberate:**
+
+1. `WORKSPACE_AUTOCLAIM = "true"` on the deployment. **Off by default.**
+   git.door43.org is a public Gitea: anyone can create an org, create a team
+   named `BE-Admins`, add themselves, and sign in. With this on, that self-serves
+   a real workspace out of your pool — one slot per login, with no cap on
+   logins. Enable it only where self-service onboarding is the point and the
+   pool is expendable, and watch `[autoClaim] pool exhausted` in `wrangler tail`.
+2. An **explicit roster** — at least one registry row, or a non-empty
+   `WORKSPACES`. A single-org deployment has neither: its live workspace is the
+   *synthetic implicit default*, which exists only while the registry is empty,
+   so the first claimed row written there would become the whole roster and
+   evict the deployment's own database (every `be_ws=default` cookie would then
+   resolve to the newly claimed, empty one). Auto-claim refuses and logs
+   `refusing to claim: this deployment has no explicit workspace roster`. Make
+   the existing workspace explicit first — set `WORKSPACES` to a single entry
+   describing it and deploy; `primeWorkspaces` persists it as a `claimed` row on
+   first boot — and then adding a row is an addition, not a replacement.
+
 - At most **one** slot per login. An admin of two un-onboarded orgs onboards the
   second on their next sign-in.
 - The org is stored with DCS's own casing (read off the teams payload we already
@@ -82,6 +101,12 @@ act.
   signal to add capacity (above).
 - Super admins skip it: their org set is synthesized from the existing roster,
   so it never contains an unregistered org. They use the endpoint below.
+- A claim can happen for an org the user does not land in this login (a `be_ws`
+  cookie for another workspace still wins resolution). The org is onboarded and
+  they can switch to it; the slot is spent either way.
+- The claimed row gets no `export_owner`, so the workspace inherits the
+  deployment's `DCS_EXPORT_OWNER` for the nightly export. Set one on the row
+  before that matters — see #381.
 
 Code: `api/src/workspaceAutoClaim.ts`, called from `callbackDcsAuth` in
 `api/src/auth.ts`. Tests: `api/src/workspaceAutoClaim.test.mjs`.

@@ -27,11 +27,13 @@
 // there would create an import cycle.
 
 import type { Env } from "./index";
-import { claimWorkspace, listWorkspaces } from "./workspaces.ts";
+import { claimWorkspace, explicitWorkspaces, listWorkspaces } from "./workspaces.ts";
 import { listUserTeams, roleFromTeams, teamRoleNames, type DcsTeam } from "./dcsTeams.ts";
 import { isIdent } from "./repoUrl.ts";
 
 export type AutoClaimOutcome =
+  | "disabled" // WORKSPACE_AUTOCLAIM is not "true" — the default
+  | "roster_not_configured" // no explicit roster to add to; writing a row would evict the live default
   | "no_candidate_org" // every org they belong to already has a workspace (or membership unknown)
   | "teams_unknown" // DCS didn't answer the teams call — never read as "not an admin"
   | "not_admin" // candidate orgs exist, but they're not on any of their admin teams
@@ -46,6 +48,13 @@ export interface AutoClaimResult {
   org?: string;
   /** Slug of the claimed workspace, on "claimed" / "already_claimed". */
   slug?: string;
+  /**
+   * The DCS `/user/teams` listing, when one was fetched — so the caller's own
+   * team-role sync can reuse it instead of paying a second paginated listing
+   * on the login path. `undefined` = not fetched; `null` = DCS didn't answer
+   * (which callers must read as "unknown", never as "no teams").
+   */
+  teams?: DcsTeam[] | null;
 }
 
 // DCS's own casing for `orgLower`, taken from the teams payload we already hold
@@ -90,7 +99,27 @@ export async function autoClaimWorkspaceForAdmin(
   },
 ): Promise<AutoClaimResult> {
   try {
+    // Off unless a deployment opts in. Checked FIRST so a deployment that
+    // hasn't enabled it pays nothing at all — not even the DCS teams listing.
+    if ((env.WORKSPACE_AUTOCLAIM ?? "").trim() !== "true") return { outcome: "disabled" };
     if (!opts.memberOrgs || opts.memberOrgs.size === 0) return { outcome: "no_candidate_org" };
+
+    // Refuse while the roster is only the synthetic implicit default. There,
+    // the deployment's live database is NOT a registry row — it materializes
+    // only while the registry is empty — so the first claimed row written
+    // would become the entire roster and evict it: every existing user's
+    // be_ws cookie would resolve to the newly claimed (empty) database, and
+    // their next login would land in another tenant's workspace or be denied.
+    // An operator makes the existing workspace explicit first (seed WORKSPACES
+    // with it; primeWorkspaces persists it as a claimed row), and only then is
+    // adding a row an ADDITION rather than a replacement.
+    if (explicitWorkspaces(env).length === 0) {
+      console.warn(
+        `[autoClaim] refusing to claim: this deployment has no explicit workspace roster ` +
+          `(registry empty and WORKSPACES unset), so a claim would evict the default workspace`,
+      );
+      return { outcome: "roster_not_configured" };
+    }
 
     const known = new Set(listWorkspaces(env).map((w) => w.org.trim().toLowerCase()));
     const candidates = [...opts.memberOrgs].filter((o) => o && !known.has(o)).sort();
@@ -99,7 +128,7 @@ export async function autoClaimWorkspaceForAdmin(
     if (candidates.length === 0) return { outcome: "no_candidate_org" };
 
     const teams = await listUserTeams(env, opts.accessToken, opts.deps);
-    if (teams === null) return { outcome: "teams_unknown" };
+    if (teams === null) return { outcome: "teams_unknown", teams: null };
 
     const names = teamRoleNames(env);
     for (const orgLower of candidates) {
@@ -118,7 +147,7 @@ export async function autoClaimWorkspaceForAdmin(
         // existing roster, exactly as before this feature), and an operator
         // provisions another slot — see docs/workspace-pool.md.
         console.warn(`[autoClaim] pool exhausted; no slot available for org "${org}" (${opts.dcsUsername})`);
-        return { outcome: "pool_exhausted", org };
+        return { outcome: "pool_exhausted", org, teams };
       }
       console.log(
         `[autoClaim] ${result.alreadyClaimed ? "org already had" : "claimed"} workspace ` +
@@ -128,9 +157,10 @@ export async function autoClaimWorkspaceForAdmin(
         outcome: result.alreadyClaimed ? "already_claimed" : "claimed",
         org: result.workspace.org,
         slug: result.workspace.slug,
+        teams,
       };
     }
-    return { outcome: "not_admin" };
+    return { outcome: "not_admin", teams };
   } catch (err) {
     // A throw here would 500 the OAuth callback and lock everyone out, which is
     // strictly worse than the feature silently not applying.

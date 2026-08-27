@@ -7,9 +7,11 @@
 // registry 0058/0068), real index.ts-style env swap and primeWorkspaces —
 // only globalThis.fetch (DCS) is stubbed.
 //
-// WORKSPACES is deliberately "" in every case here, matching production: the
-// roster comes from the registry table alone, which is the configuration where
-// a claimed pool slot exists ONLY as a registry row.
+// WORKSPACES is deliberately "" in most cases here: the roster then comes from
+// the registry table alone, which is the configuration where a claimed pool
+// slot exists ONLY as a registry row. Note that this is NOT the same as a
+// single-org production deployment, whose registry is also EMPTY — that shape
+// has its own case below ("no explicit roster"), and it must never claim.
 //
 // Run from api/:
 //   node --experimental-strip-types --no-warnings --test src/workspaceAutoClaim.test.mjs
@@ -84,7 +86,7 @@ function userTables(db) {
 
 // Shared / default-workspace database: accounts, sessions, the workspace
 // registry, and an EMPTY user_roles.
-function sharedDbSqlite() {
+function sharedDbSqlite({ seedDefaultWorkspace = true } = {}) {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = OFF;");
   userTables(db);
@@ -101,11 +103,15 @@ function sharedDbSqlite() {
   `);
   db.exec(MIGRATION_0058);
   db.exec(MIGRATION_0068);
-  // The org that is already onboarded, on the default binding.
-  db.exec(
-    "INSERT INTO workspaces (slug, label, org, binding, status) " +
-      "VALUES ('uw', 'unfoldingWord', 'unfoldingWord', 'DB', 'claimed');",
-  );
+  // The org that is already onboarded, on the default binding. Omitting it
+  // models a single-org deployment, where the live workspace is the SYNTHETIC
+  // implicit default and no registry row exists at all.
+  if (seedDefaultWorkspace) {
+    db.exec(
+      "INSERT INTO workspaces (slug, label, org, binding, status) " +
+        "VALUES ('uw', 'unfoldingWord', 'unfoldingWord', 'DB', 'claimed');",
+    );
+  }
   return db;
 }
 
@@ -126,7 +132,7 @@ function registerPoolRows(sharedSql, ...slugs) {
   }
 }
 
-function makeEnv(sharedSql, pools) {
+function makeEnv(sharedSql, pools, extra = {}) {
   const shared = makeD1(sharedSql);
   const env = {
     JWT_SIGNING_KEY: SIGNING,
@@ -137,10 +143,14 @@ function makeEnv(sharedSql, pools) {
     DCS_OAUTH_TOKEN_URL: "https://git.door43.org/login/oauth/access_token",
     DCS_OAUTH_AUTHORIZE_URL: "https://git.door43.org/login/oauth/authorize",
     SUPER_ADMINS: "",
-    // Production shape: the roster lives in the registry, not this var.
+    // The roster lives in the registry, not this var.
     WORKSPACES: "",
+    // Opt-in switch; off by default in a real deployment.
+    WORKSPACE_AUTOCLAIM: "true",
+    VIEWER_ORG: "unfoldingWord",
     DB: shared,
     SHARED_DB: shared,
+    ...extra,
   };
   for (const [binding, sql] of Object.entries(pools)) env[binding] = makeD1(sql);
   return env;
@@ -390,6 +400,125 @@ console.log("[autoClaim] a failed DCS teams call claims nothing and does not bre
     assert(
       rows(sharedSql, "SELECT slug FROM workspaces WHERE status = 'available'").length === 1,
       "no slot claimed on an unknown teams answer",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// ── 6. A single-org deployment must never claim (roster-eviction guard) ─────
+//
+// Regression for the review finding: in a deployment with an EMPTY registry and
+// WORKSPACES = "" — which is what a single-org production deployment looks like
+// — the live workspace is the SYNTHETIC implicit default, not a row. The first
+// claimed row written there would become the entire roster and evict it, so
+// every existing user's be_ws=default cookie would resolve to the newly claimed
+// (empty) database. Auto-claim must refuse until an operator makes the existing
+// workspace explicit.
+
+console.log("[autoClaim] refuses to claim when the roster is only the implicit default (eviction guard)");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    const sharedSql = sharedDbSqlite({ seedDefaultWorkspace: false });
+    const pool1Sql = poolDbSqlite();
+    registerPoolRows(sharedSql, "pool1");
+    const baseEnv = makeEnv(sharedSql, { DB_POOL1: pool1Sql });
+
+    await primeWorkspaces(baseEnv);
+    const before = resolveWorkspace(baseEnv, null);
+    assert(
+      before.slug === "default" && before.org === "unfoldingWord" && before.binding === "DB",
+      "precondition: the live workspace is the synthetic implicit default, not a registry row",
+    );
+
+    globalThis.fetch = stubDcs({
+      id: 11,
+      login: "mallory",
+      orgs: [{ username: "EvilOrg" }],
+      teams: [team("EvilOrg", "BE-Admins")],
+    });
+
+    const { res } = await signIn(baseEnv, "state-mallory");
+
+    assert(res.status === 302, `login still completes (302), got ${res.status}`);
+    assert(
+      rows(sharedSql, "SELECT slug FROM workspaces WHERE status = 'claimed'").length === 0,
+      "nothing was claimed — the default workspace cannot be evicted by a stranger's login",
+    );
+    const after = resolveWorkspace(makeEnv(sharedSql, { DB_POOL1: pool1Sql }), null);
+    assert(
+      after.slug === "default" && after.binding === "DB",
+      `the deployment's own database is still the roster, got ${after.slug}/${after.binding}`,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// ── 7. Off by default ───────────────────────────────────────────────────────
+
+console.log("[autoClaim] does nothing unless WORKSPACE_AUTOCLAIM is 'true'");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    const sharedSql = sharedDbSqlite();
+    const pool1Sql = poolDbSqlite();
+    registerPoolRows(sharedSql, "pool1");
+    const baseEnv = makeEnv(sharedSql, { DB_POOL1: pool1Sql }, { WORKSPACE_AUTOCLAIM: "" });
+
+    globalThis.fetch = stubDcs({
+      id: 12,
+      login: "erin",
+      orgs: [{ username: "NewOrg" }],
+      teams: [team("NewOrg", "BE-Admins")],
+    });
+
+    const { res } = await signIn(baseEnv, "state-erin");
+
+    assert(res.status === 302, `login still completes (302), got ${res.status}`);
+    assert(
+      rows(sharedSql, "SELECT slug FROM workspaces WHERE status = 'available'").length === 1,
+      "the switch is off, so an admin of an un-onboarded org claims nothing",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// ── 8. At most one slot per login ───────────────────────────────────────────
+
+console.log("[autoClaim] an admin of TWO un-onboarded orgs consumes only one slot per login");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    const sharedSql = sharedDbSqlite();
+    const pool1Sql = poolDbSqlite();
+    const pool2Sql = poolDbSqlite();
+    registerPoolRows(sharedSql, "pool1", "pool2");
+    const baseEnv = makeEnv(sharedSql, { DB_POOL1: pool1Sql, DB_POOL2: pool2Sql });
+
+    globalThis.fetch = stubDcs({
+      id: 13,
+      login: "frank",
+      orgs: [{ username: "AlphaOrg" }, { username: "BetaOrg" }],
+      teams: [team("AlphaOrg", "BE-Admins"), team("BetaOrg", "BE-Admins")],
+    });
+
+    await signIn(baseEnv, "state-frank-1");
+
+    const claimed = rows(sharedSql, "SELECT slug, org FROM workspaces WHERE status = 'claimed' AND slug != 'uw'");
+    assert(claimed.length === 1, `exactly one slot consumed by the first login, got ${claimed.length}`);
+    assert(claimed[0].org === "AlphaOrg", `candidates are tried in sorted order, got ${claimed[0].org}`);
+
+    // The second org onboards on his NEXT login — self-healing, no operator.
+    const baseEnv2 = makeEnv(sharedSql, { DB_POOL1: pool1Sql, DB_POOL2: pool2Sql });
+    await signIn(baseEnv2, "state-frank-2");
+    const claimed2 = rows(sharedSql, "SELECT slug, org FROM workspaces WHERE status = 'claimed' AND slug != 'uw'");
+    assert(claimed2.length === 2, `the second login onboards the second org, got ${claimed2.length}`);
+    assert(
+      claimed2.some((r) => r.org === "BetaOrg"),
+      "the remaining un-onboarded org is the one claimed second",
     );
   } finally {
     globalThis.fetch = realFetch;

@@ -236,6 +236,25 @@ export async function primeWorkspaces(env: Env): Promise<void> {
   registryState.set(db as object, { workspaces });
 }
 
+// The EXPLICITLY configured roster: registry rows when the registry has been
+// primed and holds any, else the WORKSPACES env entries — and an empty array
+// when neither exists, i.e. when listWorkspaces is serving the synthetic
+// implicit default.
+//
+// That distinction is load-bearing for anything that WRITES a workspace row.
+// The implicit default is not a registry row: it materializes only while the
+// registry yields nothing, so the first row ever written to an empty registry
+// REPLACES it as the whole roster — the deployment's live database silently
+// stops being a workspace. Callers that could create a row must refuse while
+// this is empty (see workspaceAutoClaim.ts); an operator seeds WORKSPACES with
+// the existing workspace first, which primeWorkspaces persists as a claimed row.
+export function explicitWorkspaces(env: Env): Workspace[] {
+  const db = sharedDb(env);
+  const state = db ? registryState.get(db as object) : undefined;
+  if (state?.workspaces && state.workspaces.length > 0) return state.workspaces;
+  return parseEnvEntries(env);
+}
+
 // The org of the workspace this env is scoped to, but ONLY when the roster is
 // EXPLICITLY configured — registry rows, or a non-empty WORKSPACES var. Returns
 // null for the synthetic implicit default, whose org is VIEWER_ORG: in a
@@ -248,9 +267,7 @@ export async function primeWorkspaces(env: Env): Promise<void> {
 // claimed from the spare pool exists only as a registry row, so a caller gated
 // on the env var sees no org for it — production runs WORKSPACES = "".
 export function activeWorkspaceOrg(env: Env): string | null {
-  const db = sharedDb(env);
-  const state = db ? registryState.get(db as object) : undefined;
-  const explicit = state?.workspaces && state.workspaces.length > 0 ? state.workspaces : parseEnvEntries(env);
+  const explicit = explicitWorkspaces(env);
   if (explicit.length === 0) return null;
   const slug = env.WORKSPACE_SLUG;
   const active = slug ? explicit.find((w) => w.slug === slug) : undefined;

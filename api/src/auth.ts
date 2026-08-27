@@ -666,7 +666,8 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
     ? new Set(workspaces.map((w) => w.org.toLowerCase()))
     : await fetchMemberOrgs(c.env, accessToken);
 
-  // Auto-claim at first admin login (issue #81). If this user administers a
+  // Auto-claim at first admin login (issue #81), OFF unless a deployment sets
+  // WORKSPACE_AUTOCLAIM=true and has an explicit roster. If this user administers a
   // Door43 org (its BE-Admins team) that has NO workspace in the registry yet,
   // flip one pre-provisioned `available` pool slot to `claimed` for that org —
   // so a new org onboards itself instead of waiting on a super admin to call
@@ -754,7 +755,11 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   // Door43 teams as role source (read-side). Membership of the resolved
   // workspace org's BE-Admins / BE-Editors teams grants admin / editor, and is
   // cached into user_roles so /api/auth/refresh needs no DCS round-trip.
-  await syncTeamRoleForUser(wsEnv, dcsUser.login, accessToken);
+  // `teams` is reused when auto-claim above already fetched the user's team
+  // listing — it is user-global, not org-scoped, so it is valid for whichever
+  // workspace we resolved to, and reusing it keeps the login path at one
+  // paginated /user/teams listing instead of two.
+  await syncTeamRoleForUser(wsEnv, dcsUser.login, accessToken, { teams: autoClaim.teams });
 
   // Allowlist gate. user_roles is the source of truth for edit access; an
   // account missing from it falls through to a DCS org-membership check so

@@ -184,9 +184,14 @@ export async function resolveTeamRole(
   env: Env,
   org: string,
   accessToken: string,
-  deps?: { fetch?: typeof fetch },
+  // `deps.teams` supplies an ALREADY-FETCHED /user/teams listing (the login
+  // path fetches one for pool auto-claim before this runs, and the listing is
+  // user-global, not org-scoped, so it is valid for any org). Present-and-null
+  // means DCS didn't answer — the same "unknown" this function returns for a
+  // failed fetch, never "no teams". Absent means fetch it here as before.
+  deps?: { fetch?: typeof fetch; teams?: DcsTeam[] | null },
 ): Promise<{ known: boolean; role: Role | null }> {
-  const teams = await listUserTeams(env, accessToken, deps);
+  const teams = deps?.teams !== undefined ? deps.teams : await listUserTeams(env, accessToken, deps);
   if (teams === null) return { known: false, role: null };
   const names = teamRoleNames(env);
   const role = roleFromTeams(teams, org, names);
@@ -390,11 +395,12 @@ export async function syncTeamRoleForUser(
   env: Env,
   dcsUsername: string,
   accessToken: string,
+  deps?: { fetch?: typeof fetch; teams?: DcsTeam[] | null },
 ): Promise<void> {
   try {
     const org = await orgForTeamSync(env);
     if (!org) return; // project never onboarded, or the config read failed
-    const team = await resolveTeamRole(env, org, accessToken);
+    const team = await resolveTeamRole(env, org, accessToken, deps);
     if (!team.known) return; // DCS didn't answer — never read that as "no teams"
     await syncTeamRole(env, dcsUsername, team.role);
   } catch (err) {
