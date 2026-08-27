@@ -169,7 +169,11 @@ export function concatSourceRange(
   };
 }
 
-function verseObjectsOf(dto: VerseDto | undefined): unknown[] | null {
+// A verse's `content.verseObjects` array, or null when absent/malformed. Local
+// copies of this one-liner have accreted across several screens
+// (ScriptureScreen, TranslateAlignScreen, VerseScreen, WordsScreen); those are
+// left for a follow-up consolidation (issue #388) to keep this diff focused.
+export function verseObjectsOf(dto: VerseDto | undefined): unknown[] | null {
   const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
   return Array.isArray(vo) ? vo : null;
 }

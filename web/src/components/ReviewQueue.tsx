@@ -70,7 +70,12 @@ import { useProjectConfig } from "../hooks/useProjectConfig";
 import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { outbox, onOutboxResult, type OutboxOp } from "../sync/outbox";
 import { drafts, rowKey, type DraftRecord } from "../sync/drafts";
-import { buildVerseIndex } from "../lib/verseRange";
+import {
+  buildVerseIndex,
+  coveredLaneSlices,
+  noteCoveredVerses,
+  verseObjectsOf,
+} from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
 import { buildQuoteFromSelection, selectionFromQuote } from "../lib/quoteBuilder";
 import { shortSupport } from "../lib/supportReference";
@@ -83,7 +88,6 @@ import {
   type ChapterLockedBody,
   type TnRow,
   type TqRow,
-  type VerseDto,
 } from "../sync/api";
 
 type RowKindTQ = "tn" | "tq";
@@ -153,12 +157,6 @@ function stateLabel(
   state: TnRow["translation_state"] | TqRow["translation_state"],
 ): "draft" | "edited" | "validated" {
   return state === "validated" || state === "edited" ? state : "draft";
-}
-
-function verseObjectsOf(v: VerseDto | undefined): unknown[] | null {
-  if (!v) return null;
-  const vo = (v.content as { verseObjects?: unknown[] } | null)?.verseObjects;
-  return Array.isArray(vo) ? vo : null;
 }
 
 // Single-use midpoint placement for "insert note after this one". Shell.tsx
@@ -1198,8 +1196,15 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   const unapprovedQuestions = data.tq.filter((r) => r.translation_state !== "validated").length;
   const rowState = selectedRow ? stateLabel(selectedRow.translation_state) : "draft";
   const chipKind = isTrashed ? "trashed" : rowState === "validated" ? "approved" : rowState;
-  const ultText = selectedRow ? (ultIndex[selectedRow.verse]?.plain_text ?? null) : null;
-  const ustText = selectedRow ? (ustIndex[selectedRow.verse]?.plain_text ?? null) : null;
+  // A bridged note/question (ref_raw e.g. "13:26-27") must show every covered
+  // verse's scripture, not just its leading verse — the old leading-verse
+  // `ultIndex[selectedRow.verse]?.plain_text` lookup silently dropped the rest
+  // (issue #388). `coveredLaneSlices` joins the covered verses' plainText and
+  // reduces to the single leading verse for the common singleton (and intro
+  // rows), so non-bridged rows are unchanged. Mirrors TranslateNotesScreen.
+  const coveredVerses = selectedRow ? noteCoveredVerses(selectedRow) : [];
+  const ultText = coveredLaneSlices(ultIndex, sourceIndex, coveredVerses).plainText;
+  const ustText = coveredLaneSlices(ustIndex, sourceIndex, coveredVerses).plainText;
   const verseTwl = selectedRow ? data.twl.filter((w) => w.verse === selectedRow.verse) : [];
   const sourceText =
     selectedRow && activeKind === "tq"
