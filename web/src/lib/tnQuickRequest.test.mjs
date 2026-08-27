@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isOriginalLanguageQuote, buildTnQuickRequest } from "./tnQuickRequest.ts";
@@ -241,14 +241,6 @@ test("an original-language quote and an English phrase fail with DIFFERENT reaso
   }
 });
 
-test("a resolvable Hebrew quote does not produce a failure reason at all (#346)", () => {
-  // Guard the split from over-firing: the new reason must appear only when the
-  // OL quote genuinely fails to resolve, not on every OL quote.
-  const row = makeRow({ book: "GEN", chapter: 1, verse: 1, quote: "רֵאשִׁית" });
-  const result = buildTnQuickRequest(row, makeAlignedHebrewPayload());
-  assert.equal(result.ok, true);
-});
-
 test("buildTnQuickRequest fails with hebrew_not_found for an English phrase that doesn't align", () => {
   const row = makeRow({ quote: "some unrelated english phrase" });
   const result = buildTnQuickRequest(row, makeChapterPayload());
@@ -266,21 +258,54 @@ test("buildTnQuickRequest fails with hebrew_not_found for an English phrase that
 // for must not carry the English-only advice.
 // ---------------------------------------------------------------------------
 
-const CALL_SITES = [
+// The call sites are DISCOVERED, not listed: a hardcoded list can't catch the
+// regression this test exists for — someone adding a fourth consumer and
+// forgetting the OL branch. KNOWN_CALL_SITES is only a floor, so a broken walk
+// (wrong root, changed layout) fails loudly instead of vacuously finding none.
+const KNOWN_CALL_SITES = [
   "src/components/Shell.tsx",
   "src/components/ReviewQueue.tsx",
   "src/components/flows/TranslateNotesScreen.tsx",
 ];
 
+// Strip LINE comments before the reason check: otherwise a rewrite that deletes
+// the ternary arm but leaves its explanatory comment behind would still
+// "contain" the reason and pass. Same trick adminSurfaceMap.test.mjs uses.
+//
+// Deliberately NOT stripping /* */ blocks. Tried it, and the naive regex
+// `/\/\*[\s\S]*?\*\//` treats a `/*` inside a string or regex literal as a
+// comment opener and swallowed 55KB of TranslateNotesScreen.tsx — including the
+// call it was supposed to find. A line-comment pass is safe here (a `//` inside
+// a URL only eats the rest of that line), and discovery below reads the RAW
+// source so no stripping can hide a call site.
+const stripLineComments = (src) => src.replace(/\/\/[^\n]*/g, "");
+
+function findCallSites(dir = "src") {
+  const out = [];
+  for (const entry of readdirSync(path.join(webRoot, dir), { withFileTypes: true })) {
+    const rel = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      out.push(...findCallSites(rel));
+    } else if (/\.(ts|tsx)$/.test(entry.name)) {
+      if (readWeb(rel).includes("buildTnQuickRequest(")) out.push(rel);
+    }
+  }
+  return out;
+}
+
 test("every buildTnQuickRequest call site handles source_quote_not_found (#346)", () => {
-  for (const rel of CALL_SITES) {
-    const src = readWeb(rel);
+  // The definition and its own tests call it too; only consumers must branch.
+  const sites = findCallSites().filter((rel) => !rel.startsWith("src/lib/tnQuickRequest"));
+  for (const known of KNOWN_CALL_SITES) {
     assert.ok(
-      src.includes("buildTnQuickRequest("),
-      `${rel} no longer calls buildTnQuickRequest — update CALL_SITES in this test.`,
+      sites.includes(known),
+      `${known} no longer calls buildTnQuickRequest (or the walk missed it). If the file moved ` +
+        `legitimately, update KNOWN_CALL_SITES; otherwise the discovery walk is broken.`,
     );
+  }
+  for (const rel of sites) {
     assert.ok(
-      src.includes("source_quote_not_found"),
+      stripLineComments(readWeb(rel)).includes("source_quote_not_found"),
       `${rel} calls buildTnQuickRequest but never branches on "source_quote_not_found", so an ` +
         `original-language quote that fails to align falls through to English-specific advice ` +
         `(or the generic "prerequisites missing"). See #346.`,
@@ -323,5 +348,20 @@ test("the OL-failure strings name both scripts and give no English-only advice (
       `ar.json is missing ${keyPath.join(".")} — ar is gated in coverage.json, so CI will fail.`,
     );
     assert.notEqual(arValue, value, `${keyPath.join(".")} in ar.json is still the English string`);
+    // The anti-advice check has to run on ar too, or the defect can be
+    // reintroduced in translation while en stays clean. "عبارة الدعم" is the
+    // phrase the English-path ar strings use for "the support phrase".
+    assert.doesNotMatch(
+      arValue,
+      /عبارة الدعم/,
+      `${keyPath.join(".")} in ar.json gives the English-path advice ("copy the support phrase") ` +
+        `for a Hebrew/Greek quote (#346)`,
+    );
+    // Both languages must keep the same interpolation contract.
+    assert.deepEqual(
+      arValue.match(/{{\w+}}/g),
+      value.match(/{{\w+}}/g),
+      `${keyPath.join(".")} placeholders differ between en.json and ar.json`,
+    );
   }
 });
