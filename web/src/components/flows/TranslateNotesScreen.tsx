@@ -1149,7 +1149,12 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
             ? t("flowTranslate.noLaneTextForAi", { label: litLabel })
             : built.error.reason === "missing_ust_verse"
               ? t("flowTranslate.noLaneTextForAi", { label: simLabel })
-              : built.error.reason === "hebrew_not_found"
+              : // Both unalignable-quote reasons land here: this copy is
+                // already script-neutral ("this note's quote"), so it reads
+                // correctly for an English phrase and for a Hebrew/Greek
+                // quote alike (#346).
+                built.error.reason === "hebrew_not_found" ||
+                  built.error.reason === "source_quote_not_found"
                 ? t("flowTranslate.quoteMatchFailed", { label: litLabel })
                 : t("flowTranslate.redoMissingData"),
         );
