@@ -371,6 +371,19 @@ function mkVerse(verse, verseEnd, voCount = 1) {
     noteRefLabel({ chapter: 1, verse: 2, ref_raw: "1:2,4" }) === "1:2,4",
     "tq discontinuous question shows both verses",
   );
+  // #351 review: a free-typed ref naming ANOTHER chapter must not be printed
+  // over lanes that render this chapter — noteCoveredVerses ignores the chapter
+  // part, so "2:3" on a chapter-1 row still shows chapter 1's verses.
+  assert(
+    noteRefLabel({ chapter: 1, verse: 5, ref_raw: "2:3" }) === "1:5",
+    "cross-chapter ref falls back to this row's chapter:verse",
+  );
+  assert(
+    noteRefLabel({ chapter: 2, verse: 5, ref_raw: "1:5-7" }) === "2:5",
+    "cross-chapter range falls back rather than advertising another chapter",
+  );
+  // A ref with no chapter part at all keeps its previous verbatim treatment.
+  assert(noteRefLabel({ chapter: 1, verse: 5, ref_raw: "5" }) === "5", "colon-less ref verbatim");
 }
 
 // --- verseObjectsOf (#351 item 4: one exported copy of the content cast) ---

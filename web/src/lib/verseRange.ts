@@ -173,8 +173,11 @@ export function concatSourceRange(
 }
 
 // The verse tree of a scripture row, or null when the row carries none. The
-// same `content.verseObjects` cast was hand-rolled in a dozen components; this
-// is the one copy (#351).
+// same `content.verseObjects` cast is hand-rolled in a dozen components; this
+// export is where they should converge — AlignScreen's copy is retired (#351),
+// the rest (ScriptureScreen, TranslateAlignScreen, VerseScreen, WordsScreen,
+// ReviewQueue, tnQuickRequest) are still local, so a change here does NOT yet
+// reach every call site.
 export function verseObjectsOf(dto: VerseDto | null | undefined): unknown[] | null {
   const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
   return Array.isArray(vo) ? vo : null;
@@ -272,8 +275,11 @@ export function coveredLaneSlices(
     }
   }
   // Join with a verse marker rather than a bare space so a multi-verse lane
-  // says where each verse starts (#351). A single slice is untouched, so the
-  // common singleton note's lane text is byte-identical to `plain_text`.
+  // says where each verse starts (#351). A single slice gets no marker, so a
+  // singleton note's lane text is its `plain_text` verbatim — except where that
+  // column is empty and the tree is not, which is the one case the derivation
+  // above deliberately changes on the singleton path too (empty box before,
+  // the verse's text now).
   let plainText: string | null = null;
   for (const slice of slices) {
     if (!slice.plainText) continue;
@@ -294,6 +300,13 @@ export function coveredLaneSlices(
 // on screen (house rule, VerseScreen.tsx). When the covered list collapsed to
 // the single leading verse but ref_raw still carries range/comma syntax, fall
 // back to `${chapter}:${verse}`.
+//
+// The same rule applies to the CHAPTER part. `ref_raw` is free-typed (the tq
+// Reference field, QuestionsTable.tsx) and the API rewrites `verse` only when
+// the retyped chapter matches the row's own (rows.ts), so "2:3" can sit on a
+// chapter-1 row. `noteCoveredVerses` ignores the chapter part entirely, so the
+// lanes still render chapter 1 — printing "2:3" over them names a chapter that
+// is not on screen (#351 review).
 export function noteRefLabel(row: {
   chapter: number;
   verse: number;
@@ -302,7 +315,12 @@ export function noteRefLabel(row: {
   const plain = `${row.chapter}:${row.verse}`;
   const ref = row.ref_raw;
   if (!ref) return plain;
-  const versePart = ref.slice(ref.indexOf(":") + 1);
+  const colon = ref.indexOf(":");
+  if (colon >= 0) {
+    const refChapter = parseInt(ref.slice(0, colon), 10);
+    if (Number.isFinite(refChapter) && refChapter !== row.chapter) return plain;
+  }
+  const versePart = ref.slice(colon + 1);
   if (/[-,]/.test(versePart) && noteCoveredVerses(row).length === 1) return plain;
   return ref;
 }
