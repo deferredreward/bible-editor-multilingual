@@ -12,7 +12,7 @@
 //
 // Not a test framework; a failed assert exits non-zero.
 
-import { buildTranslateOptions } from "./translateOptions.ts";
+import { buildTranslateOptions, normalizeRowIds } from "./translateOptions.ts";
 import { PRESETS } from "./projectConfig.ts";
 
 function assert(cond, msg) {
@@ -179,6 +179,37 @@ console.log("[buildTranslateOptions] per-resource org override → sourceRef use
     tq !== null && tq.sourceRef === "unfoldingWord/en_tq@master",
     "a legacy-string sibling role still resolves under the default org",
   );
+}
+
+console.log("[normalizeRowIds] order-independent, deduped set for #316 dedupe identity");
+{
+  assert(normalizeRowIds(undefined) === undefined, "no rowIds → undefined (chapter-wide scope)");
+  assert(normalizeRowIds([]) === undefined, "empty rowIds → undefined (chapter-wide scope)");
+  // Order-independence + dedup: [b,a,b] and [a,b] canonicalize to the same set.
+  assert(
+    JSON.stringify(normalizeRowIds(["b", "a", "b"])) === JSON.stringify(["a", "b"]),
+    "sorted + deduped: [b,a,b] → [a,b]",
+  );
+  assert(
+    JSON.stringify(normalizeRowIds(["a", "b"])) === JSON.stringify(normalizeRowIds(["b", "a"])),
+    "two requests for the same rows in different order canonicalize equal",
+  );
+  assert(
+    JSON.stringify(normalizeRowIds(["a"])) !== JSON.stringify(normalizeRowIds(["b"])),
+    "different single rows stay distinct (the #316 mis-attribution guard)",
+  );
+}
+
+console.log("[buildTranslateOptions] rowIds persisted normalized (#316)");
+{
+  const scoped = buildTranslateOptions(arBsoj, { rowIds: ["y3oq", "a1b2", "y3oq"] });
+  assert(scoped !== null, "row-scoped translate builds options");
+  assert(
+    JSON.stringify(scoped.rowIds) === JSON.stringify(["a1b2", "y3oq"]),
+    "rowIds stored sorted + deduped so options_json is a canonical set the dedupe query can compare",
+  );
+  const chapterWide = buildTranslateOptions(arBsoj, undefined);
+  assert(chapterWide !== null && !("rowIds" in chapterWide), "chapter-wide translate omits rowIds (no $.rowIds → 'ALL' sentinel)");
 }
 
 console.log("\ntranslateOptions: all assertions passed");
