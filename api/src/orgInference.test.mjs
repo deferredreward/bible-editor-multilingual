@@ -6,6 +6,7 @@ import {
   parseManifestFacts,
   inferFromRepoList,
   selectCandidateRepos,
+  shortLabelFromTitle,
 } from "./orgInference.ts";
 
 // ── Manifest fixtures ────────────────────────────────────────────────────────
@@ -371,4 +372,97 @@ test("fetchManifest: 404 is not_found and does not retry", async () => {
   const res = await fetchManifest({ DCS_SERVICE_TOKEN: "t" }, "Org", "repo", { fetch: fakeFetch });
   assert.equal(res.status, "not_found");
   assert.equal(count, 1);
+});
+
+// ── dublin_core.title → lane label (#365) ────────────────────────────────────
+
+const TITLED_LIT_MANIFEST = `
+dublin_core:
+  identifier: "glt"
+  title: "Gateway Literal Translation"
+  language:
+    identifier: "ar"
+    title: "العربية"
+    direction: "rtl"
+  subject: "Aligned Bible"
+  relation: []
+`;
+
+const TITLED_SIM_MANIFEST = `
+dublin_core:
+  identifier: "gst"
+  title: "Gateway Simplified Translation"
+  language: "ar"
+  subject: "Aligned Bible"
+  relation: []
+`;
+
+test("parseManifestFacts: extracts top-level dublin_core.title", () => {
+  const facts = parseManifestFacts(TITLED_LIT_MANIFEST);
+  assert.ok(facts);
+  assert.equal(facts.title, "Gateway Literal Translation");
+});
+
+test("parseManifestFacts: title is null when dublin_core has no title", () => {
+  // UW_BLOCK_MANIFEST (defined above) carries no top-level title.
+  const facts = parseManifestFacts(UW_BLOCK_MANIFEST);
+  assert.ok(facts);
+  assert.equal(facts.title, null);
+});
+
+test("shortLabelFromTitle: multi-word title becomes the acronym of initials", () => {
+  assert.equal(shortLabelFromTitle("Gateway Literal Translation"), "GLT");
+  assert.equal(shortLabelFromTitle("Gateway Simplified Translation"), "GST");
+  assert.equal(shortLabelFromTitle("Arabic Van Dyke"), "AVD");
+});
+
+test("shortLabelFromTitle: single-word title is truncated and uppercased", () => {
+  assert.equal(shortLabelFromTitle("Ketab"), "KETAB");
+  assert.equal(shortLabelFromTitle("Interconfessional"), "INTER"); // capped at 5
+});
+
+test("shortLabelFromTitle: a long acronym is capped at the badge limit", () => {
+  // 6 words -> 6 initials, capped to 5 chars.
+  assert.equal(shortLabelFromTitle("One Two Three Four Five Six"), "OTTFF");
+});
+
+test("shortLabelFromTitle: punctuation is stripped, empty/whitespace -> null", () => {
+  assert.equal(shortLabelFromTitle("  the Holy Bible!  "), "THB");
+  assert.equal(shortLabelFromTitle(""), null);
+  assert.equal(shortLabelFromTitle("   "), null);
+  assert.equal(shortLabelFromTitle(null), null);
+  assert.equal(shortLabelFromTitle(undefined), null);
+});
+
+test("inferFromRepoList: lane labels derive from the lit/sim manifest title", () => {
+  const repos = [
+    { name: "ar_tn" }, { name: "ar_tq" }, { name: "ar_twl" },
+    { name: "ar_tw" }, { name: "ar_ta" },
+    { name: "ar_glt" }, { name: "ar_gst" },
+  ];
+  const manifests = manifestMap({
+    ar_glt: parseManifestFacts(TITLED_LIT_MANIFEST),
+    ar_gst: parseManifestFacts(TITLED_SIM_MANIFEST),
+  });
+  const inf = inferFromRepoList("SomeNewOrg", repos, manifests);
+  assert.equal(inf.litRepo, "ar_glt");
+  assert.equal(inf.simRepo, "ar_gst");
+  assert.equal(inf.litLabel, "GLT"); // from "Gateway Literal Translation", not the repo name
+  assert.equal(inf.simLabel, "GST"); // from "Gateway Simplified Translation"
+});
+
+test("inferFromRepoList: lane labels fall back to the repo name when the manifest has no title", () => {
+  const repos = [
+    { name: "ar_tn" }, { name: "ar_tq" }, { name: "ar_twl" },
+    { name: "ar_tw" }, { name: "ar_ta" },
+    { name: "ar_glt" }, { name: "ar_gst" },
+  ];
+  // Manifests verify the Bible subject but carry no top-level title.
+  const manifests = manifestMap({
+    ar_glt: { language: "ar", relation: [], identifier: "glt", subject: "Aligned Bible", title: null },
+    ar_gst: { language: "ar", relation: [], identifier: "gst", subject: "Aligned Bible", title: null },
+  });
+  const inf = inferFromRepoList("SomeNewOrg", repos, manifests);
+  assert.equal(inf.litLabel, "GLT"); // ar_glt -> GLT (repo-name slice)
+  assert.equal(inf.simLabel, "GST"); // ar_gst -> GST
 });
