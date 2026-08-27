@@ -2975,7 +2975,7 @@
       "suggestNeedsQuote": "Add a quote first — the AI request needs the phrase to explain",
       "missingUltVerse": "ULT verse text unavailable for this verse.",
       "missingUstVerse": "UST verse text unavailable for this verse.",
-      "quoteNotAligned": "Couldn't match this quote to the ULT alignment — copy the support phrase exactly from ULT.",
+      "quoteNotAligned": "Couldn't match this quote to the alignment — check that the quote matches the source text exactly.",
       "aiPrereqMissing": "AI prerequisites missing.",
       "aiDraftWithWarnings": "AI draft inserted — not saved. {{warnings}}",
       "aiDraftInserted": "AI draft inserted into the editor — click Save to keep it.",
@@ -3318,7 +3318,7 @@
     "shell": {
       "aiMissingUlt": "ULT verse text unavailable for this verse.",
       "aiMissingUst": "UST verse text unavailable for this verse.",
-      "aiHebrewNotFound": "Couldn't match this English to the ULT alignment — copy the support phrase exactly from ULT.",
+      "aiHebrewNotFound": "Couldn't match this quote to the alignment — check that the quote matches the source text exactly.",
       "aiPrereqMissing": "AI prerequisites missing.",
       "panelComingLater": "{{type}} — panel coming in a later pass"
     },
