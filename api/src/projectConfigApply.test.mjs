@@ -21,6 +21,13 @@ import {
 } from "./projectConfigApply.ts";
 import { clearProjectConfigCache } from "./projectConfig.ts";
 
+// applyProjectConfig now canonicalizes a custom-gl `org` override against DCS
+// on write (orgCanonical.ts, issue #306). Default to a fail-open 404 stub so
+// every other test in this file — none of which cares about canonicalization
+// — stays hermetic and network-free; the canonicalization tests below
+// override this to exercise the DCS-lookup and fail-open paths themselves.
+globalThis.fetch = async () => ({ ok: false, status: 404 });
+
 // ── D1 adapter over node:sqlite (same shape as articlePopulate.test.mjs) ────
 
 function makeEnv(db) {
@@ -576,6 +583,56 @@ test("applyProjectConfig: a POPULATED lane whose stored source differs only in C
     assert.equal(row.pending_target_json, null, `${lane} has no pending target`);
     assert.equal(row.exports_blocked, 0, `${lane} exports not blocked`);
     assert.equal(JSON.parse(row.active_config_json).source.owner, "BSOJ", `${lane} adopts canonical casing`);
+  }
+});
+
+test("applyProjectConfig: canonicalizes a mixed-case custom-gl org override against DCS on write", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  // DCS resolves the mixed-case "bSoJ" to canonical "BSOJ".
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/api/v1/orgs/")) return { ok: true, json: async () => ({ username: "BSOJ" }) };
+    return prevFetch(url);
+  };
+  try {
+    const overrides = {
+      org: "bSoJ",
+      exportOrg: "bSoJ",
+      repos: { lit: "ar_avd", sim: "ar_nav", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl", tw: "ar_tw", ta: "ar_ta" },
+      translationSource: null,
+    };
+    const result = await applyProjectConfig(env, "custom-gl", overrides);
+    assert.equal(result.ok, true, `apply must succeed, got ${result.error ?? ""}`);
+    assert.equal(result.config.org, "BSOJ", "materialized config carries DCS canonical casing, not as-typed 'bSoJ'");
+    const stored = JSON.parse(db.prepare(`SELECT overrides_json AS o FROM project_config WHERE id=1`).get().o);
+    assert.equal(stored.org, "BSOJ", "persisted overrides_json.org is the canonical casing");
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test("applyProjectConfig: org canonicalization fails open to the as-typed org on a DCS lookup failure", async () => {
+  const db = freshDb();
+  seedConfig(db, "en-unfoldingword");
+  seedLanes(db, "en-unfoldingword");
+  const env = makeEnv(db);
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 500 });
+  try {
+    const overrides = {
+      org: "bsoj",
+      exportOrg: "bsoj",
+      repos: { lit: "ar_avd", sim: "ar_nav", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl", tw: "ar_tw", ta: "ar_ta" },
+      translationSource: null,
+    };
+    const result = await applyProjectConfig(env, "custom-gl", overrides);
+    assert.equal(result.ok, true, "a DCS lookup failure must not block the apply");
+    assert.equal(result.config.org, "bsoj", "falls back to the as-typed org when canonicalization fails");
+  } finally {
+    globalThis.fetch = prevFetch;
   }
 });
 

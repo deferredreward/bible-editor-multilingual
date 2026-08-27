@@ -18,6 +18,7 @@
 import type { Env } from "./index";
 import { PRESETS, DEFAULT_PRESET, presetForOrg, materialize, clearProjectConfigCache, exportOwnerFor, type ProjectConfig, type ResourceKey } from "./projectConfig.ts";
 import { dcsName, isIdent } from "./repoUrl.ts";
+import { canonicalOrgName } from "./orgCanonical.ts";
 import {
   configHash,
   desiredLaneConfig,
@@ -405,14 +406,17 @@ export async function applyProjectConfig(
   const currentPreset = beforeRow?.preset ?? DEFAULT_PRESET;
   const beforeCfg = materialize(currentPreset, beforeRow?.overrides_json ?? null);
 
-  const overridesIntent = resolveOverridesIntent(currentPreset, preset, requestOverrides);
-  // NOTE: org-name canonicalization on this path is deliberately NOT done here.
-  // The tenancy guard below keys off dataExportIdentity, which compares `org`
-  // case-SENSITIVELY (`org=${cfg.org}`). Canonicalizing a stored mis-cased org
-  // (e.g. "bsoj"→"BSOJ") on a re-apply would register as an identity change and
-  // trip the project_not_empty 409 on a populated project. Canonicalizing here
-  // safely requires first making dataExportIdentity case-insensitive for
-  // org/exportOwner — tracked as follow-up on issue #306.
+  let overridesIntent = resolveOverridesIntent(currentPreset, preset, requestOverrides);
+  // Canonicalize a custom-gl `org` override to DCS's casing before it's
+  // persisted (issue #306). Safe to do unconditionally here: dataExportIdentity
+  // already case-folds `org` via `dcsName` (api/src/repoUrl.ts:101-103), so a
+  // canonicalized org and the as-typed org it replaces compare as the SAME
+  // identity and never trip the project_not_empty guard below. Best-effort —
+  // canonicalOrgName fails open to the input on any DCS non-200/network error,
+  // so a lookup hiccup never blocks an apply.
+  if (overridesIntent && typeof overridesIntent.org === "string") {
+    overridesIntent = { ...overridesIntent, org: await canonicalOrgName(env, overridesIntent.org) };
+  }
   const overridesJsonForWrite =
     overridesIntent === undefined
       ? (beforeRow?.overrides_json ?? null)
