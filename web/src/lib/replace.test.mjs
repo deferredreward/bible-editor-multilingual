@@ -1203,6 +1203,68 @@ const qsWrap = (selahStrong = "H5542") => ({
   assert(selahAfter && selahAfter.strongs.includes("H5542"), "'Selah' keeps its \\zaln (H5542) alignment through the edit");
 }
 
+// ─── Case 47e: \b spacer — render↔baseline parity + content after \b (#386) ────
+// Two pre-existing save-path hazards in the #345/#357 family:
+//   A. segmentsToHtml emitted the \b / \ts\* chip with NO trailing space while
+//      extractEditableText emits "\b " / "\ts\* " — one space apart, so
+//      Shell.saveVerseDraft's no-op guard missed and a zero-typing blur PATCHed.
+//   B. content emitted after a \b accumulated into the blank segment, whose html
+//      segmentsToHtml discards — so it vanished from the render but stayed in the
+//      diff baseline. Parse REAL USFM (never hand-build — that is how these hid).
+{
+  console.log("\n[Case 47e] \\b spacer: render↔baseline parity + text after \\b survives (#386)");
+  const textContent = (html) =>
+    html
+      .replace(/<[^>]*>/g, "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&#8203;/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&");
+
+  // A. \qs Selah\qs* + \b + \q1 — the canonical Psalms shape; \qs is properly
+  //    closed, so this is ordinary input. The editable render's textContent must
+  //    equal the diff baseline across the \b, or the no-op guard fires a PATCH.
+  const shapeA = String.raw`\id PSA
+\c 3
+\p
+\v 8 Salvation. \qs Selah\qs*
+\b
+\q1 next line here
+`;
+  const voA = usfm.toJSON(shapeA).chapters["3"]["8"].verseObjects;
+  const baselineA = extractEditableText({ verseObjects: voA });
+  const displayedA = normalizeEditable(textContent(renderEditableHTML(voA, new Set())));
+  assert(
+    displayedA === baselineA,
+    `editable textContent matches the diff baseline across \\b (displayed ${JSON.stringify(displayedA)} vs baseline ${JSON.stringify(baselineA)})`,
+  );
+
+  // B. bare text after \b must survive into the render (it was discarded), and
+  //    the editable render must still line up with the baseline.
+  const shapeB = String.raw`\id PSA
+\c 3
+\p
+\v 2 Before.
+\b
+after blank
+`;
+  const voB = usfm.toJSON(shapeB).chapters["3"]["2"].verseObjects;
+  const shownB = textContent(renderHighlightedHTML(voB, new Set()));
+  assert(
+    shownB.includes("after blank"),
+    `text after \\b survives into the render (got ${JSON.stringify(shownB)})`,
+  );
+  const baselineB = extractEditableText({ verseObjects: voB });
+  const displayedB = normalizeEditable(textContent(renderEditableHTML(voB, new Set())));
+  assert(
+    displayedB === baselineB,
+    `editable textContent matches baseline with text after \\b (displayed ${JSON.stringify(displayedB)} vs baseline ${JSON.stringify(baselineB)})`,
+  );
+}
+
 // Transplant detector: for the ORIGINAL verse, record the set of milestone
 // strongs each aligned surface text ever sat under. A result \w is a TRANSPLANT
 // iff its innermost milestone strong was never held by ANY aligned instance of

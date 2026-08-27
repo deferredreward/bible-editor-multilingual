@@ -730,10 +730,14 @@ function segmentByParagraphs(
         const { wrapper, isBlank } = paragraphClass(tag);
         const seg: Segment = { wrapper, tag, html: "", isBlank };
         segments.push(seg);
-        if (tag === "ts") {
-          // \ts\* is a standalone chunk divider — anything that follows
-          // (text, the next paragraph marker, ...) belongs to a fresh
-          // segment, not inside the divider block.
+        if (tag === "ts" || isBlank) {
+          // \ts\* and \b are standalone spacer blocks that render no inline
+          // content of their own — segmentsToHtml discards a blank segment's
+          // html — so anything that follows (text, the next paragraph marker,
+          // ...) belongs to a fresh segment, not accumulated into the spacer
+          // where it would be thrown away. Without this a bare text node after
+          // a \b vanished from the render while extractEditableText kept it,
+          // the #345/#357 save-path drop reached through the blank branch (#386B).
           current = { wrapper: "", tag: null, html: "", isBlank: false };
           segments.push(current);
         } else {
@@ -812,14 +816,20 @@ function segmentsToHtml(segments: Segment[], emitChips: boolean): string {
     if (seg.html === "" && !seg.wrapper) continue;
     const cls = seg.wrapper || "be-line";
     if (seg.isBlank) {
-      out.push(`<div class="${cls}">${emitChips && seg.tag ? chipForTag(seg.tag) : "&nbsp;"}</div>`);
+      // Chip mode emits the marker chip with a trailing space so the editor's
+      // textContent matches extractEditableText's "\b " (usfm.ts). Without it
+      // the two are one space apart, so Shell.saveVerseDraft's no-op guard
+      // misses and a zero-typing blur fires a phantom PATCH (#386A).
+      out.push(`<div class="${cls}">${emitChips && seg.tag ? chipForTag(seg.tag) + " " : "&nbsp;"}</div>`);
       continue;
     }
     if (seg.tag === "ts") {
       // \ts\* renders as a horizontal divider regardless of edit mode.
       // The chip carries the literal marker text so editing it still
-      // round-trips through tokenizeEditableText.
-      const chip = emitChips ? chipForTag("ts") : `<span class="be-tok be-tok-ts">\\ts\\*</span>`;
+      // round-trips through tokenizeEditableText. Chip mode adds the trailing
+      // space extractEditableText emits for "\ts\* ", same parity fix as the
+      // blank branch above (#386A).
+      const chip = emitChips ? chipForTag("ts") + " " : `<span class="be-tok be-tok-ts">\\ts\\*</span>`;
       out.push(`<div class="${cls}">${chip}</div>`);
       continue;
     }
