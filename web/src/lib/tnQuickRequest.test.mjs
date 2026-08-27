@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { isOriginalLanguageQuote, buildTnQuickRequest } from "./tnQuickRequest.ts";
+
+const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const readWeb = (rel) => readFileSync(path.join(webRoot, rel), "utf8");
 
 test("Greek quote classifies as source-language", () => {
   assert.equal(isOriginalLanguageQuote("βλέπεις"), true);
@@ -198,8 +204,49 @@ test("buildTnQuickRequest fails loudly for a mixed English+Greek quote that reso
   const result = buildTnQuickRequest(row, makeChapterPayload());
   assert.equal(result.ok, false);
   if (!result.ok) {
-    assert.equal(result.error.reason, "hebrew_not_found");
+    // #346: the source-language path reports its OWN reason, so call sites can
+    // render script-appropriate copy instead of "copy the English phrase".
+    assert.equal(result.error.reason, "source_quote_not_found");
   }
+});
+
+test("mixed English+Greek quote fails loudly even against an ALIGNED verse (#346)", () => {
+  // The #332 fixture has no milestones, so it can't distinguish "the quote
+  // didn't resolve" from "the verse has no alignment at all". Here the ULT verse
+  // IS aligned (and the UGNT source verse is present), so the quote goes through
+  // both the OL-anchored join and the GL set-match degradation — and still
+  // resolves to nothing, because none of "the"/"word"/"λόγος" is a milestone's
+  // source content.
+  const row = makeRow({ quote: "the word λόγος" });
+  const result = buildTnQuickRequest(row, makeAlignedGreekPayload());
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.reason, "source_quote_not_found");
+  }
+});
+
+test("an original-language quote and an English phrase fail with DIFFERENT reasons (#346)", () => {
+  // The whole point of the split: one shared reason is what let Shell and
+  // ReviewQueue show English-only advice for a Hebrew/Greek quote.
+  const olResult = buildTnQuickRequest(makeRow({ quote: "λόγος" }), makeChapterPayload());
+  const enResult = buildTnQuickRequest(
+    makeRow({ quote: "some unrelated english phrase" }),
+    makeChapterPayload(),
+  );
+  assert.equal(olResult.ok, false);
+  assert.equal(enResult.ok, false);
+  if (!olResult.ok && !enResult.ok) {
+    assert.equal(olResult.error.reason, "source_quote_not_found");
+    assert.equal(enResult.error.reason, "hebrew_not_found");
+  }
+});
+
+test("a resolvable Hebrew quote does not produce a failure reason at all (#346)", () => {
+  // Guard the split from over-firing: the new reason must appear only when the
+  // OL quote genuinely fails to resolve, not on every OL quote.
+  const row = makeRow({ book: "GEN", chapter: 1, verse: 1, quote: "רֵאשִׁית" });
+  const result = buildTnQuickRequest(row, makeAlignedHebrewPayload());
+  assert.equal(result.ok, true);
 });
 
 test("buildTnQuickRequest fails with hebrew_not_found for an English phrase that doesn't align", () => {
@@ -208,5 +255,73 @@ test("buildTnQuickRequest fails with hebrew_not_found for an English phrase that
   assert.equal(result.ok, false);
   if (!result.ok) {
     assert.equal(result.error.reason, "hebrew_not_found");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Copy contract (#346). A unit test can't render the components, but the defect
+// this fixes was purely "a call site forgot that the OL path needs its own
+// message". These guards catch exactly that: every component that consumes
+// buildTnQuickRequest must branch on the OL reason, and the strings it reaches
+// for must not carry the English-only advice.
+// ---------------------------------------------------------------------------
+
+const CALL_SITES = [
+  "src/components/Shell.tsx",
+  "src/components/ReviewQueue.tsx",
+  "src/components/flows/TranslateNotesScreen.tsx",
+];
+
+test("every buildTnQuickRequest call site handles source_quote_not_found (#346)", () => {
+  for (const rel of CALL_SITES) {
+    const src = readWeb(rel);
+    assert.ok(
+      src.includes("buildTnQuickRequest("),
+      `${rel} no longer calls buildTnQuickRequest — update CALL_SITES in this test.`,
+    );
+    assert.ok(
+      src.includes("source_quote_not_found"),
+      `${rel} calls buildTnQuickRequest but never branches on "source_quote_not_found", so an ` +
+        `original-language quote that fails to align falls through to English-specific advice ` +
+        `(or the generic "prerequisites missing"). See #346.`,
+    );
+  }
+});
+
+test("the OL-failure strings name both scripts and give no English-only advice (#346)", () => {
+  const en = JSON.parse(readWeb("src/i18n/locales/en.json"));
+  const ar = JSON.parse(readWeb("src/i18n/locales/ar.json"));
+  const keys = [
+    ["appShell", "shell", "aiSourceQuoteNotFound"],
+    ["flowReview", "queue", "sourceQuoteNotAligned"],
+  ];
+  const at = (obj, keyPath) => keyPath.reduce((o, k) => (o == null ? o : o[k]), obj);
+
+  for (const keyPath of keys) {
+    const value = at(en, keyPath);
+    assert.equal(
+      typeof value,
+      "string",
+      `en.json is missing ${keyPath.join(".")} — the OL-quote failure needs its own copy (#346).`,
+    );
+    // Names both original languages, the way #332 fixed aiDraft.noHebrew.
+    assert.match(value, /Hebrew/, `${keyPath.join(".")} should name Hebrew`);
+    assert.match(value, /Greek/, `${keyPath.join(".")} should name Greek`);
+    // The whole defect: telling a translator to copy an English support phrase
+    // when the quote they have is Hebrew or Greek.
+    assert.doesNotMatch(
+      value,
+      /support phrase/i,
+      `${keyPath.join(".")} still gives the English-path advice (#346)`,
+    );
+    // ar is the one GATED locale (web/src/i18n/coverage.json), so it owes a
+    // real translation, not a fallback to en.
+    const arValue = at(ar, keyPath);
+    assert.equal(
+      typeof arValue,
+      "string",
+      `ar.json is missing ${keyPath.join(".")} — ar is gated in coverage.json, so CI will fail.`,
+    );
+    assert.notEqual(arValue, value, `${keyPath.join(".")} in ar.json is still the English string`);
   }
 });
