@@ -1014,17 +1014,22 @@ export function Shell({
         applyLocalRowReplacement("tn", updated);
         // Trash discards unsaved edits — drop any orphan draft record for the
         // row so it stops counting toward the "N unsaved" reminder (issue
-        // #359). NoteCard.handleDelete snaps its own editor buffer to server
-        // truth so it won't re-create this; the clear also covers any trash
-        // trigger that doesn't route through the card editor.
+        // #359). This is the ONLY drafts.clear on the trash path, deliberately
+        // on the success side: a failed trash must leave the user's unsaved
+        // text intact. NoteCard.handleDelete waits on the boolean below before
+        // snapping its own editor buffer to server truth (and the card is
+        // already `readOnly` from the optimistic trashed_at, so its persist
+        // effect can't re-create this record in between).
         void drafts.clear(rowKey("tn", book, id));
         // Trash bypasses the outbox, so refresh the lint chip directly — a
         // trashed note leaves the lint set (trashed_at IS NULL filter).
         scheduleLintRefetch();
+        return true;
       } catch (e) {
         applyLocalRowPatch("tn", id, { trashed_at: null });
         const msg = e instanceof Error ? e.message : t("appShell.common.unknownError");
         pushPipelineToast(t("shell.couldntDeleteNote", { message: msg }), "error");
+        return false;
       }
     },
     [book, applyLocalRowPatch, applyLocalRowReplacement, pushPipelineToast, scheduleLintRefetch, t],

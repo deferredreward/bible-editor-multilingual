@@ -314,11 +314,20 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   const selectedGridQuestion =
     activeKind === "tq" && selectedRow ? gridEdits[selectedRow.id]?.question : undefined;
 
+  // A trashed note is read-only in this editor (the Draft field below is
+  // disabled): trash deliberately discards unsaved text, so nothing may write
+  // it back to the store.
+  const isTrashed =
+    activeKind === "tn" && selectedRow ? (selectedRow as TnRow).trashed_at != null : false;
+
   // Stash every keystroke to the drafts store (explicit-Save-only: this never
   // triggers a network write on its own). Cleared automatically by drafts.ts
   // once the outbox confirms a save.
   useEffect(() => {
     if (!selectedRow) return;
+    // Never re-create the record handleToggleTrash just cleared (#359) — the
+    // same guard NoteCard's persist effect gets from `readOnly`.
+    if (isTrashed) return;
     const key = rowKey(activeKind, book, selectedRow.id);
     const patch: Record<string, string> = {};
     const baseline: Record<string, string> = {};
@@ -346,7 +355,15 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
       void drafts.clear(key);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftValue, selectedRow?.id, selectedRow?.version, activeKind, book, selectedGridQuestion]);
+  }, [
+    draftValue,
+    selectedRow?.id,
+    selectedRow?.version,
+    activeKind,
+    book,
+    selectedGridQuestion,
+    isTrashed,
+  ]);
 
   // ── grid cell drafts ──────────────────────────────────────────────────────
   // Restore cell edits a previous session left in IndexedDB. Once per chapter;
@@ -822,9 +839,17 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
         // unsaved draft would otherwise survive the trash (hasDiff stays true;
         // the persist effect re-keys and never clears it) as an orphan that
         // keeps counting toward the "N unsaved" reminder — issue #359, the
-        // classic-surface twin of the flows fix in #349/#353. Snap the
-        // baseline forward so hasDiff drops, and drop the drafts record.
-        baselineRef.current = draftValue;
+        // classic-surface twin of the flows fix in #349/#353. Snap BOTH the
+        // editor value and the baseline to server truth — the same derivation
+        // the hydration effect uses — so hasDiff drops, the trashed row stops
+        // rendering the discarded text as if it were saved (trash doesn't bump
+        // the version, so nothing re-hydrates), a later Restore can't leave one
+        // keystroke away from saving discarded text, and there's no
+        // stale-closure window if the user types while the request is in
+        // flight. Then drop the drafts record.
+        const next = unescapeNewlines(updated.note);
+        setDraftValue(next);
+        baselineRef.current = next;
         void drafts.clear(rowKey("tn", book, row.id));
       }
       say(
@@ -1172,7 +1197,6 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   ).length;
   const unapprovedQuestions = data.tq.filter((r) => r.translation_state !== "validated").length;
   const rowState = selectedRow ? stateLabel(selectedRow.translation_state) : "draft";
-  const isTrashed = activeKind === "tn" && selectedRow ? (selectedRow as TnRow).trashed_at != null : false;
   const chipKind = isTrashed ? "trashed" : rowState === "validated" ? "approved" : rowState;
   const ultText = selectedRow ? (ultIndex[selectedRow.verse]?.plain_text ?? null) : null;
   const ustText = selectedRow ? (ustIndex[selectedRow.verse]?.plain_text ?? null) : null;
@@ -1576,7 +1600,7 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
                   label={t("translation.draftLabel")}
                   value={draftValue}
                   onChange={(e) => setDraftValue(e.target.value)}
-                  disabled={saveLocked}
+                  disabled={saveLocked || isTrashed}
                   inputProps={{ "data-dirty": hasDiff ? "true" : "false" }}
                 />
 
