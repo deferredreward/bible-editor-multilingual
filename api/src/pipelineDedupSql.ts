@@ -94,12 +94,24 @@ export const PIPELINE_COVERAGE_WHERE = `j.book = ?1 AND j.start_chapter = ?2 AND
 // alongside the SQL for the same anti-drift reason: this predicate is what makes
 // the rule one-way (a chapter-wide request never reaches the coverage query), so
 // the test must exercise the route's copy of it, not a re-typed one.
+//
+// EITHER verse boundary makes a request narrower. TranslateOptions accepts an
+// end-only selection ({verseEnd: 7} with no verseStart), and keying this on
+// verseStart alone would let such a request slip past the coverage query and run
+// alongside a chapter-wide job that already covers it. An end-only request keeps
+// `verses.start === 0`, so inside the clause only the chapter-wide shape (a) can
+// match it — shape (b) is guarded by `?5 > 0` — which is exactly right: its
+// extent is unknown, so a chapter-wide job covers it and a verse-range job is not
+// provably broader than it.
 export function isNarrowerTranslateScope(
   pipelineType: string,
   normalizedRowIds: string[] | undefined,
-  verseStart: number,
+  verses: { start: number; end: number },
 ): boolean {
-  return pipelineType === "translate" && (normalizedRowIds !== undefined || verseStart > 0);
+  return (
+    pipelineType === "translate" &&
+    (normalizedRowIds !== undefined || verses.start > 0 || verses.end > 0)
+  );
 }
 
 // The ?5/?6 pair for PIPELINE_COVERAGE_WHERE. Both default to 0 (the "no verse

@@ -1349,7 +1349,7 @@ pipelines.post("/start", requireEditor, async (c) => {
   const requestIsNarrowerScope = isNarrowerTranslateScope(
     parsed.data.pipelineType,
     dedupNormRowIds,
-    coverageVerses.start,
+    coverageVerses,
   );
   if (!dup && requestIsNarrowerScope) {
     dup = await c.env.DB.prepare(

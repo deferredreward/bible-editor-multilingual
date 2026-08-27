@@ -115,7 +115,7 @@ function makeDb() {
     const narrower = isNarrowerTranslateScope(
       pipelineType,
       normalizeRowIds(translate?.rowIds),
-      verses.start,
+      verses,
     );
     return narrower ? findCovering(translate) : undefined;
   }
@@ -225,6 +225,13 @@ console.log("\n[#347 item 1] a broader in-flight job blocks a narrower request i
     rangeInside && rangeInside.job_id === "jobChapter",
     "verse-range request is blocked by the in-flight chapter-wide job",
   );
+  // An END-ONLY request ({verseEnd: 7}, no verseStart — TranslateOptions accepts
+  // it) is narrower too, and must not slip past the coverage query.
+  const endOnly = resolveConflict({ verseEnd: 7 });
+  assert(
+    endOnly && endOnly.job_id === "jobChapter",
+    "end-only verse selection is blocked by the in-flight chapter-wide job",
+  );
   // resourceType still separates: a tq narrower request is NOT blocked by the tn
   // chapter-wide job.
   assert(
@@ -293,6 +300,12 @@ console.log("\n[#347 item 1] a covering verse range blocks a narrower range insi
   assert(
     resolveConflict({ verseStart: 1, verseEnd: 3 }) === undefined,
     "a disjoint verse range is not blocked",
+  );
+  // An end-only request has an unknown extent, so only a chapter-wide job can
+  // cover it — a verse-range job is not provably broader and must not block it.
+  assert(
+    resolveConflict({ verseEnd: 7 }) === undefined,
+    "end-only request is not blocked by a verse-range job (only a chapter-wide one covers it)",
   );
   // Documented GAP: a row-scoped request inside a covering verse-range job is NOT
   // detected — that needs a rowId → verse lookup the start route does not do.
