@@ -119,6 +119,7 @@ import {
 } from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
 import { tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
+import { resolveFlowChipStatus, flowChipKind, type FlowChipStatus } from "../../lib/flowStatusChip";
 import { flowLaneSegmentsAcross, type FlowSegment } from "../../lib/flowHighlight";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { realChapters } from "../../lib/bookSummary";
@@ -1233,28 +1234,53 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   // the header and chips don't mislabel them "DRAFT · AI" (issue #295).
   const isAquiferDraft = row?.translation_state === "ai_draft" && isAquiferDraftRow(row);
 
-  const cardStatus = row ? statuses[row.id] : undefined;
-  // Pending = saved but not yet approved (edited this session, or loaded already
-  // 'edited' from a prior one). Distinct from hasDiff, which is the live,
-  // unsaved edit in the open editor.
-  const cardPending = !!row && (editedIds.has(row.id) || row.translation_state === "edited");
-  const chip: { kind: FlowStatusKind; label: string } =
-    // Live, unsaved typing in the open editor wins over any saved verdict: the
-    // current row is the one the user jumped to *because* it holds unsaved
-    // text, so an "Approved"/"Not needed" chip here hides exactly what they
-    // came to find (#342). Non-open rows keep the approved-first order in the
-    // list-row chip below.
-    hasDiff
-      ? { kind: "edited", label: t("flowTranslate.status.edited") }
-      : cardStatus === "approved"
-        ? { kind: "approved", label: t("flowTranslate.status.approved") }
-        : cardStatus === "skipped"
-          ? { kind: "skip", label: t("flowTranslate.notNeeded") }
-          : cardPending
-            ? { kind: "edited", label: t("flowTranslate.status.pending") }
-            : isAquiferDraft
-              ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
-              : { kind: "draft", label: t("flowTranslate.status.draft") };
+  // Label copy for a resolved chip status, tn's wording. Precedence itself lives
+  // in resolveFlowChipStatus (#348) — this only maps status → tn label. tn does
+  // not distinguish an AI draft, so aiDraft/draft share the "draft" label; tn is
+  // the only screen with a "skipped" (Not needed) verdict.
+  const noteChipLabel = (status: FlowChipStatus): string => {
+    switch (status) {
+      case "editing":
+        return t("flowTranslate.status.edited");
+      case "unsaved":
+        return t("flowTranslate.status.unsaved");
+      case "approved":
+        return t("flowTranslate.status.approved");
+      case "skipped":
+        return t("flowTranslate.notNeeded");
+      case "pending":
+        return t("flowTranslate.status.pending");
+      case "aquifer":
+        return t("flowTranslate.status.aquiferImport");
+      case "aiDraft":
+      case "draft":
+        return t("flowTranslate.status.draft");
+    }
+  };
+  // The one chip resolver for tn rows — card (isCurrent) and list-row alike.
+  // Unsaved text wins over any saved verdict (#342): the open card by its live
+  // diff, every other row by whether a draft is persisted for it.
+  const noteChip = (
+    id: string,
+    r: TnRow,
+    isCurrent: boolean,
+  ): { kind: FlowStatusKind; label: string } => {
+    const st = statuses[id];
+    const status = resolveFlowChipStatus({
+      isCurrent,
+      hasLiveDiff: hasDiff,
+      draftPresent: draftRowIds.has(id),
+      approved: st === "approved",
+      skipped: st === "skipped",
+      pending: editedIds.has(id) || r.translation_state === "edited",
+      aquifer: r.translation_state === "ai_draft" && isAquiferDraftRow(r),
+      aiDrafted: false,
+    });
+    return { kind: flowChipKind(status), label: noteChipLabel(status) };
+  };
+  const chip: { kind: FlowStatusKind; label: string } = row
+    ? noteChip(row.id, row, true)
+    : { kind: "draft", label: t("flowTranslate.status.draft") };
   const nextChapter = chapter + 1;
   const hasNextChapter = chapterCount === null ? true : nextChapter <= chapterCount;
 
@@ -1775,34 +1801,11 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
         </Box>
       );
     }
-    const st = statuses[id];
     const typeSlug = typeSlugOf(r.support_reference);
-    const rowPending = editedIds.has(id) || r.translation_state === "edited";
-    const rowChip: { kind: FlowStatusKind; label: string } =
-      // Unsaved text — checked first, ahead of even the approved/skipped
-      // verdicts: a draft means the visible text differs from what the server
-      // holds, and hiding that behind "Approved" recreates the very
-      // can't-find-my-unsaved-edit gap this chip exists to close. This covers
-      // both a persisted draft on a NOT-open card and the open card's own live
-      // diff (#342) — for the open/current row the approved verdict must not
-      // win over its live edit either.
-      (id !== currentId && draftRowIds.has(id)) || (id === currentId && hasDiff)
-        ? {
-            kind: "edited",
-            label:
-              id === currentId
-                ? t("flowTranslate.status.edited")
-                : t("flowTranslate.status.unsaved"),
-          }
-        : st === "approved"
-          ? { kind: "approved", label: t("flowTranslate.status.approved") }
-          : st === "skipped"
-            ? { kind: "skip", label: t("flowTranslate.notNeeded") }
-            : rowPending
-              ? { kind: "edited", label: t("flowTranslate.status.pending") }
-              : r.translation_state === "ai_draft" && isAquiferDraftRow(r)
-                ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
-                : { kind: "draft", label: t("flowTranslate.status.draft") };
+    // Same resolver as the card (#348): unsaved text (the open card's live diff,
+    // or a persisted draft on any other row) is checked ahead of the
+    // approved/skipped verdicts, so it's never hidden behind "Approved".
+    const rowChip = noteChip(id, r, id === currentId);
     const isSelected = !done && idx === cursor;
     // Preview the TARGET text — what the translator wrote (their live draft
     // for the open card, else the row's saved note), falling back to the
