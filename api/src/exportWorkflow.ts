@@ -2124,9 +2124,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const tipSha = await fileCommitSha(this.env, destOwner, destRepo, path, baseRef);
     const baseline = await this.env.DB.prepare(
       // owner/repo are DCS names (case-insensitive); lane/base_ref/book are not.
-      // The baseline upsert keys on a BINARY primary key, so a case-only drift can
-      // leave two rows for one repo: prefer the exact-case row (pre-NOCASE
-      // behaviour) and fall back to a case variant only when none exists.
+      // Migration 0069 made scripture_export_baselines.owner (part of the PK)
+      // COLLATE NOCASE, so the bare `owner = ?2` in the ORDER BY tiebreak below
+      // is now case-insensitive too, same as the explicit `COLLATE NOCASE` in
+      // the WHERE clause — it no longer distinguishes rows by exact casing the
+      // way it did when the column was BINARY. That's fine: 0069's preflight
+      // aborts the migration if any two rows already differ only by owner
+      // casing, so no case-variant duplicate PK can survive into a NOCASE
+      // column, and this ORDER BY is left in place only as defense in depth.
       `SELECT base_sha FROM scripture_export_baselines
         WHERE lane = ?1 AND owner = ?2 COLLATE NOCASE AND repo = ?3 COLLATE NOCASE AND base_ref = ?4 AND book = ?5
         ORDER BY (owner = ?2 AND repo = ?3) DESC

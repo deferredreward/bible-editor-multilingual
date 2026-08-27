@@ -8,6 +8,20 @@
 import type { ProjectConfig } from "./projectConfig.ts";
 import { resolveSourceRef } from "./dcsSources.ts";
 
+// Canonicalize a row-scope selection to a stable, order-independent set so two
+// requests for the same rows (in any order, with duplicates) compare equal.
+// Returns undefined for a chapter-wide job (no rows) — callers omit the field
+// entirely in that case, and the dedupe query treats "no $.rowIds" as the
+// chapter-wide scope. Persisting the sorted+deduped form is what lets the start
+// route's dedupe compare row scope as plain `json_extract` text (SQLite and
+// JSON.stringify serialize an array of these short ids identically), so a
+// row-scoped translate for a DIFFERENT row no longer collides with another
+// row's in-flight job. See issue #316.
+export function normalizeRowIds(rowIds: string[] | undefined): string[] | undefined {
+  if (!rowIds || rowIds.length === 0) return undefined;
+  return [...new Set(rowIds)].sort();
+}
+
 // Client-supplied overrides (a top-level `translate:{…}` field on the start body).
 export type TranslateClientOptions = {
   // Which resource to translate. Row-keyed TSV: tn (default) | tq. Markdown
@@ -89,7 +103,10 @@ export function buildTranslateOptions(
     branchOnly: o.branchOnly ?? true,
     model: o.model ?? "opus",
     direction: o.direction ?? cfg.direction,
-    ...(o.rowIds ? { rowIds: o.rowIds } : {}),
+    // Persist the normalized (sorted + deduped) set so the start route's dedupe
+    // can key on row scope; sending a sorted set to the bot is harmless (it's a
+    // set — order/duplicates are irrelevant to update-by-ID merge). #316.
+    ...(normalizeRowIds(o.rowIds) ? { rowIds: normalizeRowIds(o.rowIds) } : {}),
     ...(o.verseStart != null ? { verseStart: o.verseStart } : {}),
     ...(o.verseEnd != null ? { verseEnd: o.verseEnd } : {}),
     // Article selector (tw|ta) — passed through to the bot's articles envelope.

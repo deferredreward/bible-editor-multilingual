@@ -1218,12 +1218,17 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   // unsaved edit in the open editor.
   const cardPending = !!row && (editedIds.has(row.id) || row.translation_state === "edited");
   const chip: { kind: FlowStatusKind; label: string } =
-    cardStatus === "approved"
-      ? { kind: "approved", label: t("flowTranslate.status.approved") }
-      : cardStatus === "skipped"
-        ? { kind: "skip", label: t("flowTranslate.notNeeded") }
-        : hasDiff
-          ? { kind: "edited", label: t("flowTranslate.status.edited") }
+    // Live, unsaved typing in the open editor wins over any saved verdict: the
+    // current row is the one the user jumped to *because* it holds unsaved
+    // text, so an "Approved"/"Not needed" chip here hides exactly what they
+    // came to find (#342). Non-open rows keep the approved-first order in the
+    // list-row chip below.
+    hasDiff
+      ? { kind: "edited", label: t("flowTranslate.status.edited") }
+      : cardStatus === "approved"
+        ? { kind: "approved", label: t("flowTranslate.status.approved") }
+        : cardStatus === "skipped"
+          ? { kind: "skip", label: t("flowTranslate.notNeeded") }
           : cardPending
             ? { kind: "edited", label: t("flowTranslate.status.pending") }
             : isAquiferDraft
@@ -1568,7 +1573,11 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
               const targetDraftCard = (
             /* target draft — the centrepiece */
             <Box ref={editorContainerRef} sx={cardSx}>
-              <Typography component="p" sx={labelSx}>
+              {/* component="div", not "p": this header nests a flex <Box> (the
+                  type pill + FlowStatusChip, an MUI Chip = <div>), and a <div>
+                  is invalid inside a <p> (validateDOMNesting warning; #336).
+                  The sibling <span>-only headers stay as-is. */}
+              <Typography component="div" sx={labelSx}>
                 <Box
                   component="span"
                   sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: INSPIRE }}
@@ -1750,20 +1759,26 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
     const typeSlug = typeSlugOf(r.support_reference);
     const rowPending = editedIds.has(id) || r.translation_state === "edited";
     const rowChip: { kind: FlowStatusKind; label: string } =
-      // Persisted unsaved typing on a card that is NOT open — checked first,
-      // ahead of even the approved/skipped verdicts: a draft means the visible
-      // text differs from what the server holds, and hiding that behind
-      // "Approved" recreates the very can't-find-my-unsaved-edit gap this chip
-      // exists to close. (The open card's live diff is the hasDiff branch.)
-      id !== currentId && draftRowIds.has(id)
-        ? { kind: "edited", label: t("flowTranslate.status.unsaved") }
+      // Unsaved text — checked first, ahead of even the approved/skipped
+      // verdicts: a draft means the visible text differs from what the server
+      // holds, and hiding that behind "Approved" recreates the very
+      // can't-find-my-unsaved-edit gap this chip exists to close. This covers
+      // both a persisted draft on a NOT-open card and the open card's own live
+      // diff (#342) — for the open/current row the approved verdict must not
+      // win over its live edit either.
+      (id !== currentId && draftRowIds.has(id)) || (id === currentId && hasDiff)
+        ? {
+            kind: "edited",
+            label:
+              id === currentId
+                ? t("flowTranslate.status.edited")
+                : t("flowTranslate.status.unsaved"),
+          }
         : st === "approved"
           ? { kind: "approved", label: t("flowTranslate.status.approved") }
           : st === "skipped"
             ? { kind: "skip", label: t("flowTranslate.notNeeded") }
-            : id === currentId && hasDiff
-              ? { kind: "edited", label: t("flowTranslate.status.edited") }
-              : rowPending
+            : rowPending
               ? { kind: "edited", label: t("flowTranslate.status.pending") }
               : r.translation_state === "ai_draft" && isAquiferDraftRow(r)
                 ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
