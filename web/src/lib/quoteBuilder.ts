@@ -12,7 +12,7 @@
 
 import type { HighlightKey } from "./highlight";
 import { matchNorm, matchSourceTokens } from "./highlight.ts";
-import { isCharacterWrapper } from "./usfm.ts";
+import { isCharacterWrapper, isZalnMilestone } from "./usfm.ts";
 
 // Build a HighlightKey from a Hebrew/Greek string + 1-based occurrence.
 // All callers (picker + buildQuoteFromSelection + collectTargetTokens)
@@ -60,10 +60,15 @@ export interface SourceWordNode {
 }
 
 // Flatten the verse tree to its bare \w nodes in document order, descending
-// milestones, `\qs`-style character wrappers, and `\d` (Psalm superscription)
-// the same way `matchSourceTokens` / `highlight.ts` do. A `\qs`-wrapped source
-// \w is verse body, so it MUST be walked or the picker diverges from the
-// wrapper-aware matcher (post-#354) and pre-seeded chips can't be deselected.
+// `\zaln` alignment milestones, `\qs`-style character wrappers, and `\d` (Psalm
+// superscription) the SAME way `matchSourceTokens` / `highlight.ts` do — the
+// milestone gate is the shared `isZalnMilestone` predicate, so this picker walk
+// and the matcher walk can never disagree on which milestones to descend (issue
+// #370; before it, this walk descended ANY `type:"milestone"`, so a `\k-s`
+// keyterm milestone yielded extra source words here that the zaln-only matcher
+// never saw — position drift). A `\qs`-wrapped source \w is verse body, so it
+// MUST be walked or the picker diverges from the wrapper-aware matcher
+// (post-#354) and pre-seeded chips can't be deselected.
 export function collectSourceWordNodes(verseObjects: unknown[]): SourceWordNode[] {
   const out: SourceWordNode[] = [];
   function walk(nodes: unknown[]) {
@@ -78,7 +83,7 @@ export function collectSourceWordNodes(verseObjects: unknown[]): SourceWordNode[
         const prev = out[out.length - 1];
         if (prev) prev.trailing += String(o["text"] ?? "");
       } else if (
-        o["type"] === "milestone" ||
+        isZalnMilestone(o) ||
         isCharacterWrapper(o) ||
         (o["type"] === "section" && o["tag"] === "d")
       ) {

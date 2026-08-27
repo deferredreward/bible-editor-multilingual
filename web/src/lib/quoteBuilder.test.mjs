@@ -223,6 +223,69 @@ function verseObjectsOf(rawUsfm, ch, v) {
   );
 }
 
+// ─── Case F (issue #370): the source-word walk descends ONLY `\zaln` alignment
+//     milestones, not other milestone kinds. A `\k-s`/`\k-e` keyterm milestone
+//     with a `\w` child used to be descended by `collectSourceWordNodes` (which
+//     walked ANY `type:"milestone"`) but NOT by the zaln-only matcher — so the
+//     picker minted an extra source word and every word AFTER the keyterm drifted
+//     by one relative to `matchSourceTokens`. Both walks now route their milestone
+//     gate through the shared `isZalnMilestone`, so they agree.
+{
+  console.log("\n[Case F] source walk descends only \\zaln, not \\k keyterm milestones; parity with matchSourceTokens (#370)");
+  // plain — \k-wrapped — plain: if the wrapped word were (mis)collected, the
+  // word AFTER it would land at position 2 in the picker but position 1 in the
+  // matcher — the exact drift #370 closes.
+  const source = String.raw`\id PSA
+\c 1
+\p
+\v 1 \w one|x-occurrence="1" x-occurrences="1"\w* \k-s |x-content="two"\*\w two|x-occurrence="1" x-occurrences="1"\w*\k-e\* \w three|x-occurrence="1" x-occurrences="1"\w*
+`;
+  const svo = verseObjectsOf(source, "1", "1");
+
+  const kNode = svo.find((o) => o && o.type === "milestone" && o.tag === "k");
+  assert(!!kNode, "premise: a \\k keyterm milestone (type:milestone, tag:k) exists at top level");
+  assert(
+    !!kNode && Array.isArray(kNode.children) && kNode.children.some((c) => c && c.tag === "w" && c.text === "two"),
+    "premise: the \\k milestone wraps a \\w child (\"two\") — the divergence probe",
+  );
+
+  const nodes = collectSourceWordNodes(svo);
+  const texts = nodes.map((n) => String(n.node.text ?? ""));
+  const positions = nodes.map((n) => n.position);
+  // The \k-wrapped word is NOT verse-body source for alignment purposes, so the
+  // walk skips it — leaving the two plain words contiguous at 0,1.
+  assert(
+    texts.join("|") === "one|three",
+    `only non-keyterm source words collected, in order (got ${texts.join("|")})`,
+  );
+  assert(positions.join(",") === "0,1", `positions stay contiguous 0..1 — no keyterm drift (got ${positions.join(",")})`);
+
+  // Parity: matchSourceTokens uses the SAME milestone gate (collectBareWords →
+  // isZalnMilestone), so it walks the identical word set in the identical order.
+  const spanning = matchSourceTokens(svo, "one three", 1);
+  assert(
+    spanning.map((t) => t.text).join("|") === "one|three",
+    `matcher walks the same word set across the keyterm milestone (got ${spanning.map((t) => t.text).join("|")})`,
+  );
+  // The word after the keyterm resolves adjacent to the word before it in BOTH
+  // walks — proving the two never disagree on keyterm descent.
+  const three = matchSourceTokens(svo, "three", 1);
+  assert(three.length === 1 && three[0].text === "three", "matcher resolves the post-keyterm word (parity anchor)");
+  assert(
+    nodes.findIndex((n) => n.node.text === "three") === 1,
+    "picker places the post-keyterm word at the same position the matcher counts to",
+  );
+
+  // A quote naming the keyterm-wrapped word matches nothing in EITHER walk — the
+  // picker can't mint it and the matcher can't highlight it, so they stay
+  // consistent rather than one offering a chip the other can never resolve.
+  assert(
+    collectSourceWordNodes(svo).every((n) => n.node.text !== "two"),
+    "picker offers no chip for the \\k-wrapped word",
+  );
+  assert(matchSourceTokens(svo, "two", 1).length === 0, "matcher highlights nothing for the \\k-wrapped word");
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) FAILED`);
   process.exit(1);
