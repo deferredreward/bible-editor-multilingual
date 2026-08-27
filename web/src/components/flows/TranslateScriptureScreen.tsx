@@ -115,6 +115,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   Alert,
   Box,
@@ -139,6 +140,11 @@ import CheckIcon from "@mui/icons-material/Check";
 
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
+import {
+  resolveFlowChipStatus,
+  flowChipKind,
+  type FlowChipStatus,
+} from "../../lib/flowStatusChip";
 import { waitForOp } from "./translateShared";
 import { useSwipeNav } from "./useSwipeNav";
 import type { FlowScreenContext } from "./types";
@@ -187,6 +193,29 @@ const LANE_REPLACEMENT_REASONS = new Set([
 // Content width — the mockup's 430px phone shell, given a little more room
 // (the same measure the notes/questions screens settled on).
 const COLUMN_PX = 480;
+
+// Label copy for a resolved chip status, scripture's wording. Precedence lives
+// in resolveFlowChipStatus (#348/#358); this only maps status → scripture label.
+// A verse row has no per-lane AI-draft/aquifer/skip verdicts and no non-current
+// "unsaved" tier (laneChip always resolves the OPEN verse), so a live diff or a
+// human-touched save both read "Edited" and an untouched lane reads "Imported".
+// The "No data" empty-lane case is handled by laneChip's own !base guard, not
+// here.
+function scriptureChipLabel(status: FlowChipStatus, t: TFunction): string {
+  switch (status) {
+    case "editing":
+    case "unsaved":
+    case "pending":
+      return t("flowScripture.chipEdited");
+    case "approved":
+      return t("flowScripture.chipApproved");
+    case "skipped":
+    case "aquifer":
+    case "aiDraft":
+    case "draft":
+      return t("flowScripture.chipImported");
+  }
+}
 
 export default function TranslateScriptureScreen({
   role,
@@ -741,18 +770,32 @@ export default function TranslateScriptureScreen({
   const approvedCount = queueVerses.filter((v) => statuses[v] === "approved").length;
   const savedCount = queueVerses.filter((v) => statuses[v] === "saved").length;
 
-  // One chip per lane. Precedence follows the sibling screens: the verse's
-  // real approved flag first, then human-touched, then the honest import label
-  // (see the header — "AI draft" is unverifiable on a verse row).
+  // One chip per lane. Precedence is the shared resolver's (#348/#358), NOT an
+  // inline copy: a dirty current lane must win over the verse's approved verdict
+  // (#342/#366) — otherwise the translator who jumped here for the unsaved text
+  // sees "Approved" and it's hidden. laneChip only renders the OPEN verse, so
+  // both lanes are isCurrent; laneDirty subsumes a restored draft (hydration
+  // marks it dirty), so hasLiveDiff is the signal and draftPresent stays false.
   function laneChip(bv: TargetLane): { kind: FlowStatusKind; label: string } {
-    if (verseNum != null && statuses[verseNum] === "approved") {
-      return { kind: "approved", label: t("flowScripture.chipApproved") };
-    }
     const base = bases[bv];
-    if (!base) return { kind: "skip", label: t("flowScripture.chipNoData") };
-    if (laneDirty(bv) || base.updated_by != null)
-      return { kind: "edited", label: t("flowScripture.chipEdited") };
-    return { kind: "draft", label: t("flowScripture.chipImported") };
+    const status = resolveFlowChipStatus({
+      isCurrent: true,
+      hasLiveDiff: laneDirty(bv),
+      draftPresent: false,
+      approved: verseNum != null && statuses[verseNum] === "approved",
+      skipped: false,
+      pending: base?.updated_by != null, // human-touched save → "Edited"
+      aquifer: false,
+      aiDrafted: false,
+    });
+    // Empty lane reads "No data" — but never let that hide the verse's approved
+    // verdict (preserves the prior approved-over-empty-lane behavior). A dirty
+    // or human-touched lane can't be base-less, so this only fires for the
+    // untouched/approved cases.
+    if (!base && status !== "approved") {
+      return { kind: "skip", label: t("flowScripture.chipNoData") };
+    }
+    return { kind: flowChipKind(status), label: scriptureChipLabel(status, t) };
   }
 
   const nextChapter = chapter + 1;

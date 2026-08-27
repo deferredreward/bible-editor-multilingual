@@ -71,6 +71,30 @@ test("tq phone done-list: the current row holding a persisted draft is not misla
   assert.equal(resolve({ isCurrent: true, hasLiveDiff: true, approved: true }), "editing");
 });
 
+test("scripture-lane laneChip (#366): a dirty current lane beats the verse's approved verdict", () => {
+  // TranslateScriptureScreen.laneChip renders the OPEN verse's two lanes, so
+  // both lanes feed isCurrent:true; laneDirty is the live-diff signal and
+  // draftPresent stays false (a restored draft is already marked dirty on
+  // hydration). The scripture screen has no aquifer/aiDraft/skip verdicts and
+  // no non-current "unsaved" tier — it uses editing / approved / pending / draft.
+  const lane = (over) =>
+    resolve({ isCurrent: true, draftPresent: false, aquifer: false, aiDrafted: false, skipped: false, ...over });
+
+  // The #366 bug: an approved verse whose current lane holds unsaved text must
+  // read Edited (editing), not Approved.
+  assert.equal(lane({ hasLiveDiff: true, approved: true }), "editing");
+  // Human-touched (updated_by set) but not dirty, in an approved verse: the
+  // approved verdict still shows (approved > pending). This preserves today's
+  // "Approved" for a saved-and-approved lane.
+  assert.equal(lane({ hasLiveDiff: false, pending: true, approved: true }), "approved");
+  // Approved verse, untouched lane, no live diff → Approved.
+  assert.equal(lane({ hasLiveDiff: false, approved: true }), "approved");
+  // Not approved, human-touched save → pending (scripture labels it "Edited").
+  assert.equal(lane({ hasLiveDiff: false, pending: true }), "pending");
+  // Not approved, untouched import → draft (scripture labels it "Imported").
+  assert.equal(lane({ hasLiveDiff: false }), "draft");
+});
+
 test("flowChipKind maps status → chip color", () => {
   assert.equal(flowChipKind("editing"), "edited");
   assert.equal(flowChipKind("unsaved"), "edited");
