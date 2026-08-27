@@ -147,3 +147,60 @@ export function flowLaneSegments(
   if (segments.length === 0 || !segments.some((s) => s.marked)) return fallback;
   return segments;
 }
+
+// One verse's slice of a lane: its tree, its stored plain text, and the OL verse
+// to anchor against. Structurally what `coveredLaneSlices` (lib/verseRange)
+// returns.
+export interface FlowLaneSlice {
+  verseObjects: unknown[] | null | undefined;
+  plainText: string | null | undefined;
+  sourceVerseObjects?: unknown[] | null;
+}
+
+// Segments for a lane that spans several verses — a note whose `ref_raw` bridges
+// verses (issue #341). Each verse is highlighted SEPARATELY and the segments are
+// joined with an unmarked single space.
+//
+// Highlighting one concatenated tree instead is wrong: a highlight key is
+// `${text}|${occurrence}` and occurrence numbers are counted per verse, so two
+// distinct tokens that share a surface form across the verse boundary land under
+// one key and BOTH get marked (#344 review — the per-token precision guarantee
+// of #323 silently stopped holding across a combined span).
+//
+// Named trade-off: a quote whose OL occurrence numbering straddles the boundary
+// (occurrence 2 whose first instance sits in the earlier verse) now resolves per
+// verse, since each verse's tree carries only its own occurrence counts.
+//
+// A single slice takes the plain `flowLaneSegments` path unchanged, so the common
+// singleton note is byte-identical.
+export function flowLaneSegmentsAcross(
+  slices: readonly FlowLaneSlice[],
+  quote: string | null | undefined,
+  occurrence: number | null | undefined,
+): FlowSegment[] {
+  if (slices.length === 0) return [];
+  if (slices.length === 1) {
+    const only = slices[0];
+    return flowLaneSegments(
+      only.verseObjects,
+      only.plainText,
+      quote,
+      occurrence,
+      only.sourceVerseObjects,
+    );
+  }
+  const out: FlowSegment[] = [];
+  for (const slice of slices) {
+    const segments = flowLaneSegments(
+      slice.verseObjects,
+      slice.plainText,
+      quote,
+      occurrence,
+      slice.sourceVerseObjects,
+    );
+    if (segments.length === 0) continue;
+    if (out.length > 0) out.push({ text: " ", marked: false });
+    out.push(...segments);
+  }
+  return out;
+}

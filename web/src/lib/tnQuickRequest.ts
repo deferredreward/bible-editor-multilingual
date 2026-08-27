@@ -113,12 +113,21 @@ function cleanSourceQuote(quote: string): string {
 }
 
 export interface BuildTnQuickRequestError {
+  // `hebrew_not_found` is the ENGLISH path's failure: the user typed an
+  // English support phrase that doesn't align, so "copy the phrase exactly
+  // from the literal text" is actionable advice.
+  // `source_quote_not_found` is the SOURCE-LANGUAGE path's failure (added by
+  // #339, split out in #346): the quote is already Hebrew/Greek and simply
+  // doesn't resolve against the alignment. The English advice is meaningless
+  // there, so call sites must render script-appropriate copy — keeping one
+  // reason for both paths is what produced the wrong-copy defect.
   reason:
     | "missing_support_reference"
     | "missing_quote"
     | "missing_ult_verse"
     | "missing_ust_verse"
-    | "hebrew_not_found";
+    | "hebrew_not_found"
+    | "source_quote_not_found";
 }
 
 export type BuildTnQuickRequestResult =
@@ -174,10 +183,14 @@ export function buildTnQuickRequest(
     // English path does when it can't align. Falling back to the whole
     // verse (ultText.slice) would silently draft a note about the entire
     // verse while looking like a phrase draft. (#332)
+    //
+    // Distinct reason from the English path below: the quote is already in an
+    // original-language script, so telling the user to "copy the support
+    // phrase exactly from the literal text" is not actionable. (#346)
     const ultResolved =
       (ultVo && extractTargetSelectionText(ultVo, rawQuote, occurrence, sourceVo)) || "";
     if (!ultResolved) {
-      return { ok: false, error: { reason: "hebrew_not_found" } };
+      return { ok: false, error: { reason: "source_quote_not_found" } };
     }
     ultSelection = ultResolved;
     // The UST is a looser, simplified translation whose alignment often
