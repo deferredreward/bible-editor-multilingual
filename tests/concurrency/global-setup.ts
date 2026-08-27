@@ -127,10 +127,14 @@ export default async function globalSetup() {
   // rtl-direction.spec fails for most of the run (#317).
   //
   // Fix: after the D1 write, best-effort invalidate the warm isolate's cache
-  // THROUGH the API. globalSetup runs BEFORE playwright starts webServer, so on a
-  // COLD run there is no server to reach — the try/catch swallows that and the
-  // cold cache is correct anyway (it reads the seeded row on first request). Only
-  // when a warm server is already up (the exact flaky case) does this fire.
+  // THROUGH the API. Playwright's webServer (with its own /api/health check,
+  // playwright.config.ts) is already started and healthy by the time globalSetup
+  // runs, so there is normally a server to reach here. The call is a cheap,
+  // idempotent no-op when there is nothing stale to invalidate — it only does
+  // real work in the exact flaky case (a warm isolate serving pre-seed config).
+  // The try/catch exists for the rare case where no server is listening at all
+  // (e.g. this file invoked outside the normal Playwright run); there the cold
+  // cache is correct anyway, since it reads the seeded row on first request.
   await invalidateWarmConfigCache();
 
   console.log("[setup] complete");
