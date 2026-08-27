@@ -586,12 +586,14 @@ test("applyProjectConfig: a POPULATED lane whose stored source differs only in C
   }
 });
 
-test("applyProjectConfig: canonicalizes a mixed-case custom-gl org override against DCS on write", async () => {
+test("applyProjectConfig: canonicalizes mixed-case custom-gl org/exportOrg overrides against DCS on write", async () => {
   const db = freshDb();
   seedConfig(db, "en-unfoldingword");
   seedLanes(db, "en-unfoldingword");
   const env = makeEnv(db);
-  // DCS resolves the mixed-case "bSoJ" to canonical "BSOJ".
+  // DCS resolves any mixed-case spelling of the same org to canonical "BSOJ" —
+  // org and exportOrg are typed with DIFFERENT casing here to prove each is
+  // canonicalized independently, not just copied from one to the other.
   const prevFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     if (String(url).includes("/api/v1/orgs/")) return { ok: true, json: async () => ({ username: "BSOJ" }) };
@@ -600,21 +602,23 @@ test("applyProjectConfig: canonicalizes a mixed-case custom-gl org override agai
   try {
     const overrides = {
       org: "bSoJ",
-      exportOrg: "bSoJ",
+      exportOrg: "BsoJ",
       repos: { lit: "ar_avd", sim: "ar_nav", tn: "ar_tn", tq: "ar_tq", twl: "ar_twl", tw: "ar_tw", ta: "ar_ta" },
       translationSource: null,
     };
     const result = await applyProjectConfig(env, "custom-gl", overrides);
     assert.equal(result.ok, true, `apply must succeed, got ${result.error ?? ""}`);
     assert.equal(result.config.org, "BSOJ", "materialized config carries DCS canonical casing, not as-typed 'bSoJ'");
+    assert.equal(result.config.exportOrg, "BSOJ", "materialized config carries DCS canonical casing, not as-typed 'BsoJ'");
     const stored = JSON.parse(db.prepare(`SELECT overrides_json AS o FROM project_config WHERE id=1`).get().o);
     assert.equal(stored.org, "BSOJ", "persisted overrides_json.org is the canonical casing");
+    assert.equal(stored.exportOrg, "BSOJ", "persisted overrides_json.exportOrg is the canonical casing");
   } finally {
     globalThis.fetch = prevFetch;
   }
 });
 
-test("applyProjectConfig: org canonicalization fails open to the as-typed org on a DCS lookup failure", async () => {
+test("applyProjectConfig: org/exportOrg canonicalization fails open to the as-typed values on a DCS lookup failure", async () => {
   const db = freshDb();
   seedConfig(db, "en-unfoldingword");
   seedLanes(db, "en-unfoldingword");
@@ -631,6 +635,7 @@ test("applyProjectConfig: org canonicalization fails open to the as-typed org on
     const result = await applyProjectConfig(env, "custom-gl", overrides);
     assert.equal(result.ok, true, "a DCS lookup failure must not block the apply");
     assert.equal(result.config.org, "bsoj", "falls back to the as-typed org when canonicalization fails");
+    assert.equal(result.config.exportOrg, "bsoj", "falls back to the as-typed exportOrg when canonicalization fails");
   } finally {
     globalThis.fetch = prevFetch;
   }
