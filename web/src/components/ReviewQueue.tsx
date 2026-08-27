@@ -811,13 +811,24 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   async function handleToggleTrash() {
     if (!selectedRow || activeKind !== "tn") return;
     const row = selectedRow as TnRow;
+    const wasTrashed = row.trashed_at != null;
     try {
-      const updated = row.trashed_at != null
+      const updated = wasTrashed
         ? await api.restoreNote(row.id, book)
         : await api.trashNote(row.id, book);
       applyLocalRowReplacement("tn", updated);
+      if (!wasTrashed) {
+        // Trash discards unsaved edits. The trashed row stays selected, so an
+        // unsaved draft would otherwise survive the trash (hasDiff stays true;
+        // the persist effect re-keys and never clears it) as an orphan that
+        // keeps counting toward the "N unsaved" reminder — issue #359, the
+        // classic-surface twin of the flows fix in #349/#353. Snap the
+        // baseline forward so hasDiff drops, and drop the drafts record.
+        baselineRef.current = draftValue;
+        void drafts.clear(rowKey("tn", book, row.id));
+      }
       say(
-        row.trashed_at != null
+        wasTrashed
           ? t("flowReview.queue.restoredFromTrash")
           : t("flowReview.queue.movedToTrash"),
       );

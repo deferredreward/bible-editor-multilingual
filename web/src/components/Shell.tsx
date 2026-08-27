@@ -40,7 +40,7 @@ import {
   type TextLaneCheck,
 } from "../lib/laneChecks";
 import { ChapterBoard } from "./ChapterBoard";
-import { drafts, verseKey } from "../sync/drafts";
+import { drafts, rowKey, verseKey } from "../sync/drafts";
 import { generationForSavedPlain } from "../sync/draftSaveState";
 import { alignmentDrafts, alignmentDraftKey } from "../sync/alignmentDrafts";
 import {
@@ -1011,6 +1011,12 @@ export function Shell({
       try {
         const updated = await api.trashNote(id, book);
         applyLocalRowReplacement("tn", updated);
+        // Trash discards unsaved edits — drop any orphan draft record for the
+        // row so it stops counting toward the "N unsaved" reminder (issue
+        // #359). NoteCard.handleDelete snaps its own editor buffer to server
+        // truth so it won't re-create this; the clear also covers any trash
+        // trigger that doesn't route through the card editor.
+        void drafts.clear(rowKey("tn", book, id));
         // Trash bypasses the outbox, so refresh the lint chip directly — a
         // trashed note leaves the lint set (trashed_at IS NULL filter).
         scheduleLintRefetch();

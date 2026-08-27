@@ -759,8 +759,18 @@ function NoteCardInner({
   const handleDelete = () => {
     pendingRef.current = {};
     setSessionSnapshot(null);
-    // Drop any draft so the delete doesn't get followed by a phantom save
-    // from a still-dirty buffer.
+    // Trash discards any unsaved edits. Snap the editor buffer back to the
+    // saved server values first: the row stays mounted (trash only grays the
+    // card), so if hasRowDiff survived, the persist effect above would just
+    // re-create the draft record we clear here — a durable orphan that keeps
+    // counting toward the "N unsaved" reminder (issue #359, mirroring the
+    // flows fix in #349/#353). Resetting to savedRef drops hasRowDiff, so the
+    // clear sticks and a later restore brings back the server note, not the
+    // discarded text.
+    const savedQuote = savedRef.current.quote ?? "";
+    setQuote(tsvToDisplay(savedQuote));
+    setNote(tsvToDisplay(savedRef.current.note));
+    setSupportRef(savedRef.current.support_reference);
     void drafts.clear(rowKey("tn", row.book, row.id));
     onDelete();
   };
