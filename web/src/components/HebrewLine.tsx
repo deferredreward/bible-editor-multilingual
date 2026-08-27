@@ -11,6 +11,7 @@ import type { SourceWord } from "../lib/alignment";
 import type { HighlightKey } from "../lib/highlight";
 import type { TwlRow } from "../sync/api";
 import { roleLineSx, wordHighlightStyles } from "../lib/highlightStyles";
+import { isCharacterWrapper } from "../lib/usfm";
 import { SourceTooltipBody } from "./SourceTooltipBody";
 import { PinnedLexBox } from "./PinnedLexBox";
 import { buildTwHintMap, twHintFromMap } from "./UhbStrip";
@@ -94,7 +95,10 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, prevHighlight
             isNext={isNext}
           />,
         );
-      } else if (o["type"] === "milestone") {
+      } else if (o["type"] === "milestone" || isCharacterWrapper(o)) {
+        // Character wrappers (\qs Selah) hold \zaln / \w content; descend
+        // them like milestones so a \qs-wrapped source \w still renders and
+        // can carry the highlight key findSourceHighlights now emits for it.
         walk((o["children"] as unknown[] | undefined) ?? []);
       }
     }
@@ -192,7 +196,9 @@ export function collectStrongs(verseObjects: unknown[] | null | undefined): stri
       if (o["type"] === "word" && o["tag"] === "w") {
         const s = String(o["strong"] ?? "");
         if (s) out.push(s);
-      } else if (o["type"] === "milestone") {
+      } else if (o["type"] === "milestone" || isCharacterWrapper(o)) {
+        // Descend character wrappers (\qs) too, so a wrapped source \w's
+        // Strong's number is included in the lexicon prefetch.
         walk((o["children"] as unknown[] | undefined) ?? []);
       }
     }

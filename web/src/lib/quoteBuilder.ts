@@ -12,6 +12,7 @@
 
 import type { HighlightKey } from "./highlight";
 import { matchNorm, matchSourceTokens } from "./highlight.ts";
+import { isCharacterWrapper } from "./usfm.ts";
 
 // Build a HighlightKey from a Hebrew/Greek string + 1-based occurrence.
 // All callers (picker + buildQuoteFromSelection + collectTargetTokens)
@@ -61,6 +62,12 @@ function collectUhbWords(verseObjects: unknown[]): UhbWord[] {
         if (prev) prev.trailing += String(o["text"] ?? "");
       } else if (
         o["type"] === "milestone" ||
+        // \qs (Selah) and other character wrappers wrap alignable \w / \zaln
+        // content — descend them the same way matchSourceTokens does, or a
+        // \qs-wrapped source \w is invisible to the picker while the matcher
+        // (post-#354) sees it. CHARACTER_WRAPPER_TAGS is today just `qs`, so
+        // wrapper-less trees take the identical path.
+        isCharacterWrapper(o) ||
         // \d (Psalm superscription) is `type:"section"` but its content IS
         // alignable verse body — descend like the highlight matchers do.
         (o["type"] === "section" && o["tag"] === "d")
@@ -226,6 +233,13 @@ export function collectTargetTokens(
         // alignable verse body — descend, carrying the current ancestor
         // stack unchanged (it contributes no source of its own). Mirrors
         // collectMilestoneRuns / collectUhbWords.
+        walk((o["children"] as unknown[] | undefined) ?? [], stack);
+      } else if (isCharacterWrapper(o)) {
+        // \qs (Selah) and other character wrappers hold \zaln / \w content
+        // but contribute no source of their own — descend, stack unchanged,
+        // exactly like the \d branch above. Without this the picker cannot
+        // pre-select or rebuild a \qs-wrapped target word that
+        // findTargetHighlights now highlights.
         walk((o["children"] as unknown[] | undefined) ?? [], stack);
       } else if (o["type"] === "word" && o["tag"] === "w") {
         const text = String(o["text"] ?? "");
