@@ -11,6 +11,7 @@ import {
   concatSourceRange,
   noteCoveredVerses,
   noteOverlapsRange,
+  combineCoveredLane,
 } from "./verseRange.ts";
 
 let failed = 0;
@@ -154,6 +155,68 @@ function mkVerse(verse, verseEnd, voCount = 1) {
   const single = { verse: 5, ref_raw: "1:5" };
   assert(noteOverlapsRange(single, 5, 5), "singleton shows on its verse");
   assert(!noteOverlapsRange(single, 6, 6), "singleton hidden elsewhere");
+}
+
+// --- combineCoveredLane (issue #341: flows notes multi-verse text) ---
+{
+  const dto = (verse, text, tokens, verse_end = null) => ({
+    book: "MRK",
+    chapter: 13,
+    verse,
+    verse_end,
+    bible_version: "ULT",
+    plain_text: text,
+    version: 1,
+    updated_by: null,
+    updated_at: 0,
+    content: { verseObjects: tokens },
+  });
+  const w = (t) => ({ type: "word", tag: "w", text: t });
+
+  // Singleton note: one verse in, that verse's text/tokens out (no change).
+  {
+    const index = buildVerseIndex({ 26: dto(26, "the Son", [w("the"), w("Son")]) });
+    const out = combineCoveredLane(index, noteCoveredVerses({ verse: 26, ref_raw: "13:26" }));
+    assert(out.plainText === "the Son", "singleton lane plain_text unchanged");
+    assert(Array.isArray(out.verseObjects) && out.verseObjects.length === 2, "singleton lane keeps its 2 tokens");
+  }
+
+  // Bridged note 13:26-27: both verses' text and tokens are concatenated, with a
+  // separator text node inserted between them.
+  {
+    const index = buildVerseIndex({
+      26: dto(26, "in clouds", [w("in"), w("clouds")]),
+      27: dto(27, "the Son of Man", [w("the"), w("Son"), w("of"), w("Man")]),
+    });
+    const out = combineCoveredLane(index, noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }));
+    assert(out.plainText === "in clouds the Son of Man", "bridge lane concatenates both verses' plain_text");
+    // 2 + 1 separator + 4 = 7 nodes.
+    assert(out.verseObjects.length === 7, "bridge lane concatenates tokens with a separator");
+    const sep = out.verseObjects[2];
+    assert(sep && sep.type === "text" && sep.text === " ", "separator text node between verses");
+  }
+
+  // A scripture row that is itself a USFM bridge (verse_end) is mapped under
+  // every integer it spans by buildVerseIndex; it must be combined only ONCE.
+  {
+    const index = buildVerseIndex({ 26: dto(26, "bridged text", [w("bridged"), w("text")], 27) });
+    const out = combineCoveredLane(index, noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }));
+    assert(out.plainText === "bridged text", "bridge scripture row not duplicated");
+    assert(out.verseObjects.length === 2, "bridge scripture row tokens counted once");
+  }
+
+  // Missing verse in the range is skipped without blanking the lane.
+  {
+    const index = buildVerseIndex({ 26: dto(26, "only 26", [w("only")]) });
+    const out = combineCoveredLane(index, noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }));
+    assert(out.plainText === "only 26", "missing verse 27 → verse 26 text still shown");
+  }
+
+  // No matching verses at all → null lane (Lane renders its empty state).
+  {
+    const out = combineCoveredLane(buildVerseIndex({}), [26, 27]);
+    assert(out.verseObjects === null && out.plainText === null, "empty index → null lane");
+  }
 }
 
 if (failed) {

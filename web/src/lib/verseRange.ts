@@ -168,3 +168,47 @@ export function concatSourceRange(
     content: { verseObjects: combined },
   };
 }
+
+function verseObjectsOf(dto: VerseDto | undefined): unknown[] | null {
+  const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
+  return Array.isArray(vo) ? vo : null;
+}
+
+// Combine one scripture lane (source / ULT / UST) across every verse a note
+// covers, given a per-verse *expanded* index (`buildVerseIndex`) and the covered
+// verse list from `noteCoveredVerses(row)`. A note whose `ref_raw` bridges verses
+// (e.g. MRK "13:26-27") must show the whole range's text — otherwise wording the
+// alternate-translation draft refers to, present only in a later verse, is
+// invisible (issue #341). Concatenates BOTH the verse-tree `verseObjects` (so
+// per-token highlighting via flowLaneSegments keeps working across the span) and
+// `plain_text` (the lane's unhighlighted fallback). Dedupes by DTO identity so a
+// scripture row that is itself a USFM bridge (`verse_end`, which buildVerseIndex
+// maps under every integer it spans) is not concatenated twice. Reduces to the
+// single verse for the common singleton note. Unlike concatSourceRange this takes
+// an explicit verse list, so a discontinuous ref ("2,4") combines only its
+// listed verses.
+export function combineCoveredLane(
+  index: Record<number, VerseDto>,
+  coveredVerses: number[],
+): { verseObjects: unknown[] | null; plainText: string | null } {
+  const seen = new Set<VerseDto>();
+  const combinedVo: unknown[] = [];
+  const texts: string[] = [];
+  for (const v of coveredVerses) {
+    const dto = index[v];
+    if (!dto || seen.has(dto)) continue;
+    seen.add(dto);
+    const vo = verseObjectsOf(dto);
+    if (vo && vo.length > 0) {
+      // Light separator between verses so consecutive lanes don't run together;
+      // flowLaneSegments collapses it, matching concatSourceRange's approach.
+      if (combinedVo.length > 0) combinedVo.push({ type: "text", text: " " });
+      combinedVo.push(...vo);
+    }
+    if (typeof dto.plain_text === "string" && dto.plain_text) texts.push(dto.plain_text);
+  }
+  return {
+    verseObjects: combinedVo.length > 0 ? combinedVo : null,
+    plainText: texts.length > 0 ? texts.join(" ") : null,
+  };
+}

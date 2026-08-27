@@ -111,7 +111,7 @@ import { useProjectConfig, isTranslationProject } from "../../hooks/useProjectCo
 import { useSourceNotes } from "../../hooks/useSourceNotes";
 import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { resolveSourceRef } from "../../lib/sourceRef";
-import { buildVerseIndex } from "../../lib/verseRange";
+import { buildVerseIndex, combineCoveredLane, noteCoveredVerses } from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
 import { tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
 import { flowLaneSegments, type FlowSegment } from "../../lib/flowHighlight";
@@ -126,7 +126,6 @@ import {
   type ChapterLockedBody,
   type TnRow,
   type TqRow,
-  type VerseDto,
 } from "../../sync/api";
 import { SCRIPTURE_FONT_STACK } from "../../theme";
 
@@ -158,12 +157,6 @@ const COLUMN_PX = 480;
 // Escape hatch for intro Redo: single-row translate rarely needs this long, but
 // the spinner must not stick forever if onComplete never fires.
 const INTRO_REDO_TIMEOUT_MS = 15 * 60 * 1000;
-
-function verseObjectsOf(v: VerseDto | undefined): unknown[] | null {
-  if (!v) return null;
-  const vo = (v.content as { verseObjects?: unknown[] } | null)?.verseObjects;
-  return Array.isArray(vo) ? vo : null;
-}
 
 // tA article type, derived from the row's support reference:
 // "rc://*/ta/man/translate/figs-metaphor" → slug "figs-metaphor". The display
@@ -721,11 +714,29 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   const sourceLabel = hebrew ? t("flowTranslate.hebrew") : t("flowTranslate.greek");
   const sourceDir: "ltr" | "rtl" = hebrew ? "rtl" : "ltr";
 
-  const sourceVo = row ? verseObjectsOf(sourceIndex[row.verse]) : null;
-  const ultVerse = row ? ultIndex[row.verse] : undefined;
-  const ustVerse = row ? ustIndex[row.verse] : undefined;
-  const ultText = ultVerse?.plain_text ?? null;
-  const ustText = ustVerse?.plain_text ?? null;
+  // A multi-verse note (ref_raw bridged, e.g. "13:26-27") must show the source
+  // and ULT/UST text of every verse it covers, not just its leading verse — the
+  // single-verse `Index[row.verse]` lookup silently dropped the rest (issue
+  // #341). `noteCoveredVerses` returns `[row.verse]` for the common singleton
+  // (and for intro rows), so those lanes are unchanged.
+  const coveredVerses = useMemo(() => (row ? noteCoveredVerses(row) : []), [row]);
+  const sourceLane = useMemo(
+    () => combineCoveredLane(sourceIndex, coveredVerses),
+    [sourceIndex, coveredVerses],
+  );
+  const ultLane = useMemo(
+    () => combineCoveredLane(ultIndex, coveredVerses),
+    [ultIndex, coveredVerses],
+  );
+  const ustLane = useMemo(
+    () => combineCoveredLane(ustIndex, coveredVerses),
+    [ustIndex, coveredVerses],
+  );
+  const sourceVo = sourceLane.verseObjects;
+  const ultVo = ultLane.verseObjects;
+  const ustVo = ustLane.verseObjects;
+  const ultText = ultLane.plainText;
+  const ustText = ustLane.plainText;
 
   // The mockup highlights the note's phrase inside both scripture lanes. The
   // phrase is derived from the row's original-language quote through the same
@@ -739,12 +750,12 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   const rowQuote = row?.quote ?? null;
   const rowOccurrence = row?.occurrence ?? 1;
   const ultSegments = useMemo(
-    () => flowLaneSegments(verseObjectsOf(ultVerse), ultText, rowQuote, rowOccurrence, sourceVo),
-    [ultVerse, ultText, rowQuote, rowOccurrence, sourceVo],
+    () => flowLaneSegments(ultVo, ultText, rowQuote, rowOccurrence, sourceVo),
+    [ultVo, ultText, rowQuote, rowOccurrence, sourceVo],
   );
   const ustSegments = useMemo(
-    () => flowLaneSegments(verseObjectsOf(ustVerse), ustText, rowQuote, rowOccurrence, sourceVo),
-    [ustVerse, ustText, rowQuote, rowOccurrence, sourceVo],
+    () => flowLaneSegments(ustVo, ustText, rowQuote, rowOccurrence, sourceVo),
+    [ustVo, ustText, rowQuote, rowOccurrence, sourceVo],
   );
 
   const mark = useCallback(
@@ -1496,7 +1507,13 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
               >
                 {row.verse === 0
                   ? t("flowTranslate.introRefLong", { book, chapter: row.chapter })
-                  : `${book} ${row.chapter}:${row.verse}`}
+                  : // `ref_raw` ("13:26" or bridged "13:26-27") is the authoritative
+                    // reference and the only place a note's range lives (tn_rows has
+                    // no verse_end); render it like the classic NoteCard, falling back
+                    // to the leading-verse form when it's absent. (issue #341)
+                    row.ref_raw
+                    ? `${book} ${row.ref_raw}`
+                    : `${book} ${row.chapter}:${row.verse}`}
               </Typography>
               <Lane
                 label={litLabel}
