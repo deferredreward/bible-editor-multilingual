@@ -979,7 +979,7 @@ async function setTnTranslationState(
     ? ", pre_draft_json = json_object('note', note, 'tags', tags)"
     : "";
   // A per-row human decision retires any admin-sweep provenance stamp (#296,
-  // migration 0069): this row's state is a human's now, so it is eligible to be
+  // migration 0070): this row's state is a human's now, so it is eligible to be
   // few-shot gold again (or, on un-approve, is a plain unapproved draft).
   // Only rows that are ALREADY translation drafts (state non-NULL) can be
   // validated/un-validated. Without this guard a validate on a row the

@@ -53,11 +53,11 @@ const KEY = new TextEncoder().encode(SIGNING);
 const ISSUER = "bible-editor";
 // The real migration under test — the columns the route writes must come from
 // it, not from a hand-written CREATE TABLE that could drift.
-const MIGRATION_0069 = readFileSync(new URL("../migrations/0069_admin_bulk_state.sql", import.meta.url), "utf8");
+const MIGRATION_0070 = readFileSync(new URL("../migrations/0070_admin_bulk_state.sql", import.meta.url), "utf8");
 
 function freshDb() {
   const db = new DatabaseSync(":memory:");
-  // Pre-0069 shape (no admin_bulk_state) — the migration adds it below.
+  // Pre-0070 shape (no admin_bulk_state) — the migration adds it below.
   db.exec(`CREATE TABLE tn_rows (
     id TEXT, book TEXT, chapter INTEGER, verse INTEGER, ref_raw TEXT,
     tags TEXT, support_reference TEXT, quote TEXT, occurrence INTEGER,
@@ -84,7 +84,7 @@ function freshDb() {
     id INTEGER PRIMARY KEY AUTOINCREMENT, dcs_user_id INTEGER UNIQUE,
     dcs_username TEXT, dcs_access_token TEXT
   )`);
-  db.exec(MIGRATION_0069);
+  db.exec(MIGRATION_0070);
   db.prepare(`INSERT INTO users (id, dcs_user_id, dcs_username) VALUES (1,1,'ada')`).run();
   db.prepare(`INSERT INTO users (id, dcs_user_id, dcs_username) VALUES (2,2,'bob')`).run();
   return db;

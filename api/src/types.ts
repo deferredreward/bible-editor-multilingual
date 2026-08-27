@@ -63,7 +63,7 @@ export interface TnRow {
    */
   pre_draft_json: string | null;
   /**
-   * Admin bulk-sweep provenance (migration 0069, issue #296). NULL = this row's
+   * Admin bulk-sweep provenance (migration 0070, issue #296). NULL = this row's
    * translation_state is the pipeline's or a human's. Otherwise the state the
    * row held immediately before POST /api/books/:book/review-state validated it
    * ('none' encodes a pre-sweep NULL) — the few-shot example selectors exclude

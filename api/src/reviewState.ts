@@ -18,7 +18,7 @@
 //    for it with a provenance stamp instead — see (2).
 //
 // 2. Every row this route validates is stamped `admin_bulk_state` (migration
-//    0069) with the state it held immediately before the sweep ('none' encodes
+//    0070) with the state it held immediately before the sweep ('none' encodes
 //    a pre-sweep NULL). The few-shot example selectors
 //    (VALIDATED_TN_EXAMPLES_SQL / VALIDATED_TQ_EXAMPLES_SQL in contextExport.ts,
 //    and the /translation-memory/examples browse) add `admin_bulk_state IS NULL`,
