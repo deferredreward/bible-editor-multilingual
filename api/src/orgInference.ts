@@ -197,11 +197,17 @@ function directionFor(languageCode: string | null): "ltr" | "rtl" | null {
   return RTL_LANGS.has(base) ? "rtl" : "ltr";
 }
 
-// Max characters for a lane badge label — long manifest titles must not blow
-// out the badge (see PR #334). An acronym of word initials keeps multi-word
-// titles ("Gateway Literal Translation" -> "GLT") short; a single-word title is
-// truncated. The value is deliberately small — these render as compact chips.
-const MAX_LANE_LABEL_LEN = 5;
+// Max characters for a lane badge label. No UI constraint forces a specific
+// number — the badge has no measured length limit — so this is a conservative
+// choice to keep the chips compact: long enough for a "Van Dyke"-style name,
+// short enough that a whole manifest title can never render as a badge.
+const MAX_LANE_LABEL_LEN = 8;
+
+// Uppercase and cap a label by CODE POINTS, not UTF-16 units — a plain
+// .slice() can cut a surrogate pair in half and emit a lone surrogate.
+function capLabel(s: string): string {
+  return Array.from(s.toUpperCase()).slice(0, MAX_LANE_LABEL_LEN).join("");
+}
 
 // Derive a short badge label from a resource's dublin_core.title, or null when
 // the title is absent/unusable so the caller can fall back to the repo-name
@@ -217,7 +223,7 @@ export function shortLabelFromTitle(title: string | null | undefined): string | 
   if (words.length === 0) return null;
   const label =
     words.length === 1 ? words[0] : words.map((w) => Array.from(w)[0]).join("");
-  return label.toUpperCase().slice(0, MAX_LANE_LABEL_LEN);
+  return capLabel(label);
 }
 
 // Fallback label: strip the leading `{lang}_` from the repo name and uppercase
@@ -225,6 +231,24 @@ export function shortLabelFromTitle(title: string | null | undefined): string | 
 // lit/sim manifest carries no usable title.
 function laneLabelFromRepoName(repo: string, langCode: string | null): string {
   return repo.slice(langCode ? langCode.length + 1 : 0).toUpperCase();
+}
+
+// Lane badge label, best source first:
+//   1. dublin_core.identifier — the resource's own short code (glt, ust, avd,
+//      rlob…). ASCII, script-neutral, no heuristic, and authored by the
+//      resource itself, so it beats guessing from prose.
+//   2. an acronym derived from dublin_core.title — only reachable when the
+//      manifest omits an identifier. Language-dependent: Arabic titles front
+//      definite articles, so BSOJ's real title collapses to "ااباف".
+//   3. the historical repo-name slice (ar_glt -> GLT).
+export function laneLabelFor(
+  facts: ManifestFacts | null,
+  repo: string,
+  langCode: string | null,
+): string {
+  const ident = (facts?.identifier ?? "").trim();
+  if (ident) return capLabel(ident);
+  return shortLabelFromTitle(facts?.title) ?? laneLabelFromRepoName(repo, langCode);
 }
 
 // Pure function: given the org's repo list and a manifest lookup for each repo
@@ -349,19 +373,14 @@ export function inferFromRepoList(
   if (!litRepo && !ambiguous.some((a) => a.role === "lit")) missing.push("lit");
   if (!simRepo && !ambiguous.some((a) => a.role === "sim")) missing.push("sim");
 
-  // Prefer the lit/sim repo manifest's own dublin_core.title (a real human name
-  // like "Gateway Literal Translation" -> "GLT") over the repo-name slice; the
+  // Lane labels come from the lit/sim repo's own manifest: identifier first,
+  // then a title acronym, then the repo-name slice (see laneLabelFor). The
   // configured presets already carry hand-set labels, so this only affects a
-  // self-onboarding org with no preset. Fall back to the repo-name derivation
-  // when the manifest omits a title or wasn't parseable.
+  // self-onboarding org with no preset.
   const litFacts = litRepo ? manifests.get(litRepo)?.facts ?? null : null;
   const simFacts = simRepo ? manifests.get(simRepo)?.facts ?? null : null;
-  const litLabel = litRepo
-    ? shortLabelFromTitle(litFacts?.title) ?? laneLabelFromRepoName(litRepo, langCode)
-    : null;
-  const simLabel = simRepo
-    ? shortLabelFromTitle(simFacts?.title) ?? laneLabelFromRepoName(simRepo, langCode)
-    : null;
+  const litLabel = litRepo ? laneLabelFor(litFacts, litRepo, langCode) : null;
+  const simLabel = simRepo ? laneLabelFor(simFacts, simRepo, langCode) : null;
 
   // Prefer the tn repo manifest's own dublin_core.language.{title,direction}
   // (authoritative) over the repo-name code and the RTL heuristic; the admin
