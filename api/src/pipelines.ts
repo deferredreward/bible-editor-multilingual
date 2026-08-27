@@ -21,7 +21,7 @@ import type { Env } from "./index";
 import { currentUserId, requireEditor } from "./auth.ts";
 import { importJobOutput } from "./pipelineImport.ts";
 import { getProjectConfig } from "./projectConfig.ts";
-import { buildTranslateOptions, normalizeRowIds } from "./translateOptions.ts";
+import { buildTranslateOptions, normalizeRowIds, normalizeTranslateRowIdsJson } from "./translateOptions.ts";
 import { getAiProviderConfig, resolveDispatchAi, scrubSecret } from "./aiProvider.ts";
 import { decryptApiKey } from "./aiKeyCrypto.ts";
 import { applyContextRef } from "./assistedContextRef.ts";
@@ -1279,6 +1279,22 @@ pipelines.post("/start", requireEditor, async (c) => {
         ? JSON.stringify(dedupNormRowIds)
         : "ALL"
       : null;
+  // A translate job's identity ALSO includes its verse-range scope (#347 item 2).
+  // A verse-range translate (translate.verseStart/verseEnd) carries no rowIds, so
+  // its row scope resolves to the 'ALL' sentinel — meaning two verse-range
+  // translates of DIFFERENT verses in one chapter would collapse (same bug shape as
+  // #316, now for the verse-range scope). buildTranslateOptions persists
+  // verseStart/verseEnd into options_json, so add a numeric term keyed on each,
+  // COALESCE'd to a 0 sentinel (verseStart/verseEnd are .positive(), so 0 is safe
+  // and never a real value). A non-verse-range translate binds 0 → matches the 0
+  // sentinel vacuously, so chapter-wide and row-scoped behavior is unchanged; a
+  // verse-range vs chapter-wide/row-scoped stays distinct, consistent with #316's
+  // row-scoped-vs-chapter-wide choice. Non-translate jobs bind null → clause vacuous.
+  // API-surface-only today: all web callers send rowIds or nothing.
+  const dedupVerseStart =
+    parsed.data.pipelineType === "translate" ? (parsed.data.translate?.verseStart ?? 0) : null;
+  const dedupVerseEnd =
+    parsed.data.pipelineType === "translate" ? (parsed.data.translate?.verseEnd ?? 0) : null;
   const dup = await c.env.DB.prepare(
     `SELECT j.job_id, j.user_id, j.pipeline_type, j.book, j.start_chapter,
             j.end_chapter, j.state, j.current_skill, j.current_status,
@@ -1289,12 +1305,23 @@ pipelines.post("/start", requireEditor, async (c) => {
         AND j.pipeline_type = ?4
         AND (?5 IS NULL OR COALESCE(json_extract(j.options_json, '$.resourceType'), 'tn') = ?5)
         AND (?6 IS NULL OR COALESCE(json_extract(j.options_json, '$.rowIds'), 'ALL') = ?6)
+        AND (?7 IS NULL OR COALESCE(json_extract(j.options_json, '$.verseStart'), 0) = ?7)
+        AND (?8 IS NULL OR COALESCE(json_extract(j.options_json, '$.verseEnd'), 0) = ?8)
         AND j.state IN ('queued', 'dispatching', 'running',
                         'paused_for_outage', 'paused_for_usage_limit')
       ORDER BY j.created_at ASC
       LIMIT 1`,
   )
-    .bind(book, startChapter, endChapter, parsed.data.pipelineType, dedupResourceType, dedupRowScope)
+    .bind(
+      book,
+      startChapter,
+      endChapter,
+      parsed.data.pipelineType,
+      dedupResourceType,
+      dedupRowScope,
+      dedupVerseStart,
+      dedupVerseEnd,
+    )
     .first<PublicJobSummary & { user_id: number }>();
   if (dup) {
     if (dup.user_id === userId) {
@@ -1603,7 +1630,9 @@ interface FollowUpInput {
 // collapse via ON CONFLICT DO NOTHING; the parent claim guard makes the whole
 // thing idempotent.
 async function enqueueFollowUp(env: Env, input: FollowUpInput): Promise<void> {
-  const followUpOptions = input.followUpOptionsJson; // already JSON text
+  // Normalize any rowIds a translate child carries so the stored options_json
+  // holds the canonical (sorted+deduped) set the dedupe key compares against (#347).
+  const followUpOptions = normalizeTranslateRowIdsJson(input.pipelineType, input.followUpOptionsJson);
   // Derive a sessionKey that fits the same character class as the parent's
   // (POST validator: ^[A-Za-z0-9_\-/]+$). The "/followup" suffix avoids
   // colliding with the parent on the upstream dedup key.
@@ -1696,7 +1725,12 @@ async function enqueueFollowUpFromChain(env: Env, input: FollowUpChainInput): Pr
   const childSessionKey = `${input.parentSessionKey}/chain${depth + 1}`;
   const childJobId = `${input.parentJobId}:chain${depth + 1}`;
   const childChainJson = rest.length > 0 ? JSON.stringify(rest) : null;
-  const childOptionsJson = next.options ? JSON.stringify(next.options) : null;
+  // Normalize any rowIds a translate chain step carries so the stored options_json
+  // holds the canonical (sorted+deduped) set the dedupe key compares against (#347).
+  const childOptionsJson = normalizeTranslateRowIdsJson(
+    next.pipelineType,
+    next.options ? JSON.stringify(next.options) : null,
+  );
 
   // Re-stamp when the next chain link is a generate job; otherwise inherit.
   let stamp: ResolvedPipelineStamp = EMPTY_RESOLVED;

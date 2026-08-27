@@ -111,11 +111,16 @@ import { useProjectConfig, isTranslationProject } from "../../hooks/useProjectCo
 import { useSourceNotes } from "../../hooks/useSourceNotes";
 import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { resolveSourceRef } from "../../lib/sourceRef";
-import { buildVerseIndex } from "../../lib/verseRange";
+import {
+  buildVerseIndex,
+  coveredLaneSlices,
+  noteCoveredVerses,
+  noteRefLabel,
+} from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
 import { tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
 import { resolveFlowChipStatus, flowChipKind, type FlowChipStatus } from "../../lib/flowStatusChip";
-import { flowLaneSegments, type FlowSegment } from "../../lib/flowHighlight";
+import { flowLaneSegmentsAcross, type FlowSegment } from "../../lib/flowHighlight";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { realChapters } from "../../lib/bookSummary";
 import { drafts, rowKey } from "../../sync/drafts";
@@ -127,7 +132,6 @@ import {
   type ChapterLockedBody,
   type TnRow,
   type TqRow,
-  type VerseDto,
 } from "../../sync/api";
 import { SCRIPTURE_FONT_STACK } from "../../theme";
 
@@ -159,12 +163,6 @@ const COLUMN_PX = 480;
 // Escape hatch for intro Redo: single-row translate rarely needs this long, but
 // the spinner must not stick forever if onComplete never fires.
 const INTRO_REDO_TIMEOUT_MS = 15 * 60 * 1000;
-
-function verseObjectsOf(v: VerseDto | undefined): unknown[] | null {
-  if (!v) return null;
-  const vo = (v.content as { verseObjects?: unknown[] } | null)?.verseObjects;
-  return Array.isArray(vo) ? vo : null;
-}
 
 // tA article type, derived from the row's support reference:
 // "rc://*/ta/man/translate/figs-metaphor" → slug "figs-metaphor". The display
@@ -722,11 +720,22 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   const sourceLabel = hebrew ? t("flowTranslate.hebrew") : t("flowTranslate.greek");
   const sourceDir: "ltr" | "rtl" = hebrew ? "rtl" : "ltr";
 
-  const sourceVo = row ? verseObjectsOf(sourceIndex[row.verse]) : null;
-  const ultVerse = row ? ultIndex[row.verse] : undefined;
-  const ustVerse = row ? ustIndex[row.verse] : undefined;
-  const ultText = ultVerse?.plain_text ?? null;
-  const ustText = ustVerse?.plain_text ?? null;
+  // A multi-verse note (ref_raw bridged, e.g. "13:26-27") must show the source
+  // and ULT/UST text of every verse it covers, not just its leading verse — the
+  // single-verse `Index[row.verse]` lookup silently dropped the rest (issue
+  // #341). `noteCoveredVerses` returns `[row.verse]` for the common singleton
+  // (and for intro rows), so those lanes are unchanged.
+  const coveredVerses = useMemo(() => (row ? noteCoveredVerses(row) : []), [row]);
+  const ultLane = useMemo(
+    () => coveredLaneSlices(ultIndex, sourceIndex, coveredVerses),
+    [ultIndex, sourceIndex, coveredVerses],
+  );
+  const ustLane = useMemo(
+    () => coveredLaneSlices(ustIndex, sourceIndex, coveredVerses),
+    [ustIndex, sourceIndex, coveredVerses],
+  );
+  const ultText = ultLane.plainText;
+  const ustText = ustLane.plainText;
 
   // The mockup highlights the note's phrase inside both scripture lanes. The
   // phrase is derived from the row's original-language quote through the same
@@ -737,15 +746,19 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   // `text|occurrence` key is highlighted gets its own <mark>. The old
   // contiguous-substring search over plain_text highlighted nothing when the
   // matched words scattered, and hit the wrong instance for occurrence > 1.
+  //
+  // Across a bridged note's span each verse is highlighted on its own —
+  // occurrence numbers are per verse, so one combined tree double-marks tokens
+  // that share a surface form across the boundary (#344 review).
   const rowQuote = row?.quote ?? null;
   const rowOccurrence = row?.occurrence ?? 1;
   const ultSegments = useMemo(
-    () => flowLaneSegments(verseObjectsOf(ultVerse), ultText, rowQuote, rowOccurrence, sourceVo),
-    [ultVerse, ultText, rowQuote, rowOccurrence, sourceVo],
+    () => flowLaneSegmentsAcross(ultLane.slices, rowQuote, rowOccurrence),
+    [ultLane, rowQuote, rowOccurrence],
   );
   const ustSegments = useMemo(
-    () => flowLaneSegments(verseObjectsOf(ustVerse), ustText, rowQuote, rowOccurrence, sourceVo),
-    [ustVerse, ustText, rowQuote, rowOccurrence, sourceVo],
+    () => flowLaneSegmentsAcross(ustLane.slices, rowQuote, rowOccurrence),
+    [ustLane, rowQuote, rowOccurrence],
   );
 
   const mark = useCallback(
@@ -978,6 +991,20 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
       applyLocalRowReplacement("tn", updated);
       setStatuses((prev) => ({ ...prev, [row.id]: "skipped" }));
       setEditing(false);
+      // A trashed row must not leave an orphan draft behind (#349), and must
+      // not keep showing the user's discarded text if advanceAfter holds
+      // position (type filter exhausted). Snap both the editor value and the
+      // baseline to server truth — the same derivation the hydration effect
+      // uses — so hasDiff drops, the current-row chip reads "Not needed"
+      // instead of "Edited", and there's no stale-closure window if the user
+      // types while the request is in flight. Also explicitly clear the
+      // IndexedDB draft so it stops counting toward the "N unsaved" reminder
+      // — the persist effect can't clear it once the cursor advances and
+      // re-keys to the next row (the drafts.clear immediately below).
+      const next = unescapeNewlines(updated.note);
+      setDraftValue(next);
+      baselineRef.current = next;
+      void drafts.clear(rowKey("tn", book, row.id));
       setToast(t("flowTranslate.toastNotNeeded"));
       advanceAfter(row.id, "skipped");
     } catch (err) {
@@ -1123,7 +1150,12 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
             ? t("flowTranslate.noLaneTextForAi", { label: litLabel })
             : built.error.reason === "missing_ust_verse"
               ? t("flowTranslate.noLaneTextForAi", { label: simLabel })
-              : built.error.reason === "hebrew_not_found"
+              : // Both unalignable-quote reasons land here: this copy is
+                // already script-neutral ("this note's quote"), so it reads
+                // correctly for an English phrase and for a Hebrew/Greek
+                // quote alike (#346).
+                built.error.reason === "hebrew_not_found" ||
+                  built.error.reason === "source_quote_not_found"
                 ? t("flowTranslate.quoteMatchFailed", { label: litLabel })
                 : t("flowTranslate.redoMissingData"),
         );
@@ -1527,7 +1559,12 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
               >
                 {row.verse === 0
                   ? t("flowTranslate.introRefLong", { book, chapter: row.chapter })
-                  : `${book} ${row.chapter}:${row.verse}`}
+                  : // `ref_raw` ("13:26" or bridged "13:26-27") is the authoritative
+                    // reference and the only place a note's range lives (tn_rows has
+                    // no verse_end); render it like the classic NoteCard, but only
+                    // when it names the span the lanes actually show — see
+                    // noteRefLabel. (issue #341)
+                    `${book} ${noteRefLabel(row)}`}
               </Typography>
               <Lane
                 label={litLabel}
@@ -1808,7 +1845,9 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
           <Typography sx={{ fontWeight: 600, fontSize: "0.97rem" }}>
             {r.verse === 0
               ? t("flowTranslate.introRef", { chapter: r.chapter })
-              : `${r.chapter}:${r.verse}`}
+              : // Same range-aware label as the card's chip, so a bridged row
+                // reads "13:26-27" in the list too (#344 review).
+                noteRefLabel(r)}
           </Typography>
           <Typography
             variant="body2"

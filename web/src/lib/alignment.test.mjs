@@ -33,6 +33,7 @@ import { extractPlainText } from "./usfm.ts";
 import {
   findTargetHighlights,
   findSourceHighlights,
+  findSourceForTargetText,
   matchSourceTokens,
   extractTargetSelectionText,
 } from "./highlight.ts";
@@ -3393,6 +3394,142 @@ const srcWordContents = (st) => st.groups.flatMap((g) => g.source).map((s) => ({
   assert(
     sel === "Selah",
     `issue #331: extractTargetSelectionText resolves the \\qs-wrapped selection (got ${JSON.stringify(sel)})`,
+  );
+}
+
+// ─── Case: wrapper OUTSIDE the milestone — `qs → zaln → w` (issue #331) ──
+//
+// The shape above (`zaln → qs → w`) is synthetic. The PRODUCTION ULT Selah
+// shape has the character wrapper on the OUTSIDE: this file's own Case 1
+// fixture parses as `qs → zaln → w`. Because `collectMilestoneRuns` skipped
+// every non-milestone top-level node, the `\zaln` inside the wrapper never
+// became a run at all, so on the real data the highlight, the derived selection
+// text, and the reverse English→Hebrew resolve were ALL still empty after the
+// first fix landed.
+//
+// These cases therefore parse the actual USFM with usfm-js rather than
+// hand-building the tree — a hand-built tree is what let the inverted nesting
+// premise go unnoticed in the first place.
+{
+  console.log("\n[Case] issue #331 — wrapper OUTSIDE the milestone (qs → zaln → w, production shape)");
+  // Byte-identical to the Case 1 production ULT fixture above.
+  const target = String.raw`\id PSA
+\c 3
+\p
+\v 8 \q1 \zaln-s |x-strong="H3068" x-content="יְהוָה"\*\w Salvation belongs to Yahweh|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*. \qs \zaln-s |x-strong="H5542" x-lemma="סֶלָה" x-content="סֶלָה"\*\w Selah|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*\qs*
+`;
+  const source = String.raw`\id PSA
+\c 3
+\v 8 \w יְהוָה|x-strong="H3068" x-occurrence="1"\w* \w סֶלָה|x-strong="H5542" x-occurrence="1"\w*
+`;
+  const tvo = usfm.toJSON(target).chapters["3"]["8"].verseObjects;
+  const svo = usfm.toJSON(source).chapters["3"]["8"].verseObjects;
+
+  // Guard the premise itself: if usfm-js ever moves the wrapper inside the
+  // milestone, these assertions stop testing what they claim to.
+  const qsNode = tvo.find((n) => n.tag === "qs");
+  assert(!!qsNode, "premise: the production fixture parses the \\qs wrapper as a TOP-LEVEL node");
+  assert(
+    !!qsNode && Array.isArray(qsNode.children) && qsNode.children.some((c) => c.tag === "zaln"),
+    "premise: the \\zaln milestone sits INSIDE the \\qs wrapper (qs → zaln → w)",
+  );
+
+  // (a) OL-anchored path (source verse supplied) — the real runtime path.
+  const hlOl = findTargetHighlights(tvo, "סֶלָה", 1, svo);
+  assert(
+    hlOl.has("Selah|1"),
+    `issue #331: OL-anchored highlight finds the wrapper-outside Selah (got ${[...hlOl].join(",") || "<empty>"})`,
+  );
+
+  // (b) Degradation path (no source verse) — must resolve too.
+  const hlGl = findTargetHighlights(tvo, "סֶלָה", 1);
+  assert(
+    hlGl.has("Selah|1"),
+    `issue #331: GL-only highlight finds the wrapper-outside Selah (got ${[...hlGl].join(",") || "<empty>"})`,
+  );
+
+  // (c) Derived selection text — what the tn-quick handoff sends.
+  const sel = extractTargetSelectionText(tvo, "סֶלָה", 1, svo);
+  assert(
+    sel === "Selah",
+    `issue #331: extractTargetSelectionText returns "Selah" on the production shape (got ${JSON.stringify(sel)})`,
+  );
+
+  // (d) Reverse English→Hebrew walk (findSourceForTargetText) — used to resolve
+  // a proofreader's typed English support phrase before the AI call.
+  const src = findSourceForTargetText(tvo, "Selah");
+  assert(
+    src === "סֶלָה",
+    `issue #331: findSourceForTargetText resolves the wrapped word to its \\zaln source (got ${JSON.stringify(src)})`,
+  );
+
+  // (e) Control: the unwrapped sibling alignment in the SAME verse is unchanged
+  // — the wrapper descent must not perturb ordinary top-level milestones.
+  const hlSibling = findTargetHighlights(tvo, "יְהוָה", 1, svo);
+  assert(
+    hlSibling.has("Salvation belongs to Yahweh|1") && hlSibling.size === 1,
+    `issue #331 control: the unwrapped sibling milestone still highlights alone (got ${[...hlSibling].join(",") || "<empty>"})`,
+  );
+}
+
+{
+  console.log("\n[Case] issue #331 — wrapper BETWEEN nested milestones (zaln → qs → zaln → w)");
+  // A merge group whose inner level is wrapped. The outer run already worked
+  // (collectSubtreeWords descends wrappers), but the nested-milestone recursion
+  // only looked at direct `zaln` children, so quoting the INNER source word
+  // highlighted nothing.
+  const target = String.raw`\id PSA
+\c 3
+\v 9 \zaln-s |x-strong="H5921" x-content="עַל"\*\qs \zaln-s |x-strong="H5542" x-content="סֶלָה"\*\w Selah|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*\qs*\zaln-e\*
+`;
+  const tvo = usfm.toJSON(target).chapters["3"]["9"].verseObjects;
+
+  const inner = findTargetHighlights(tvo, "סֶלָה", 1);
+  assert(
+    inner.has("Selah|1"),
+    `issue #331: the INNER milestone inside a \\qs wrapper keeps its run (got ${[...inner].join(",") || "<empty>"})`,
+  );
+  // Atomic merge-group behaviour is preserved: the outer source lights the group.
+  const outer = findTargetHighlights(tvo, "עַל", 1);
+  assert(
+    outer.has("Selah|1"),
+    `issue #331: the OUTER milestone still lights the whole group (got ${[...outer].join(",") || "<empty>"})`,
+  );
+  const sel = extractTargetSelectionText(tvo, "סֶלָה", 1);
+  assert(
+    sel === "Selah",
+    `issue #331: nested-wrapper selection text resolves (got ${JSON.stringify(sel)})`,
+  );
+}
+
+// ─── Case: source-side (UHB/UGNT) wrapper descent (issue #331) ───────────
+//
+// `collectBareWords` flattens the ORIGINAL-language verse for the UHB/UGNT
+// highlighter and for the OL-anchored join. It skipped character wrappers, so a
+// `\qs`-wrapped source word could neither highlight in UHB nor anchor a ULT/UST
+// match.
+{
+  console.log("\n[Case] issue #331 — source-side \\qs wrapper (collectBareWords / matchSourceTokens)");
+  const source = String.raw`\id PSA
+\c 3
+\v 8 \w יְהוָה|x-strong="H3068" x-occurrence="1"\w* \qs \w סֶלָה|x-strong="H5542" x-occurrence="1"\w*\qs*
+`;
+  const svo = usfm.toJSON(source).chapters["3"]["8"].verseObjects;
+
+  const toks = matchSourceTokens(svo, "סֶלָה", 1);
+  assert(
+    toks.length === 1 && toks[0].text === "סֶלָה",
+    `issue #331: matchSourceTokens finds the \\qs-wrapped source word (got ${JSON.stringify(toks.map((t) => t.text))})`,
+  );
+  const hl = findSourceHighlights(svo, "סֶלָה", 1);
+  assert(
+    hl.has("סֶלָה|1"),
+    `issue #331: findSourceHighlights lights the \\qs-wrapped source word (got ${[...hl].join(",") || "<empty>"})`,
+  );
+  // Control: the unwrapped sibling still resolves and is unaffected.
+  assert(
+    findSourceHighlights(svo, "יְהוָה", 1).has("יְהוָה|1"),
+    "issue #331 control: unwrapped source word still highlights",
   );
 }
 
