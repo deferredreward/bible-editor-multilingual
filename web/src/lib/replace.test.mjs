@@ -6,8 +6,10 @@
 // Not a test framework; failures exit non-zero. Mirrors
 // src/lib/alignment.test.mjs.
 
+import usfm from "usfm-js";
 import { smartEditVerse, smartReplaceVerse, tokenizePlainText, tokenizeEditableText } from "./replace.ts";
-import { extractEditableText, extractPlainText } from "./usfm.ts";
+import { extractEditableText, extractPlainText, normalizeEditable } from "./usfm.ts";
+import { renderHighlightedHTML, renderEditableHTML } from "./highlight.ts";
 import { analyzeAlignmentDelta, guardBlocksSave } from "./alignmentDelta.ts";
 
 let failed = 0;
@@ -1127,6 +1129,78 @@ const qsWrap = (selahStrong = "H5542") => ({
   const selah = alignedWords(r.content).find((x) => x.text === "Selah");
   assert(!!selah, "'Selah' survives the edit");
   assert(selah && selah.strongs.includes("H5542"), "'Selah' keeps its alignment");
+}
+
+// ─── Case 47b: classic-surface render of a \qs verse must show Selah (#345) ─────
+// segmentByParagraphs tested isInFlowMarker() FIRST, and \qs is type:"quote"
+// with a tag, so it matched: an empty paragraph segment was pushed and its
+// children dropped — Selah invisible in renderHighlightedHTML, and a spurious
+// \qs chip (no Selah) in renderEditableHTML, so a Selah verse edited through the
+// classic editor diffed displayed-text-WITHOUT-Selah against a baseline WITH it
+// (extractEditableText surfaces Selah) — the classic silent-content-drop
+// signature. Parse the REAL production Selah shape (qs → zaln → w, the inverted
+// nesting that slipped past #331's hand-built tree) from USFM, not a hand-built
+// tree — per the issue, hand-building is exactly how the inverted premise hid.
+{
+  console.log("\n[Case 47b] Classic render of a \\qs (Selah) verse shows Selah (#345)");
+  const target = String.raw`\id PSA
+\c 3
+\p
+\v 8 \q1 \zaln-s |x-strong="H3068" x-content="יְהוָה"\*\w Salvation belongs to Yahweh|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*. \qs \zaln-s |x-strong="H5542" x-lemma="סֶלָה" x-content="סֶלָה"\*\w Selah|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*\qs*
+`;
+  const tvo = usfm.toJSON(target).chapters["3"]["8"].verseObjects;
+
+  // (a) display: Selah is rendered in the scripture column.
+  const shown = renderHighlightedHTML(tvo, new Set());
+  assert(shown.includes("Selah"), `renderHighlightedHTML shows "Selah" (got ${JSON.stringify(shown)})`);
+  assert(shown.includes("Salvation belongs to Yahweh"), "renderHighlightedHTML still shows the rest of the verse");
+
+  // (b) editor: Selah is rendered, and NO spurious literal \qs chip is emitted.
+  const editable = renderEditableHTML(tvo, new Set());
+  assert(editable.includes("Selah"), `renderEditableHTML shows "Selah" (got ${JSON.stringify(editable)})`);
+  assert(!editable.includes("be-tok-qs"), "renderEditableHTML emits no spurious \\qs marker chip");
+  // The editable render's textContent must line up with the diff baseline so an
+  // edit doesn't drop Selah: extractEditableText already surfaces it.
+  assert(extractEditableText({ verseObjects: tvo }).includes("Selah"), "extractEditableText baseline surfaces Selah");
+
+  // (c) the REAL classic save path, end to end. Shell.saveVerseDraft receives
+  // `plain` = the contenteditable's DOM textContent (i.e. the textContent of
+  // renderEditableHTML's output), compares it to extractEditableText(base) via
+  // normalizeEditable as a no-op guard, and otherwise runs
+  //   smartEditVerse(base.content, extractEditableText(base.content), plain).
+  // So the displayed text MUST be derived from the renderer, never from the
+  // baseline string: diffing the baseline against a string edit of itself never
+  // involves the renderer at all and passes even on the broken render.
+  const textContent = (html) =>
+    html
+      .replace(/<[^>]*>/g, "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&");
+  const displayed = textContent(editable);
+  const baseline = extractEditableText({ verseObjects: tvo });
+
+  // (c1) the zero-typing case — this is the assertion that catches the silent
+  // Selah loss. Pre-fix the DOM text read "\qs" where the baseline said
+  // "Selah", so Shell's no-op guard missed, a PATCH fired, and the save
+  // replaced Selah with a literal marker. Post-fix they must be identical.
+  assert(
+    normalizeEditable(displayed) === baseline,
+    `displayed textContent matches the diff baseline (displayed ${JSON.stringify(normalizeEditable(displayed))} vs baseline ${JSON.stringify(baseline)})`,
+  );
+
+  // (c2) a real edit far from Selah, applied to the DISPLAYED text (what the
+  // user's browser actually holds), round-trips with Selah + H5542 intact.
+  const typed = displayed.replace("Salvation", "Rescue");
+  assert(typed !== displayed, "the edit landed on the displayed text (Salvation was present in the render)");
+  const edited = smartEditVerse({ verseObjects: tvo }, baseline, typed);
+  assert(edited.plainText.includes("Selah"), `edit keeps "Selah" in plain text (got ${JSON.stringify(edited.plainText)})`);
+  assert(edited.plainText.includes("Rescue"), "edit applied (Salvation → Rescue)");
+  const selahAfter = alignedWords(edited.content).find((x) => x.text === "Selah");
+  assert(!!selahAfter, "'Selah' survives the classic-editor edit");
+  assert(selahAfter && selahAfter.strongs.includes("H5542"), "'Selah' keeps its \\zaln (H5542) alignment through the edit");
 }
 
 // Transplant detector: for the ORIGINAL verse, record the set of milestone
