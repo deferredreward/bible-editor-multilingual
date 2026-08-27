@@ -2338,6 +2338,69 @@ function countAligned(content) {
   assert(words.find((x) => x.text === "watched")?.strongs.length === 0, "edited 'watched' is unaligned");
 }
 
+// ─── Case 47e: real \d Psalm superscription must render (#384) ──────────────────
+// usfm-js 3.5.0 parses `\d …` as `{tag:"d", text}` with NO `type` — only
+// \s/\s1…\s5 get `type:"section"`. segmentByParagraphs only rendered a \d via a
+// branch gated on `type:"section" && tag:"d"`, so a real superscription matched
+// nothing in the walk and was dropped from the render, while extractEditableText
+// kept it — the classic silent-content-drop-on-save signature (#345/#357). Parse
+// the REAL shape from USFM, never a hand-built {type:"section"} tree: hand-building
+// the section shape is exactly what hid the unreachable predicate for so long.
+{
+  console.log("\n[Case 47e] Real \\d superscription renders + parity (#384)");
+  // (a) text-on-\d — the shape that was dropped (text lives on the \d node itself).
+  const textD = String.raw`\id PSA
+\c 3
+\p
+\v 1 \d A psalm of David
+\q1 next line here
+`;
+  const tvo = usfm.toJSON(textD).chapters["3"]["1"].verseObjects;
+  // premise: usfm-js really emits {tag:"d"} with no type (not {type:"section"}).
+  const dNode = tvo.find((n) => n && n.tag === "d");
+  assert(!!dNode && dNode.type === undefined, `\\d parses as {tag:"d"} with no type (got ${JSON.stringify(dNode)})`);
+
+  const shown = renderHighlightedHTML(tvo, new Set());
+  assert(shown.includes("A psalm of David"), `renderHighlightedHTML shows the superscription (got ${JSON.stringify(shown)})`);
+  assert(shown.includes("be-d"), "superscription rendered inside a .be-d span");
+  assert(shown.includes("next line here"), "the following \\q1 line still renders");
+
+  // parity: the editable render's textContent must line up with the diff baseline
+  // so a zero-typing blur doesn't fire a PATCH that drops the superscription.
+  const textContent = (html) =>
+    html
+      .replace(/<[^>]*>/g, "")
+      .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'").replace(/&#8203;/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+  const editable = renderEditableHTML(tvo, new Set());
+  const baseline = extractEditableText({ verseObjects: tvo });
+  assert(baseline.includes("A psalm of David"), "extractEditableText baseline surfaces the superscription");
+  assert(
+    normalizeEditable(textContent(editable)) === baseline,
+    `displayed textContent matches the diff baseline (displayed ${JSON.stringify(normalizeEditable(textContent(editable)))} vs baseline ${JSON.stringify(baseline)})`,
+  );
+
+  // (b) aligned \d — the superscription text is an aligned \zaln/\w that renders
+  // as a sibling of the (empty) \d node; assert it survives and stays inside .be-d
+  // context, plus the \q1 still renders.
+  const alignedD = String.raw`\id PSA
+\c 3
+\p
+\v 1 \d \zaln-s |x-strong="H4210" x-content="מִזְמֹור"\*\w A psalm of David|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*
+\q1 next line here
+`;
+  const avo = usfm.toJSON(alignedD).chapters["3"]["1"].verseObjects;
+  const shownA = renderHighlightedHTML(avo, new Set());
+  assert(shownA.includes("A psalm of David"), `aligned superscription renders (got ${JSON.stringify(shownA)})`);
+  assert(shownA.includes("next line here"), "aligned case still renders the following \\q1 line");
+  const editableA = renderEditableHTML(avo, new Set());
+  const baselineA = extractEditableText({ verseObjects: avo });
+  assert(
+    normalizeEditable(textContent(editableA)) === baselineA,
+    `aligned displayed textContent matches baseline (displayed ${JSON.stringify(normalizeEditable(textContent(editableA)))} vs baseline ${JSON.stringify(baselineA)})`,
+  );
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);

@@ -748,10 +748,16 @@ function segmentByParagraphs(
       ) {
         continue;
       }
-      // \d (Psalm superscription) is `type:"section"` but its text IS
-      // alignable Hebrew. Render inline with `.be-d` styling so children
-      // (\zaln-s milestones, \w words) still walk and align.
-      if (o["type"] === "section" && o["tag"] === "d") {
+      // \d (Psalm superscription) — its text IS alignable Hebrew. Render
+      // inline with `.be-d` styling so children (\zaln-s milestones, \w words)
+      // still walk and align. Gate on the TAG alone, not `type:"section"`:
+      // usfm-js 3.5.0 parses a real `\d` as `{tag:"d", text}` with NO type
+      // (only \s/\s1…\s5 get `type:"section"`), so the old `type:"section"`
+      // predicate matched nothing usfm.toJSON emits and the superscription was
+      // dropped from the render while extractEditableText kept it — the classic
+      // silent-content-drop-on-save signature (#345/#357/#384). Tag-only is a
+      // superset that still covers any legacy `{type:"section", tag:"d"}` rows.
+      if (o["tag"] === "d") {
         current.html += '<span class="be-d">';
         if (Array.isArray(o["children"]) && (o["children"] as unknown[]).length > 0) {
           walk(o["children"] as unknown[]);
