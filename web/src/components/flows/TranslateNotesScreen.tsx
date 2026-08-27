@@ -96,6 +96,7 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
+import SaveIcon from "@mui/icons-material/Save";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 
 import { LockBanner } from "./FlowBanners";
@@ -113,7 +114,7 @@ import { resolveSourceRef } from "../../lib/sourceRef";
 import { buildVerseIndex } from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
 import { tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
-import { extractTargetSelectionText } from "../../lib/highlight";
+import { flowLaneSegments, type FlowSegment } from "../../lib/flowHighlight";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { realChapters } from "../../lib/bookSummary";
 import { drafts, rowKey } from "../../sync/drafts";
@@ -138,6 +139,11 @@ export interface TranslateNotesScreenProps extends FlowScreenContext {
   // it again on any later change to this prop within the same chapter (see
   // the dedicated seek effect below) — without rebuilding the queue itself.
   verse?: number;
+  // Optional deep-link note id (#/notes/{book}/{ch}/{vs}?row={id}) — the
+  // SyncStatusBar "N unsaved" jump menu sends it so the cursor lands on the
+  // exact note holding the draft, not just the verse's first card. When the id
+  // isn't in the queue (trashed, or a stale link) the verse seek still applies.
+  rowId?: string;
 }
 
 // A card is terminal in exactly two ways — the two verbs that finish it.
@@ -177,10 +183,12 @@ function typeLabelOf(slug: string): string {
 
 interface LaneProps {
   label: string;
+  // Gates the "no text" empty state only — the rendered body comes from
+  // `segments` (which already carries this text, marked up per token).
   text: string | null;
-  selection: string;
+  segments: FlowSegment[];
   labelFontFamily: string | undefined;
-  mark: (text: string | null, selection: string) => ReactNode;
+  mark: (segments: FlowSegment[]) => ReactNode;
 }
 
 // Read-only scripture reference lane (ULT/UST) above a note card, with the
@@ -193,7 +201,7 @@ interface LaneProps {
 // `theme.typography.fontFamily` and the `mark` highlighter are now explicit
 // props instead of closed-over values, following the QaPair hoist pattern in
 // TranslateQuestionsScreen.tsx.
-function Lane({ label, text, selection, labelFontFamily, mark }: LaneProps) {
+function Lane({ label, text, segments, labelFontFamily, mark }: LaneProps) {
   const { t } = useTranslation();
   return (
     <Box
@@ -227,7 +235,7 @@ function Lane({ label, text, selection, labelFontFamily, mark }: LaneProps) {
         // trailing punctuation on the correct side, English stays LTR. The
         // label above keeps the container's direction.
         <Box component="span" dir="auto" sx={{ display: "block", textAlign: "start" }}>
-          {mark(text, selection)}
+          {mark(segments)}
         </Box>
       ) : (
         <Box component="em" sx={{ color: "text.secondary", fontSize: "0.875rem" }}>
@@ -238,7 +246,7 @@ function Lane({ label, text, selection, labelFontFamily, mark }: LaneProps) {
   );
 }
 
-export default function TranslateNotesScreen({ book, chapter, verse }: TranslateNotesScreenProps) {
+export default function TranslateNotesScreen({ book, chapter, verse, rowId }: TranslateNotesScreenProps) {
   const { t } = useTranslation();
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
@@ -312,7 +320,13 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     setQueue({ key: chapterKey, ids: ordered.map((r) => r.id) });
     setStatuses(seed);
     setEditedIds(new Set());
-    if (verse != null) {
+    const rowIdx = rowId != null ? ordered.findIndex((r) => r.id === rowId) : -1;
+    if (rowIdx >= 0) {
+      // An exact note id wins over the verse seek — several notes can share a
+      // verse, and the id names the one the deep link (e.g. the "N unsaved"
+      // jump menu) actually meant.
+      setCursor(rowIdx);
+    } else if (verse != null) {
       // A verse past the last note's verse has no >= match (-1); clamp to the
       // last card instead of falling back to index 0, which would jump to the
       // top of the chapter instead of near where the user asked to look.
@@ -321,13 +335,13 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     } else {
       setCursor(firstOpen < 0 ? 0 : firstOpen);
     }
-    // A deep-linked verse always lands on the card view, even if every note
-    // in the chapter is already approved — "done" would otherwise discard
-    // the requested verse.
-    setView(verse != null ? "cards" : ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
+    // A deep-linked verse or note always lands on the card view, even if every
+    // note in the chapter is already approved — "done" would otherwise discard
+    // the requested target.
+    setView(verse != null || rowIdx >= 0 ? "cards" : ordered.length > 0 && firstOpen < 0 ? "done" : "cards");
     setReviewing(false);
     setTypeFilter(null);
-    // `verse` deliberately not a dep beyond this — this effect only builds the
+    // `verse` and `rowId` deliberately not deps beyond this — this effect only builds the
     // queue and seeds its cursor once per mount/chapter change (the
     // `queue?.key === chapterKey` guard above). Re-seeking on a later,
     // same-chapter change to `verse` is handled by the dedicated effect below,
@@ -340,6 +354,35 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     for (const r of data?.tn ?? []) m.set(r.id, r);
     return m;
   }, [data]);
+
+  // Note rows in THIS book holding persisted unsaved typing (IndexedDB drafts
+  // from this browser). Drives the list pane's "Unsaved" chip so a translator
+  // following the top bar's "N unsaved" jump can see exactly which note it
+  // meant — the open card's own live diff is covered separately by hasDiff.
+  const [draftRowIds, setDraftRowIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    // `active` fences the subscription's initial async snapshot: subscribe()
+    // fires the callback from a listAll() promise that unsubscribe does NOT
+    // cancel, so on a book change the outgoing effect's late snapshot could
+    // otherwise land after the new book's and mark colliding row ids (ids are
+    // only unique per book) Unsaved.
+    let active = true;
+    const unsub = drafts.subscribe((list) => {
+      if (!active) return;
+      const ids = new Set<string>();
+      for (const d of list) {
+        if (d.quarantined) continue;
+        if (d.meta.kind === "row" && d.meta.rowKind === "tn" && d.meta.book === book) {
+          ids.add(d.meta.id);
+        }
+      }
+      setDraftRowIds(ids);
+    });
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, [book]);
 
   const queueIds = queue?.key === chapterKey ? queue.ids : null;
   const total = queueIds?.length ?? 0;
@@ -359,9 +402,11 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   // they do for a manual row click — no queue rebuild, no reset of statuses/
   // editedIds.
   const prevVerseRef = useRef(verse);
+  const prevRowIdRef = useRef(rowId);
   useEffect(() => {
-    if (prevVerseRef.current === verse) return;
+    if (prevVerseRef.current === verse && prevRowIdRef.current === rowId) return;
     prevVerseRef.current = verse;
+    prevRowIdRef.current = rowId;
     if (!queueIds || queueIds.length === 0) return;
     // Honoring a same-chapter verse change always overrides an active type
     // filter (issue #226, gap 2). The requested verse's note may be a different
@@ -371,6 +416,16 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     // setCursor) lets that effect early-return instead of fighting this one, and
     // mirrors what the queue-build path does on a cross-chapter deep link.
     setTypeFilter(null);
+    // Same precedence as the queue-build seek: an exact note id (from the
+    // "N unsaved" jump menu) beats the verse's first-card heuristic.
+    if (rowId != null) {
+      const rowIdx = queueIds.indexOf(rowId);
+      if (rowIdx >= 0) {
+        setCursor(rowIdx);
+        setView("cards");
+        return;
+      }
+    }
     if (verse == null) {
       // The verse segment was dropped (e.g. #/notes/RUT/1/9 → #/notes/RUT/1 via
       // Back/Forward or a manual URL edit). Restore the same no-verse init the
@@ -384,7 +439,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     const seekIdx = queueIds.findIndex((id) => (rowById.get(id)?.verse ?? -Infinity) >= verse);
     setCursor(seekIdx < 0 ? queueIds.length - 1 : seekIdx);
     setView("cards");
-  }, [verse, queueIds, rowById, statuses]);
+  }, [verse, rowId, queueIds, rowById, statuses]);
 
   // ── article-type filter (2026-08-10) ─────────────────────────────────────
   // Distinct types present in THIS chapter's queue, with counts — the filter
@@ -675,36 +730,39 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   // The mockup highlights the note's phrase inside both scripture lanes. The
   // phrase is derived from the row's original-language quote through the same
   // alignment lookup the classic editor highlights with — never guessed.
+  //
+  // Marking is PER TOKEN (issue #323), like the classic surfaces: the lane text
+  // is rendered from the verse tree and every `\w` token whose
+  // `text|occurrence` key is highlighted gets its own <mark>. The old
+  // contiguous-substring search over plain_text highlighted nothing when the
+  // matched words scattered, and hit the wrong instance for occurrence > 1.
   const rowQuote = row?.quote ?? null;
   const rowOccurrence = row?.occurrence ?? 1;
-  const ultSelection = useMemo(() => {
-    const vo = verseObjectsOf(ultVerse);
-    if (!rowQuote || !vo) return "";
-    return extractTargetSelectionText(vo, rowQuote, rowOccurrence, sourceVo ?? undefined);
-  }, [ultVerse, rowQuote, rowOccurrence, sourceVo]);
-  const ustSelection = useMemo(() => {
-    const vo = verseObjectsOf(ustVerse);
-    if (!rowQuote || !vo) return "";
-    return extractTargetSelectionText(vo, rowQuote, rowOccurrence, sourceVo ?? undefined);
-  }, [ustVerse, rowQuote, rowOccurrence, sourceVo]);
+  const ultSegments = useMemo(
+    () => flowLaneSegments(verseObjectsOf(ultVerse), ultText, rowQuote, rowOccurrence, sourceVo),
+    [ultVerse, ultText, rowQuote, rowOccurrence, sourceVo],
+  );
+  const ustSegments = useMemo(
+    () => flowLaneSegments(verseObjectsOf(ustVerse), ustText, rowQuote, rowOccurrence, sourceVo),
+    [ustVerse, ustText, rowQuote, rowOccurrence, sourceVo],
+  );
 
   const mark = useCallback(
-    (text: string | null, selection: string): ReactNode => {
-      if (!text) return null;
-      if (!selection) return text;
-      const idx = text.indexOf(selection);
-      if (idx < 0) return text;
-      return (
-        <>
-          {text.slice(0, idx)}
+    (segments: FlowSegment[]): ReactNode => {
+      if (segments.length === 0) return null;
+      // Plain strings need no key; only the <mark> elements are keyed.
+      return segments.map((seg, i) =>
+        seg.marked ? (
           <Box
+            key={i}
             component="mark"
             sx={{ background: HL, color: "inherit", borderRadius: "3px", paddingInline: "2px" }}
           >
-            {selection}
+            {seg.text}
           </Box>
-          {text.slice(idx + selection.length)}
-        </>
+        ) : (
+          seg.text
+        ),
       );
     },
     [HL],
@@ -835,6 +893,25 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     }
     baselineRef.current = draftValue;
     setEditedIds((prev) => new Set(prev).add(target.id));
+    // Mirror the server's demotion locally so the row object stays consistent
+    // with what a refetch will report: a content edit demotes an AI draft or a
+    // previously-validated target row to 'edited' (see the CASE in
+    // api/src/rows.ts — English-root rows with a NULL state are left untouched,
+    // so we must not invent an 'edited' state for them). The Pending chip itself
+    // is driven by editedIds too, so it shows this session regardless; this keeps
+    // translation_state honest for genuine target rows across a refetch.
+    if (target.translation_state === "ai_draft" || target.translation_state === "validated") {
+      applyLocalRowPatch("tn", target.id, { translation_state: "edited" } as Partial<
+        TnRow & TqRow
+      >);
+    }
+    // Saving without approving demotes the row, so drop any prior Approved status.
+    setStatuses((prev) => {
+      if (prev[target.id] === undefined) return prev;
+      const next = { ...prev };
+      delete next[target.id];
+      return next;
+    });
     return true;
   }
 
@@ -859,6 +936,29 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
             status: err instanceof ApiError ? err.status : t("flowTranslate.genericError"),
           }),
         );
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // "Save" persists the edit to the server without approving it. Editing a note
+  // is not the same as finishing it: a translator can save progress and approve
+  // later, and the row then carries the Pending chip. This replaced "Done",
+  // which only closed the editor and never touched the server — a close that
+  // looked like a save but wasn't.
+  async function handleSave() {
+    if (!row || busy) return;
+    if (!hasDiff) {
+      setEditing(false);
+      return;
+    }
+    setBusy(true);
+    setNotice(null);
+    try {
+      if (await saveDraft(row)) {
+        setEditing(false);
+        setToast(t("flowTranslate.toastSaved"));
       }
     } finally {
       setBusy(false);
@@ -919,6 +1019,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
       clearIntroRedoTimer();
       pendingIntroRedoRef.current = null;
       setIntroRedoRowId(null);
+      redoingRef.current = false;
       setRedoing(false);
       if (opts?.timedOut) {
         say(t("flowTranslate.redoTimedOut"), "warning");
@@ -966,6 +1067,8 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
 
   async function handleRedo() {
     if (!row || !data || redoing || redoBlockedReason) return;
+    // settleIntroRedo may run sync on the post-start already-terminal race before React re-renders; a stale false would drop the settle.
+    redoingRef.current = true;
     setRedoing(true);
     setNotice(null);
     // Pipeline Redo stays spinning until settleIntroRedo; tn-quick (and any
@@ -1055,7 +1158,10 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
         );
       }
     } finally {
-      if (!keepSpinningForPipeline) setRedoing(false);
+      if (!keepSpinningForPipeline) {
+        redoingRef.current = false;
+        setRedoing(false);
+      }
     }
   }
 
@@ -1096,16 +1202,22 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
   const isAquiferDraft = row?.translation_state === "ai_draft" && isAquiferDraftRow(row);
 
   const cardStatus = row ? statuses[row.id] : undefined;
+  // Pending = saved but not yet approved (edited this session, or loaded already
+  // 'edited' from a prior one). Distinct from hasDiff, which is the live,
+  // unsaved edit in the open editor.
+  const cardPending = !!row && (editedIds.has(row.id) || row.translation_state === "edited");
   const chip: { kind: FlowStatusKind; label: string } =
     cardStatus === "approved"
       ? { kind: "approved", label: t("flowTranslate.status.approved") }
       : cardStatus === "skipped"
         ? { kind: "skip", label: t("flowTranslate.notNeeded") }
-        : hasDiff || row?.translation_state === "edited"
+        : hasDiff
           ? { kind: "edited", label: t("flowTranslate.status.edited") }
-          : isAquiferDraft
-            ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
-            : { kind: "draft", label: t("flowTranslate.status.draft") };
+          : cardPending
+            ? { kind: "edited", label: t("flowTranslate.status.pending") }
+            : isAquiferDraft
+              ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
+              : { kind: "draft", label: t("flowTranslate.status.draft") };
   const nextChapter = chapter + 1;
   const hasNextChapter = chapterCount === null ? true : nextChapter <= chapterCount;
 
@@ -1389,14 +1501,14 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
               <Lane
                 label={litLabel}
                 text={ultText}
-                selection={ultSelection}
+                segments={ultSegments}
                 labelFontFamily={theme.typography.fontFamily}
                 mark={mark}
               />
               <Lane
                 label={simLabel}
                 text={ustText}
-                selection={ustSelection}
+                segments={ustSegments}
                 labelFontFamily={theme.typography.fontFamily}
                 mark={mark}
               />
@@ -1439,7 +1551,11 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
               const targetDraftCard = (
             /* target draft — the centrepiece */
             <Box ref={editorContainerRef} sx={cardSx}>
-              <Typography component="p" sx={labelSx}>
+              {/* component="div", not "p": this header nests a flex <Box> (the
+                  type pill + FlowStatusChip, an MUI Chip = <div>), and a <div>
+                  is invalid inside a <p> (validateDOMNesting warning; #336).
+                  The sibling <span>-only headers stay as-is. */}
+              <Typography component="div" sx={labelSx}>
                 <Box
                   component="span"
                   sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: INSPIRE }}
@@ -1487,13 +1603,12 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                   />
                   <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
                     <Button
-                      onClick={() => {
-                        setEditing(false);
-                        if (hasDiff) setToast(t("flowTranslate.toastDraftUpdated"));
-                      }}
+                      disabled={busy || redoing}
+                      onClick={() => void handleSave()}
+                      startIcon={<SaveIcon />}
                       sx={{ minHeight: 44, color: "text.secondary", fontWeight: 700 }}
                     >
-                      {t("flowTranslate.done")}
+                      {t("flowTranslate.save")}
                     </Button>
                   </Stack>
                 </>
@@ -1620,16 +1735,26 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
     }
     const st = statuses[id];
     const typeSlug = typeSlugOf(r.support_reference);
+    const rowPending = editedIds.has(id) || r.translation_state === "edited";
     const rowChip: { kind: FlowStatusKind; label: string } =
-      st === "approved"
-        ? { kind: "approved", label: t("flowTranslate.status.approved") }
-        : st === "skipped"
-          ? { kind: "skip", label: t("flowTranslate.notNeeded") }
-          : (id === currentId && hasDiff) || r.translation_state === "edited"
-            ? { kind: "edited", label: t("flowTranslate.status.edited") }
-            : r.translation_state === "ai_draft" && isAquiferDraftRow(r)
-              ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
-              : { kind: "draft", label: t("flowTranslate.status.draft") };
+      // Persisted unsaved typing on a card that is NOT open — checked first,
+      // ahead of even the approved/skipped verdicts: a draft means the visible
+      // text differs from what the server holds, and hiding that behind
+      // "Approved" recreates the very can't-find-my-unsaved-edit gap this chip
+      // exists to close. (The open card's live diff is the hasDiff branch.)
+      id !== currentId && draftRowIds.has(id)
+        ? { kind: "edited", label: t("flowTranslate.status.unsaved") }
+        : st === "approved"
+          ? { kind: "approved", label: t("flowTranslate.status.approved") }
+          : st === "skipped"
+            ? { kind: "skip", label: t("flowTranslate.notNeeded") }
+            : id === currentId && hasDiff
+              ? { kind: "edited", label: t("flowTranslate.status.edited") }
+              : rowPending
+              ? { kind: "edited", label: t("flowTranslate.status.pending") }
+              : r.translation_state === "ai_draft" && isAquiferDraftRow(r)
+                ? { kind: "aquifer", label: t("flowTranslate.status.aquiferImport") }
+                : { kind: "draft", label: t("flowTranslate.status.draft") };
     const isSelected = !done && idx === cursor;
     // Preview the TARGET text — what the translator wrote (their live draft
     // for the open card, else the row's saved note), falling back to the
@@ -1786,7 +1911,7 @@ export default function TranslateNotesScreen({ book, chapter, verse }: Translate
                 "&:hover": { bgcolor: ok.main, filter: "brightness(0.95)" },
               }}
             >
-              {t("common.approve")}
+              {t("flowTranslate.saveApprove")}
             </Button>
           </Stack>
         </Box>

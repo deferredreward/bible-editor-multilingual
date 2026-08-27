@@ -89,6 +89,39 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
+// One-line preview of what a draft actually holds, so the "N unsaved" jump
+// menu shows WHAT is unsaved, not only where. Payload shapes vary by editor —
+// verse lanes stash {plainText}, rows {patch:{note|question|...}}, articles and
+// templates {target_md} — so scan the likely fields and take the first real
+// text. Null (no preview) just omits the secondary line.
+function draftPreviewLine(d: DraftRecord): string | null {
+  const p = d.payload as Record<string, unknown>;
+  const patch =
+    typeof p.patch === "object" && p.patch !== null ? (p.patch as Record<string, unknown>) : {};
+  // The prose fields first: a row patch can also carry quote (raw Hebrew/Greek
+  // — noise in a one-line preview, same reasoning as the notes screen's own
+  // list preview) or a support_reference URI ahead of the text the translator
+  // actually typed. The generic patch spread stays as the last resort.
+  const candidates = [
+    patch.note,
+    patch.question,
+    patch.response,
+    p.plainText,
+    p.target_md,
+    ...Object.values(patch),
+  ];
+  for (const c of candidates) {
+    if (typeof c !== "string") continue;
+    const line = c.split("\n").find((l) => l.trim())?.trim();
+    if (!line) continue;
+    // Code-point slice, not string slice — a cut mid-surrogate-pair would
+    // render a lone � before the ellipsis.
+    const points = [...line];
+    return points.length > 60 ? `${points.slice(0, 60).join("")}…` : line;
+  }
+  return null;
+}
+
 function formatDraftMeta(m: DraftMeta): string {
   if (m.kind === "verse") return `${m.bibleVersion} ${m.book} ${m.chapter}:${m.verse}`;
   if (m.kind === "article") {
@@ -408,12 +441,24 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRo
       // Row draft — branch by rowKind so tq/twl don't land on Translate Notes.
       if (flowRouting) {
         if (m.rowKind === "tn") {
-          location.hash = `#/notes/${m.book}/${m.chapter}/${m.verse}`;
+          // Carry the exact row id so the notes screen lands on the note that
+          // holds the draft, not just the verse's first card — several notes
+          // can share a verse, and the point of this jump is telling them apart.
+          location.hash = `#/notes/${m.book}/${m.chapter}/${m.verse}?row=${encodeURIComponent(m.id)}`;
         } else if (m.rowKind === "tq") {
-          // Questions hash is chapter-scoped (no verse segment in parseHash).
-          location.hash = `#/questions/${m.book}/${m.chapter}`;
+          // Carry verse + exact row id (like tn) so the questions screen lands
+          // on the question holding the draft, not just the chapter — several
+          // questions can share a verse, and telling them apart is the point of
+          // this jump. parseHash accepts the verse and ?row= tail (#335).
+          location.hash = `#/questions/${m.book}/${m.chapter}/${m.verse}?row=${encodeURIComponent(m.id)}`;
         } else {
-          // Words & Articles is book-scoped (#/words/{book} -> translateWords).
+          // twl row-level parity is deferred (#335): the #/words/{book} route
+          // opens the flows TranslateWordsScreen, which edits tW/tA *article*
+          // content and has no twl-row queue to seek or badge. twl row drafts
+          // are authored by the classic WordsTable/WordsScreen (a structurally
+          // different 3-column editor), so mirroring the tn/tq pattern here
+          // would be a broad cross-surface change. Left book-scoped until that
+          // screen grows row-level seeking.
           location.hash = `#/words/${m.book}`;
         }
       } else {
@@ -494,11 +539,17 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRo
           {activeDrafts.map((d) => (
             <MenuItem key={d.key} onClick={() => navigateToDraft(d.meta)} dense>
               <ListItemText
+                primary={formatDraftMeta(d.meta)}
+                secondary={draftPreviewLine(d)}
                 primaryTypographyProps={{ sx: { fontFamily: "monospace", fontSize: 13 } }}
+                secondaryTypographyProps={{
+                  // The drafted text itself, so the menu answers "which edit is
+                  // this?" without a jump. dir=auto: drafts can be RTL text.
+                  dir: "auto",
+                  sx: { fontSize: 12, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+                }}
                 sx={{ mr: 1 }}
-              >
-                {formatDraftMeta(d.meta)}
-              </ListItemText>
+              />
               <Tooltip title={t("sync.discardThisEdit")}>
                 <IconButton
                   size="small"

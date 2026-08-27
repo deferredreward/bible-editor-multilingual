@@ -8,6 +8,7 @@
 import i18n from "../i18n";
 import { normalizeStrong } from "../hooks/useLexicon";
 import { nfc } from "./hebrew";
+import { GREEK, HEBREW } from "./scriptDetect.ts";
 
 // ---------- query classification ----------
 
@@ -19,9 +20,7 @@ export type SourceQueryKind =
   | { kind: "greek-lemma"; nfc: string }
   | { kind: "greek-accent-insensitive"; stripped: string };
 
-const HEBREW = /[֐-׿]/;
 const HEBREW_MARK = /[֑-ׇֽֿׁׂׅׄ]/;
-const GREEK = /[Ͱ-Ͽἀ-῿]/;
 const STRONG_RE = /^\s*([HhGg])?0*(\d{1,5})([a-z])?\s*$/;
 
 // 39 OT book codes. Anything else (including front/back/uncoded) is

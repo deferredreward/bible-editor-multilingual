@@ -54,8 +54,8 @@ type Location =
   | { view: "team" }
   | { view: "observe" }
   | { view: "verse"; book: string; chapter: number; verse: number }
-  | { view: "notes"; book: string; chapter: number; verse: number | null }
-  | { view: "questions"; book: string; chapter: number }
+  | { view: "notes"; book: string; chapter: number; verse: number | null; rowId: string | null }
+  | { view: "questions"; book: string; chapter: number; verse: number | null; rowId: string | null }
   | { view: "package"; book: string }
   | { view: "translateWords"; book: string }
   | { view: "translateScripture"; book: string; chapter: number }
@@ -79,8 +79,8 @@ function positionFromLoc(loc: Location): { book: string; chapter: number; verse:
     case "translateAlign":
       return { book: loc.book, chapter: loc.chapter, verse: loc.verse };
     case "notes":
-      return { book: loc.book, chapter: loc.chapter, verse: loc.verse ?? 1 };
     case "questions":
+      return { book: loc.book, chapter: loc.chapter, verse: loc.verse ?? 1 };
     case "translateScripture":
       return { book: loc.book, chapter: loc.chapter, verse: 1 };
     default:
@@ -138,6 +138,14 @@ const WS_RECONCILED_KEY = "bible-editor.ws-reconciled";
 // name, so it is deliberately NOT a translatable string.
 const VIEWER_ORG = "unfoldingWord";
 
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 function parseHash(): Location {
   const pm = location.hash.match(/^#\/preferences(?:\/(\w+))?$/);
   if (pm) {
@@ -175,18 +183,38 @@ function parseHash(): Location {
   if (rv) {
     return { view: "review", book: rv[1].toUpperCase(), chapter: rv[2] ? parseInt(rv[2], 10) : 1 };
   }
-  const nt = location.hash.match(/^#\/notes\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?$/);
+  // Optional ?row={id} tail: the SyncStatusBar "N unsaved" jump menu uses it to
+  // land on the exact note holding the draft — a verse can carry several notes,
+  // and without the id the screen can only seek to the verse's first card.
+  const nt = location.hash.match(/^#\/notes\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?(?:\?row=([^&]+))?$/);
   if (nt) {
     return {
       view: "notes",
       book: nt[1].toUpperCase(),
       chapter: nt[2] ? parseInt(nt[2], 10) : 1,
       verse: nt[3] ? parseInt(nt[3], 10) : null,
+      // Guarded decode: a hand-mangled percent sequence ("?row=%E0") would
+      // otherwise throw out of parseHash and blank the app on load. Fall back
+      // to the raw capture — a wrong id just degrades to the verse seek.
+      rowId: nt[4] ? safeDecode(nt[4]) : null,
     };
   }
-  const qn = location.hash.match(/^#\/questions\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
+  // Optional verse + ?row={id} tail, mirroring the #/notes form above: the
+  // SyncStatusBar "N unsaved" jump menu uses them to land on the exact question
+  // holding the draft, not just the chapter. The bare #/questions/{book}/{ch}
+  // form still parses (verse/rowId null) for backward compatibility.
+  const qn = location.hash.match(/^#\/questions\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?(?:\?row=([^&]+))?$/);
   if (qn) {
-    return { view: "questions", book: qn[1].toUpperCase(), chapter: qn[2] ? parseInt(qn[2], 10) : 1 };
+    return {
+      view: "questions",
+      book: qn[1].toUpperCase(),
+      chapter: qn[2] ? parseInt(qn[2], 10) : 1,
+      verse: qn[3] ? parseInt(qn[3], 10) : null,
+      // Guarded decode (see the #/notes case): a mangled percent sequence must
+      // not throw out of parseHash and blank the app; a wrong id just degrades
+      // to the verse seek.
+      rowId: qn[4] ? safeDecode(qn[4]) : null,
+    };
   }
   // Flow screens (docs/flows port). Parameterless routes are single reserved
   // tokens; none collide with 3-letter USFM book codes in the catch-all below.
@@ -899,9 +927,9 @@ export function App() {
             ) : loc.view === "observe" ? (
               <ObserveScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "notes" ? (
-              <TranslateNotesScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse ?? undefined} />
+              <TranslateNotesScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse ?? undefined} rowId={loc.rowId ?? undefined} />
             ) : loc.view === "questions" ? (
-              <TranslateQuestionsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
+              <TranslateQuestionsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse ?? undefined} rowId={loc.rowId ?? undefined} />
             ) : loc.view === "package" ? (
               <PackageHubScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} />
             ) : loc.view === "translateWords" ? (
