@@ -644,7 +644,10 @@ translationMemory.get("/examples", requireEditor, async (c) => {
   const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "100", 10) || 100, 1), 500);
 
   if (resource === "tn") {
-    const conds = ["translation_state = 'validated'", "deleted_at IS NULL", "trashed_at IS NULL"];
+    // admin_bulk_state IS NULL keeps this browse honest with what actually ships
+    // as few-shot gold: rows validated by the #296 admin sweep are excluded from
+    // examples/validated.jsonl, so they must not appear here either.
+    const conds = ["translation_state = 'validated'", "deleted_at IS NULL", "trashed_at IS NULL", "admin_bulk_state IS NULL"];
     const binds: unknown[] = [];
     if (supportRef) {
       binds.push(supportRef);
@@ -666,7 +669,7 @@ translationMemory.get("/examples", requireEditor, async (c) => {
     return c.json({ resource: "tn", examples: rows.results ?? [] });
   }
   if (resource === "tq") {
-    const conds = ["translation_state = 'validated'", "deleted_at IS NULL"];
+    const conds = ["translation_state = 'validated'", "deleted_at IS NULL", "admin_bulk_state IS NULL"];
     const binds: unknown[] = [];
     if (q) {
       const like = `%${escapeLikeParam(q)}%`;

@@ -89,6 +89,8 @@ import {
   renderContextPack,
   contextRepoOwner,
   contextRepoName,
+  VALIDATED_TN_EXAMPLES_SQL,
+  VALIDATED_TQ_EXAMPLES_SQL,
   type TranslationPrefsForRender,
   type ValidatedTnRow,
   type ValidatedTqRow,
@@ -570,16 +572,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     ).all<TermImport>();
     const terms = termRs.results ?? [];
 
-    const tnRs = await this.env.DB.prepare(
-      `SELECT id, book, ref_raw, support_reference, quote, note, updated_at
-         FROM tn_rows
-        WHERE translation_state = 'validated' AND deleted_at IS NULL AND trashed_at IS NULL`,
-    ).all<ValidatedTnRow>();
-    const tqRs = await this.env.DB.prepare(
-      `SELECT id, book, ref_raw, question, response, updated_at
-         FROM tq_rows
-        WHERE translation_state = 'validated' AND deleted_at IS NULL`,
-    ).all<ValidatedTqRow>();
+    // The few-shot gold predicate — the real statements live in contextExport.ts
+    // so the exclusion test exercises production SQL (#296).
+    const tnRs = await this.env.DB.prepare(VALIDATED_TN_EXAMPLES_SQL).all<ValidatedTnRow>();
+    const tqRs = await this.env.DB.prepare(VALIDATED_TQ_EXAMPLES_SQL).all<ValidatedTqRow>();
     const tnRows = tnRs.results ?? [];
     const tqRows = tqRs.results ?? [];
 

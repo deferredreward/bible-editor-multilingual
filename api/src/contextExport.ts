@@ -26,6 +26,32 @@ export type TranslationPrefsForRender = {
   common_issues_md: string | null;
 };
 
+// ── The few-shot example selectors ───────────────────────────────────────────
+// These two statements ARE the training-gold predicate: whatever they return
+// becomes examples/validated.jsonl in the context pack, which the bot injects
+// as few-shot examples when drafting. They live here (a pure, test-loadable
+// module) rather than inline in exportWorkflow.ts so the SQL a test exercises
+// is the SQL production runs — same reason contentPatchClauses.ts exists.
+//
+// `admin_bulk_state IS NULL` is the #296 provenance filter: a row validated by
+// the admin bulk sweep (POST /api/books/:book/review-state) carries the stamp,
+// and a bulk statement about imported work is NOT a per-row human review, so it
+// must never become training gold. A later per-row human approval clears the
+// stamp (rows.ts) and the row qualifies normally.
+export const VALIDATED_TN_EXAMPLES_SQL =
+  `SELECT id, book, ref_raw, support_reference, quote, note, updated_at
+     FROM tn_rows
+    WHERE translation_state = 'validated'
+      AND deleted_at IS NULL AND trashed_at IS NULL
+      AND admin_bulk_state IS NULL`;
+
+export const VALIDATED_TQ_EXAMPLES_SQL =
+  `SELECT id, book, ref_raw, question, response, updated_at
+     FROM tq_rows
+    WHERE translation_state = 'validated'
+      AND deleted_at IS NULL
+      AND admin_bulk_state IS NULL`;
+
 export type ValidatedTnRow = {
   id: string;
   book: string;

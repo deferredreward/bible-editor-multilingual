@@ -63,6 +63,14 @@ export interface TnRow {
    */
   pre_draft_json: string | null;
   /**
+   * Admin bulk-sweep provenance (migration 0069, issue #296). NULL = this row's
+   * translation_state is the pipeline's or a human's. Otherwise the state the
+   * row held immediately before POST /api/books/:book/review-state validated it
+   * ('none' encodes a pre-sweep NULL) — the few-shot example selectors exclude
+   * stamped rows, so an admin sweep never becomes training gold.
+   */
+  admin_bulk_state: string | null;
+  /**
    * Source label from the row's most recent edit_log entry. 'ai_pipeline'
    * when the last write came from the AI auto-apply step (which means the
    * chip should show); NULL after any subsequent human edit/keep wipes it.
@@ -101,6 +109,8 @@ export interface TqRow {
   draft_meta_json: string | null;
   /** Last published {question, response}, snapshotted at draft apply — see TnRow.pre_draft_json. */
   pre_draft_json: string | null;
+  /** See TnRow.admin_bulk_state (#296). */
+  admin_bulk_state: string | null;
   /** See TnRow.latest_source. */
   latest_source?: string | null;
 }

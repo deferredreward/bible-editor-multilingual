@@ -1,0 +1,28 @@
+-- Admin bulk review-state sweep stamp (issue #296, decision of 2026-08-27:
+-- Option 1 — a bulk approve MAY validate never-drafted imported rows).
+--
+-- NULL  = this row's current translation_state was NOT set by an admin sweep
+--         (it is a pipeline draft, a human edit, or a human approval).
+-- 'none' | 'ai_draft' | 'edited'
+--       = the row's translation_state WAS set by POST /api/books/:book/
+--         review-state, and this is the state it held BEFORE the sweep
+--         ('none' encodes a pre-sweep NULL — a never-drafted imported row).
+--
+-- Two jobs, one column:
+--   1. Provenance filter. `validated` is treated as human-approved GOLD by the
+--      few-shot pipeline (the context pack's examples/validated.jsonl). An
+--      admin sweep is a bulk statement about a body of imported work, NOT a
+--      per-row human review, so the example selectors add
+--      `admin_bulk_state IS NULL` and those rows never become training gold.
+--   2. Honest un-approve. "Needs review" restores the pre-sweep state instead
+--      of flattening everything to 'edited', so a never-drafted row returns to
+--      NULL — which matters: publishGate omits NULL-state rows on foreign-
+--      provenance chapters but ships snapshot-backed 'edited' rows, so a
+--      flatten-to-'edited' clear could not undo an approve.
+--
+-- Rows already 'validated' are never stamped: the sweep skips them, so a human
+-- approval can never be demoted out of the few-shot pool by an admin sweep.
+-- Any per-row validate/un-validate clears the stamp (rows.ts) — that row's
+-- state is a human's again.
+ALTER TABLE tn_rows ADD COLUMN admin_bulk_state TEXT;
+ALTER TABLE tq_rows ADD COLUMN admin_bulk_state TEXT;

@@ -21,6 +21,7 @@ import {
 import { requireAuth, requireEditor, requireAdmin, currentUserId, currentUserRole } from "./auth";
 import { aquiferDrafts, AQUIFER_SOURCE, pickId } from "./aquiferImport.ts";
 import { aquiferRepairFormatting } from "./aquiferRepair.ts";
+import { bulkReviewState } from "./reviewState.ts";
 import { convertAquiferBook, type EnRow, type ResolvedNote } from "./aquiferConvert.ts";
 import { aquiferJsonUrl, aquiferLangFor } from "./aquiferSources.ts";
 import {
@@ -134,6 +135,13 @@ books.post("/:book/aquifer-drafts", requireAdmin, aquiferDrafts);
 // already imported from Aquifer, for the rows the import itself cannot repair
 // (approved/edited ones). `?dryRun=1` reports the counts without writing.
 books.post("/:book/aquifer-repair", requireAdmin, aquiferRepairFormatting);
+
+// POST /api/books/:book/review-state — set the baseline review state of a
+// chapter (or the whole book, when `chapter` is omitted) for tn and/or tq
+// (admin-only, issue #296). Bulk-validated rows carry an `admin_bulk_state`
+// provenance stamp so an admin sweep never becomes few-shot training gold —
+// the decisions are documented at the top of reviewState.ts.
+books.post("/:book/review-state", requireAdmin, bulkReviewState);
 
 // ── Per-book / per-chapter-range source overrides (issue #103) ─────────────
 // GET  /api/books/:book/sources — list this book's per-resource source ranges.

@@ -978,6 +978,9 @@ async function setTnTranslationState(
   const snapshotClause = state === "validated"
     ? ", pre_draft_json = json_object('note', note, 'tags', tags)"
     : "";
+  // A per-row human decision retires any admin-sweep provenance stamp (#296,
+  // migration 0069): this row's state is a human's now, so it is eligible to be
+  // few-shot gold again (or, on un-approve, is a plain unapproved draft).
   // Only rows that are ALREADY translation drafts (state non-NULL) can be
   // validated/un-validated. Without this guard a validate on a row the
   // translate pipeline never touched (translation_state IS NULL — e.g. a
@@ -989,7 +992,7 @@ async function setTnTranslationState(
     env.DB
       .prepare(
         `UPDATE tn_rows
-           SET translation_state = ?1, updated_at = ?2${snapshotClause}
+           SET translation_state = ?1, updated_at = ?2, admin_bulk_state = NULL${snapshotClause}
          WHERE id = ?3 AND deleted_at IS NULL AND translation_state IS NOT NULL${bookClause(4)}`,
       )
       .bind(state, now, id, book),
@@ -1025,11 +1028,12 @@ async function setTqTranslationState(
   const snapshotClause = state === "validated"
     ? ", pre_draft_json = json_object('question', question, 'response', response)"
     : "";
+  // Retires any admin-sweep stamp — see setTnTranslationState.
   const [updateRes] = await env.DB.batch([
     env.DB
       .prepare(
         `UPDATE tq_rows
-           SET translation_state = ?1, updated_at = ?2${snapshotClause}
+           SET translation_state = ?1, updated_at = ?2, admin_bulk_state = NULL${snapshotClause}
          WHERE id = ?3 AND deleted_at IS NULL AND translation_state IS NOT NULL${bookClause(4)}`,
       )
       .bind(state, now, id, book),
