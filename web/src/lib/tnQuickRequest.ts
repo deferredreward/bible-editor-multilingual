@@ -167,9 +167,22 @@ export function buildTnQuickRequest(
     // English from the same alignment that drives highlighting.
     const occurrence = row.occurrence ?? 1;
     hebrewGuess = cleanSourceQuote(rawQuote);
-    ultSelection =
-      (ultVo && extractTargetSelectionText(ultVo, rawQuote, occurrence, sourceVo)) ||
-      ultText.slice(0, 500);
+    // The ULT selection is THE phrase the note is about. A quote that
+    // classified as source-language on a single OL char but doesn't
+    // resolve to any ULT word — most commonly a mixed English+Greek
+    // paste like "the word λόγος" — must fail loudly, exactly as the
+    // English path does when it can't align. Falling back to the whole
+    // verse (ultText.slice) would silently draft a note about the entire
+    // verse while looking like a phrase draft. (#332)
+    const ultResolved =
+      (ultVo && extractTargetSelectionText(ultVo, rawQuote, occurrence, sourceVo)) || "";
+    if (!ultResolved) {
+      return { ok: false, error: { reason: "hebrew_not_found" } };
+    }
+    ultSelection = ultResolved;
+    // The UST is a looser, simplified translation whose alignment often
+    // doesn't carry the same word run; keep the whole-verse fallback here
+    // rather than reject a draft the ULT already anchored.
     ustSelection =
       (ustVo && extractTargetSelectionText(ustVo, rawQuote, occurrence, sourceVo)) ||
       ustText.slice(0, 500);
