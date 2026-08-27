@@ -8,7 +8,7 @@
 
 import usfm from "usfm-js";
 import { smartEditVerse, smartReplaceVerse, tokenizePlainText, tokenizeEditableText } from "./replace.ts";
-import { extractEditableText, extractPlainText } from "./usfm.ts";
+import { extractEditableText, extractPlainText, normalizeEditable } from "./usfm.ts";
 import { renderHighlightedHTML, renderEditableHTML } from "./highlight.ts";
 import { analyzeAlignmentDelta, guardBlocksSave } from "./alignmentDelta.ts";
 
@@ -1163,10 +1163,39 @@ const qsWrap = (selahStrong = "H5542") => ({
   // edit doesn't drop Selah: extractEditableText already surfaces it.
   assert(extractEditableText({ verseObjects: tvo }).includes("Selah"), "extractEditableText baseline surfaces Selah");
 
-  // (c) a no-op-adjacent edit round-trips without losing the \qs content or its
-  // alignment. Edit far from Selah (Salvation → Rescue); Selah + H5542 survive.
+  // (c) the REAL classic save path, end to end. Shell.saveVerseDraft receives
+  // `plain` = the contenteditable's DOM textContent (i.e. the textContent of
+  // renderEditableHTML's output), compares it to extractEditableText(base) via
+  // normalizeEditable as a no-op guard, and otherwise runs
+  //   smartEditVerse(base.content, extractEditableText(base.content), plain).
+  // So the displayed text MUST be derived from the renderer, never from the
+  // baseline string: diffing the baseline against a string edit of itself never
+  // involves the renderer at all and passes even on the broken render.
+  const textContent = (html) =>
+    html
+      .replace(/<[^>]*>/g, "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&");
+  const displayed = textContent(editable);
   const baseline = extractEditableText({ verseObjects: tvo });
-  const edited = smartEditVerse({ verseObjects: tvo }, baseline, baseline.replace("Salvation", "Rescue"));
+
+  // (c1) the zero-typing case — this is the assertion that catches the silent
+  // Selah loss. Pre-fix the DOM text read "\qs" where the baseline said
+  // "Selah", so Shell's no-op guard missed, a PATCH fired, and the save
+  // replaced Selah with a literal marker. Post-fix they must be identical.
+  assert(
+    normalizeEditable(displayed) === baseline,
+    `displayed textContent matches the diff baseline (displayed ${JSON.stringify(normalizeEditable(displayed))} vs baseline ${JSON.stringify(baseline)})`,
+  );
+
+  // (c2) a real edit far from Selah, applied to the DISPLAYED text (what the
+  // user's browser actually holds), round-trips with Selah + H5542 intact.
+  const typed = displayed.replace("Salvation", "Rescue");
+  assert(typed !== displayed, "the edit landed on the displayed text (Salvation was present in the render)");
+  const edited = smartEditVerse({ verseObjects: tvo }, baseline, typed);
   assert(edited.plainText.includes("Selah"), `edit keeps "Selah" in plain text (got ${JSON.stringify(edited.plainText)})`);
   assert(edited.plainText.includes("Rescue"), "edit applied (Salvation → Rescue)");
   const selahAfter = alignedWords(edited.content).find((x) => x.text === "Selah");
