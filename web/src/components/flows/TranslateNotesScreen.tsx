@@ -1150,14 +1150,19 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
             ? t("flowTranslate.noLaneTextForAi", { label: litLabel })
             : built.error.reason === "missing_ust_verse"
               ? t("flowTranslate.noLaneTextForAi", { label: simLabel })
-              : // Both unalignable-quote reasons land here: this copy is
-                // already script-neutral ("this note's quote"), so it reads
-                // correctly for an English phrase and for a Hebrew/Greek
-                // quote alike (#346).
-                built.error.reason === "hebrew_not_found" ||
-                  built.error.reason === "source_quote_not_found"
-                ? t("flowTranslate.quoteMatchFailed", { label: litLabel })
-                : t("flowTranslate.redoMissingData"),
+              : // The two unalignable-quote reasons need different remediation:
+                // "copy the support phrase exactly from {{label}}" is only
+                // actionable when the user typed English (hebrew_not_found).
+                // A Hebrew/Greek quote that doesn't resolve needs the
+                // original-language advice instead (source_quote_not_found).
+                // Matches the split classic call sites made in #362
+                // (Shell.tsx, ReviewQueue.tsx) — both interpolate {{label}}
+                // here since litLabel is already in scope (#7, #360).
+                built.error.reason === "hebrew_not_found"
+                ? t("flowTranslate.quoteMatchFailedEnglish", { label: litLabel })
+                : built.error.reason === "source_quote_not_found"
+                  ? t("flowTranslate.quoteMatchFailedSource", { label: litLabel })
+                  : t("flowTranslate.redoMissingData"),
         );
         return;
       }

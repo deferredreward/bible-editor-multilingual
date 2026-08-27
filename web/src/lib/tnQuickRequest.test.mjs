@@ -319,6 +319,9 @@ test("the OL-failure strings name both scripts and give no English-only advice (
   const keys = [
     ["appShell", "shell", "aiSourceQuoteNotFound"],
     ["flowReview", "queue", "sourceQuoteNotAligned"],
+    // #360: the flows notes screen's OL-failure copy, added when it was split
+    // out of the script-neutral (and purely diagnostic) quoteMatchFailed.
+    ["flowTranslate", "quoteMatchFailedSource"],
   ];
   const at = (obj, keyPath) => keyPath.reduce((o, k) => (o == null ? o : o[k]), obj);
 
@@ -362,6 +365,72 @@ test("the OL-failure strings name both scripts and give no English-only advice (
       arValue.match(/{{\w+}}/g),
       value.match(/{{\w+}}/g),
       `${keyPath.join(".")} placeholders differ between en.json and ar.json`,
+    );
+  }
+});
+
+// #360: before this, TranslateNotesScreen mapped BOTH unalignable-quote
+// reasons to the script-neutral but purely diagnostic flowTranslate.quoteMatchFailed
+// — the flows screen was the one surface offering no remediation at all. The
+// English-path branch above (flowTranslate.quoteMatchFailedSource) reuses the
+// OL-failure shape; this covers its counterpart, the hebrew_not_found copy,
+// which needs the OPPOSITE properties: the "copy the support phrase" advice
+// IS correct here, since the reason fires only when the user typed English.
+test("flowTranslate.quoteMatchFailedEnglish gives the English-path advice and is genuinely translated (#360)", () => {
+  const en = JSON.parse(readWeb("src/i18n/locales/en.json"));
+  const ar = JSON.parse(readWeb("src/i18n/locales/ar.json"));
+  const value = en.flowTranslate?.quoteMatchFailedEnglish;
+  assert.equal(
+    typeof value,
+    "string",
+    "en.json is missing flowTranslate.quoteMatchFailedEnglish — the English-path failure needs its own copy (#360).",
+  );
+  assert.match(
+    value,
+    /support phrase/i,
+    "flowTranslate.quoteMatchFailedEnglish should tell the user to copy the support phrase — it only fires for an English quote",
+  );
+  const arValue = ar.flowTranslate?.quoteMatchFailedEnglish;
+  assert.equal(
+    typeof arValue,
+    "string",
+    "ar.json is missing flowTranslate.quoteMatchFailedEnglish — ar is gated in coverage.json, so CI will fail.",
+  );
+  assert.notEqual(
+    arValue,
+    value,
+    "flowTranslate.quoteMatchFailedEnglish in ar.json is still the English string",
+  );
+  assert.deepEqual(
+    arValue.match(/{{\w+}}/g),
+    value.match(/{{\w+}}/g),
+    "flowTranslate.quoteMatchFailedEnglish placeholders differ between en.json and ar.json",
+  );
+});
+
+// #360: the key both new strings replaced. Once TranslateNotesScreen branches
+// on the two reasons separately, nothing should reference the old
+// script-neutral-but-no-remediation key — and it must be gone from every
+// locale file, or scripts/check-i18n.mjs's STALE check fails the build.
+test("flowTranslate.quoteMatchFailed has no remaining consumers or locale entries (#360)", () => {
+  const consumers = findCallSites().filter((rel) =>
+    // Exact-key match via \b: quoteMatchFailedEnglish / quoteMatchFailedSource
+    // are legitimate consumers of DIFFERENT keys that happen to share this
+    // prefix ("Failed" -> "English"/"Source" has no word boundary between
+    // them), so a plain substring check would false-positive on them.
+    /\bflowTranslate\.quoteMatchFailed\b/.test(stripLineComments(readWeb(rel))),
+  );
+  assert.deepEqual(
+    consumers,
+    [],
+    "flowTranslate.quoteMatchFailed still has a consumer — delete it here as well, or keep the key.",
+  );
+  for (const locale of readdirSync(path.join(webRoot, "src/i18n/locales"))) {
+    const data = JSON.parse(readWeb(`src/i18n/locales/${locale}`));
+    assert.equal(
+      data.flowTranslate?.quoteMatchFailed,
+      undefined,
+      `src/i18n/locales/${locale} still has flowTranslate.quoteMatchFailed — delete the stale key (#360).`,
     );
   }
 });
