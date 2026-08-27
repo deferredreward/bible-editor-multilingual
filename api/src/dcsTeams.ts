@@ -15,7 +15,7 @@
 import type { Env } from "./index";
 import type { Role } from "./auth.ts";
 import { materialize } from "./projectConfig.ts";
-import { listWorkspaces } from "./workspaces.ts";
+import { activeWorkspaceOrg } from "./workspaces.ts";
 
 export const DEFAULT_ADMIN_TEAM = "BE-Admins";
 export const DEFAULT_EDITOR_TEAM = "BE-Editors";
@@ -339,21 +339,26 @@ export async function syncTeamRole(
  * has never been onboarded) — callers must skip the sync entirely, not guess.
  *
  * When workspaces are configured (one D1 per Door43 org — see workspaces.ts),
- * the registry entry for the ACTIVE workspace wins over the project_config
- * read. Two reasons: the registry is the authoritative statement of which org
- * this database belongs to, and a freshly created workspace has no
- * project_config row yet — the read below would return null and silently skip
- * team sync for exactly the org someone is trying to bootstrap. Falling back
- * to project_config keeps single-workspace deployments (production today,
- * where WORKSPACES is empty) behaving exactly as before; note VIEWER_ORG is
- * NOT a safe substitute there, since in a single-org deployment it is a
- * separate viewer-access setting that need not equal the project's own org.
+ * the roster entry for the ACTIVE workspace wins over the project_config read.
+ * Two reasons: the roster is the authoritative statement of which org this
+ * database belongs to, and a freshly created workspace has no project_config
+ * row yet — the read below would return null and silently skip team sync for
+ * exactly the org someone is trying to bootstrap. Falling back to
+ * project_config keeps single-workspace deployments behaving exactly as before;
+ * note VIEWER_ORG is NOT a safe substitute there, since in a single-org
+ * deployment it is a separate viewer-access setting that need not equal the
+ * project's own org — which is precisely the line activeWorkspaceOrg draws
+ * (explicit roster entry vs. the synthetic implicit default).
+ *
+ * That check used to be gated on the WORKSPACES env var being non-empty, which
+ * silently stopped covering the registry: a workspace claimed from the spare
+ * pool at first admin login (#81) exists only as a registry row, and production
+ * runs WORKSPACES = "" — so the org of the very workspace being bootstrapped
+ * was unresolvable and its first admin fell through to viewer.
  */
 export async function orgForTeamSync(env: Env): Promise<string | null> {
-  if ((env.WORKSPACES ?? "").trim()) {
-    const active = listWorkspaces(env).find((w) => w.slug === env.WORKSPACE_SLUG);
-    if (active) return active.org;
-  }
+  const active = activeWorkspaceOrg(env);
+  if (active) return active;
   try {
     const row = await env.DB.prepare(
       "SELECT preset, overrides_json FROM project_config WHERE id = 1",

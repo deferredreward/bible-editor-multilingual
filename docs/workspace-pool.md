@@ -58,7 +58,37 @@ claimable versus declared-but-not-yet-deployed.
 
 ## Claiming a slot for an org
 
-Currently manual (PR-2), super-admin only:
+Two ways in, both landing on the same `claimWorkspace` mechanism.
+
+### Automatic: first admin login (PR-3)
+
+When someone signs in who is an **admin of a Door43 org that has no workspace in
+the registry**, the OAuth callback claims a slot for that org and lands them in
+it — no operator, no redeploy. "Admin" means membership of the org's configured
+admin team (`BE-Admins`, or `DCS_TEAM_ADMIN`): being an org **Owner** in Door43
+is not enough, and editors never claim — onboarding an org is an administrative
+act.
+
+- At most **one** slot per login. An admin of two un-onboarded orgs onboards the
+  second on their next sign-in.
+- The org is stored with DCS's own casing (read off the teams payload we already
+  hold), matching the `COLLATE NOCASE` tenancy index from `0068`. The label
+  defaults to the org name; an operator can relabel the row afterwards.
+- Repeat logins claim nothing: the org is in the roster by then, so it isn't a
+  candidate and no teams call is made for it.
+- **Fails soft, always.** An exhausted pool, a DCS outage, or a D1 error is
+  logged and sign-in continues against the pre-existing roster — it can never
+  500 the callback. `[autoClaim] pool exhausted` in `wrangler tail` is the
+  signal to add capacity (above).
+- Super admins skip it: their org set is synthesized from the existing roster,
+  so it never contains an unregistered org. They use the endpoint below.
+
+Code: `api/src/workspaceAutoClaim.ts`, called from `callbackDcsAuth` in
+`api/src/auth.ts`. Tests: `api/src/workspaceAutoClaim.test.mjs`.
+
+### Manual: the super-admin endpoint (PR-2)
+
+Still available, and the only route for an org whose admin can't sign in yet:
 
 ```sh
 curl -X POST https://<dev-worker>/api/workspaces/pool/claim \
@@ -73,12 +103,8 @@ curl -X POST https://<dev-worker>/api/workspaces/pool/claim \
   slot (HTTP 200, `alreadyClaimed: true`) and consumes nothing.
 - `503 pool_exhausted` when no live `available` slot remains — add capacity.
 
-**Auto-claiming at first admin login (the OAuth-callback wiring) is PR-3.** This
-endpoint is the seam it will reuse (`claimWorkspace` in `workspaces.ts`).
-
 ## Not yet built (later PRs of #81)
 
-- PR-3: auto-claim at first admin login (BE-Admins team member of an unclaimed org).
 - Dynamic DB creation via the D1 HTTP API + a runtime migration runner (to make
   step 1–2 above a super-admin/cron action instead of a manual wrangler run; the
   binding declaration + redeploy in step 3–4 remain inherent to native bindings).

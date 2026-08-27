@@ -236,6 +236,27 @@ export async function primeWorkspaces(env: Env): Promise<void> {
   registryState.set(db as object, { workspaces });
 }
 
+// The org of the workspace this env is scoped to, but ONLY when the roster is
+// EXPLICITLY configured — registry rows, or a non-empty WORKSPACES var. Returns
+// null for the synthetic implicit default, whose org is VIEWER_ORG: in a
+// single-org deployment that is a separate viewer-access setting and need not
+// equal the project's own org, so callers must fall back to project_config
+// there rather than trusting it (see orgForTeamSync in dcsTeams.ts).
+//
+// Exists because the WORKSPACES env var stopped being the roster's source of
+// truth when it moved into the registry table (PR-1 of #81): a workspace
+// claimed from the spare pool exists only as a registry row, so a caller gated
+// on the env var sees no org for it — production runs WORKSPACES = "".
+export function activeWorkspaceOrg(env: Env): string | null {
+  const db = sharedDb(env);
+  const state = db ? registryState.get(db as object) : undefined;
+  const explicit = state?.workspaces && state.workspaces.length > 0 ? state.workspaces : parseEnvEntries(env);
+  if (explicit.length === 0) return null;
+  const slug = env.WORKSPACE_SLUG;
+  const active = slug ? explicit.find((w) => w.slug === slug) : undefined;
+  return active?.org ?? null;
+}
+
 export function listWorkspaces(env: Env): Workspace[] {
   const db = sharedDb(env);
   const state = db ? registryState.get(db as object) : undefined;
