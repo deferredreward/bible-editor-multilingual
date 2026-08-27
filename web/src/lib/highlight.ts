@@ -696,6 +696,30 @@ function segmentByParagraphs(
     for (const node of nodes ?? []) {
       const o = node as Record<string, unknown> | null;
       if (!o) continue;
+      if (isCharacterWrapper(o)) {
+        // Character-style wrappers (`\qs Selah\qs*`, isCharacterWrapper) are
+        // `type:"quote"` with a tag, so isInFlowMarker matches them below — but
+        // they hold inline verse CONTENT (aligned \w words, or bare text), not a
+        // paragraph break. Treating them as in-flow markers pushed an empty
+        // paragraph segment and dropped their children (`continue`), so Selah
+        // was invisible in the scripture column and a data-loss trap in the
+        // editor: extractEditableText's diff baseline DOES include "Selah", so an
+        // edit elsewhere diffed against a render that had dropped it and could
+        // nuke the \qs content and its alignment. Descend the wrapper's children
+        // into the CURRENT segment instead (its own styling span), mirroring the
+        // `\d` handling and the isInFlowMarker(...) && !isCharacterWrapper(...)
+        // guard the other walks (extractPlainText/extractEditableText,
+        // collectSubtreeWords) already use.
+        current.html += '<span class="be-qs">';
+        if (typeof o["text"] === "string" && o["text"] !== "") {
+          current.html += escapeHtml(String(o["text"]));
+        }
+        if (Array.isArray(o["children"])) {
+          walk(o["children"] as unknown[]);
+        }
+        current.html += "</span>";
+        continue;
+      }
       if (isInFlowMarker(o)) {
         // Collapse every `\ts\*` node shape to the canonical "ts" tag before it
         // reaches the segment logic. usfm-js 3.5.0 parks the marker in the tag

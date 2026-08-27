@@ -168,3 +168,104 @@ export function concatSourceRange(
     content: { verseObjects: combined },
   };
 }
+
+function verseObjectsOf(dto: VerseDto | undefined): unknown[] | null {
+  const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
+  return Array.isArray(vo) ? vo : null;
+}
+
+// One verse's slice of a scripture lane, paired with the original-language
+// verse the highlighter should anchor against.
+export interface CoveredLaneSlice {
+  verseObjects: unknown[] | null;
+  plainText: string | null;
+  sourceVerseObjects: unknown[] | null;
+}
+
+// Slice one scripture lane (ULT / UST) across every verse a note covers, given
+// per-verse *expanded* indexes (`buildVerseIndex`) for the lane and for the
+// original language, plus the covered verse list from `noteCoveredVerses(row)`.
+// A note whose `ref_raw` bridges verses (e.g. MRK "13:26-27") must show the
+// whole range's text — otherwise wording the alternate-translation draft refers
+// to, present only in a later verse, is invisible (issue #341).
+//
+// The slices stay SEPARATE rather than being concatenated into one tree: a
+// highlight key is `${text}|${occurrence}` and occurrence numbers are counted
+// per verse, so one combined tree puts two distinct tokens under one key and
+// both get marked (#344 review). Callers highlight each slice on its own and
+// join the resulting segments (`flowLaneSegmentsAcross`). `plainText` is the
+// whole lane's joined text, which is what the lane renders unhighlighted.
+//
+// Dedupes by DTO identity so a scripture row that is itself a USFM bridge
+// (`verse_end`, which buildVerseIndex maps under every integer it spans) yields
+// one slice, carrying the source verses of every covered verse it spans.
+// Reduces to a single slice for the common singleton note. Unlike
+// concatSourceRange this takes an explicit verse list, so a discontinuous ref
+// ("2,4") covers only its listed verses.
+export function coveredLaneSlices(
+  laneIndex: Record<number, VerseDto>,
+  sourceIndex: Record<number, VerseDto>,
+  coveredVerses: number[],
+): { slices: CoveredLaneSlice[]; plainText: string | null } {
+  const sliceOf = new Map<VerseDto, CoveredLaneSlice>();
+  const slices: CoveredLaneSlice[] = [];
+  const seenSource = new Set<VerseDto>();
+  for (const v of coveredVerses) {
+    const laneDto = laneIndex[v];
+    if (!laneDto) continue;
+    let slice = sliceOf.get(laneDto);
+    if (!slice) {
+      const vo = verseObjectsOf(laneDto);
+      slice = {
+        verseObjects: vo && vo.length > 0 ? vo : null,
+        plainText:
+          typeof laneDto.plain_text === "string" && laneDto.plain_text ? laneDto.plain_text : null,
+        sourceVerseObjects: null,
+      };
+      sliceOf.set(laneDto, slice);
+      slices.push(slice);
+    }
+    const sourceDto = sourceIndex[v];
+    if (!sourceDto || seenSource.has(sourceDto)) continue;
+    seenSource.add(sourceDto);
+    const sourceVo = verseObjectsOf(sourceDto);
+    if (!sourceVo || sourceVo.length === 0) continue;
+    if (slice.sourceVerseObjects) {
+      // Only reachable when the lane row is a USFM bridge spanning several
+      // source verses; a light separator keeps them from running together.
+      slice.sourceVerseObjects = [
+        ...slice.sourceVerseObjects,
+        { type: "text", text: " " },
+        ...sourceVo,
+      ];
+    } else {
+      slice.sourceVerseObjects = sourceVo;
+    }
+  }
+  const texts = slices
+    .map((s) => s.plainText)
+    .filter((tx): tx is string => typeof tx === "string" && tx.length > 0);
+  return { slices, plainText: texts.length > 0 ? texts.join(" ") : null };
+}
+
+// The reference label for a note/question row: `ref_raw` when it names exactly
+// what the lanes show, else the leading-verse form. `ref_raw` is the only place
+// a note's range lives (tn_rows/tq_rows have no verse_end), so a bridged note
+// reads "13:26-27". But `noteCoveredVerses` deliberately drops cross-chapter
+// segments, so "13:26-14:2" covers verse 26 alone — printing that ref verbatim
+// would advertise a range the lanes don't render, and a label must name what is
+// on screen (house rule, VerseScreen.tsx). When the covered list collapsed to
+// the single leading verse but ref_raw still carries range/comma syntax, fall
+// back to `${chapter}:${verse}`.
+export function noteRefLabel(row: {
+  chapter: number;
+  verse: number;
+  ref_raw?: string | null;
+}): string {
+  const plain = `${row.chapter}:${row.verse}`;
+  const ref = row.ref_raw;
+  if (!ref) return plain;
+  const versePart = ref.slice(ref.indexOf(":") + 1);
+  if (/[-,]/.test(versePart) && noteCoveredVerses(row).length === 1) return plain;
+  return ref;
+}
