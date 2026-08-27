@@ -113,6 +113,7 @@ import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { resolveSourceRef } from "../../lib/sourceRef";
 import {
   buildVerseIndex,
+  clampCoveredForRender,
   coveredLaneSlices,
   noteCoveredVerses,
   noteRefLabel,
@@ -726,13 +727,18 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   // #341). `noteCoveredVerses` returns `[row.verse]` for the common singleton
   // (and for intro rows), so those lanes are unchanged.
   const coveredVerses = useMemo(() => (row ? noteCoveredVerses(row) : []), [row]);
+  // A free-text `ref_raw` typo like "1:1-200" would paint the whole chapter into
+  // BOTH lanes of one card (issue #385). Clamp what a single card renders to a
+  // sane number of verses — real bridged notes span a handful — without touching
+  // NOTE_SPAN_CAP or the lock/checkoff paths that key off the full covered list.
+  const renderCovered = useMemo(() => clampCoveredForRender(coveredVerses), [coveredVerses]);
   const ultLane = useMemo(
-    () => coveredLaneSlices(ultIndex, sourceIndex, coveredVerses),
-    [ultIndex, sourceIndex, coveredVerses],
+    () => coveredLaneSlices(ultIndex, sourceIndex, renderCovered.verses),
+    [ultIndex, sourceIndex, renderCovered.verses],
   );
   const ustLane = useMemo(
-    () => coveredLaneSlices(ustIndex, sourceIndex, coveredVerses),
-    [ustIndex, sourceIndex, coveredVerses],
+    () => coveredLaneSlices(ustIndex, sourceIndex, renderCovered.verses),
+    [ustIndex, sourceIndex, renderCovered.verses],
   );
   const ultText = ultLane.plainText;
   const ustText = ustLane.plainText;
@@ -1580,6 +1586,17 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
                 labelFontFamily={theme.typography.fontFamily}
                 mark={mark}
               />
+              {renderCovered.clamped && (
+                <Typography
+                  variant="caption"
+                  sx={{ display: "block", mt: 0.5, color: "text.secondary", fontStyle: "italic" }}
+                >
+                  {t("flowTranslate.laneClampHint", {
+                    shown: renderCovered.verses.length,
+                    total: renderCovered.total,
+                  })}
+                </Typography>
+              )}
             </Box>
 
             {(() => {
