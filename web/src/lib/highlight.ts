@@ -25,7 +25,7 @@
 // matches raw with no further work.
 
 import { nfc } from "./hebrew.ts";
-import { isCharacterWrapper, isInFlowMarker, isTsMilestone, liftMarkerText, SECTION_HEADER_TAGS } from "./usfm.ts";
+import { isCharacterWrapper, isInFlowMarker, isPsalmTitle, isTsMilestone, liftMarkerText, SECTION_HEADER_TAGS } from "./usfm.ts";
 
 // U+2060 WORD JOINER glues UHB clitic morphemes to their host word
 // (הָ⁠אֶ֧בֶן); U+200D ZERO WIDTH JOINER plays the same role in some corpora.
@@ -164,13 +164,13 @@ function nodeIsWord(n: unknown): n is Record<string, unknown> {
   return !!o && o["type"] === "word" && o["tag"] === "w";
 }
 
-// \d (Psalm superscription) is `type:"section"` but its content IS
-// alignable Hebrew verse body — the renderer already descends into it
-// (see segmentByParagraphs); the matchers must too or a quote on a
-// superscription word never highlights.
+// \d (Psalm superscription) carries alignable Hebrew verse body — the renderer
+// already descends into it (see segmentByParagraphs); the matchers must too or a
+// quote on a superscription word never highlights. Delegates to the shared
+// isPsalmTitle (tag === "d"): usfm-js 3.5.0 emits `{tag:"d"}` with no `type`, so
+// the old `type:"section" && tag:"d"` shape was dead on real parsed data.
 function nodeIsPsalmTitle(n: unknown): n is Record<string, unknown> {
-  const o = n as Record<string, unknown> | null;
-  return !!o && o["type"] === "section" && o["tag"] === "d";
+  return isPsalmTitle(n);
 }
 
 // Collect every `\w` token in a subtree (descending through nested milestones,
@@ -748,10 +748,12 @@ function segmentByParagraphs(
       ) {
         continue;
       }
-      // \d (Psalm superscription) is `type:"section"` but its text IS
-      // alignable Hebrew. Render inline with `.be-d` styling so children
-      // (\zaln-s milestones, \w words) still walk and align.
-      if (o["type"] === "section" && o["tag"] === "d") {
+      // \d (Psalm superscription) carries alignable Hebrew text. Render inline
+      // with `.be-d` styling so children (\zaln-s milestones, \w words) still
+      // walk and align. isPsalmTitle matches `{tag:"d"}` — the real usfm-js
+      // 3.5.0 shape (no `type`), which the old `type:"section"` test dropped
+      // from the render while extractEditableText kept it (silent save drop).
+      if (isPsalmTitle(o)) {
         current.html += '<span class="be-d">';
         if (Array.isArray(o["children"]) && (o["children"] as unknown[]).length > 0) {
           walk(o["children"] as unknown[]);

@@ -108,6 +108,19 @@ export function splitSectionHeaders(verseObjects: unknown[] | undefined | null):
   return { sections, body };
 }
 
+// \d (Psalm superscription). usfm-js 3.5.0 emits `{tag:"d"}` with NO `type`
+// field (never `type:"section"` — only \s/\s1…\s5 get that; \d carries just
+// `display:true`), so match on the tag alone. This is a strict SUPERSET of the
+// older `{type:"section", tag:"d"}` shape, so nothing that matched before stops
+// matching, and the real parsed node — which no `type:"section"` predicate ever
+// caught — is now included. \d is only ever a superscription, so `tag === "d"`
+// is unambiguous. Every duplicated in-line `type:"section" && tag:"d"` descent
+// guard (highlight/alignment/sourceOccurrences/quoteBuilder) routes through this.
+export function isPsalmTitle(node: unknown): boolean {
+  const o = node as Record<string, unknown> | null;
+  return !!o && o["tag"] === "d";
+}
+
 // usfm-js stores poetry markers (\q1, \q2, \qm*) as `{type:"quote", tag}`
 // and plain-paragraph markers (\p, \m, \pi*, \nb, \b) as
 // `{type:"paragraph", tag}`. Both are inert structural anchors that we

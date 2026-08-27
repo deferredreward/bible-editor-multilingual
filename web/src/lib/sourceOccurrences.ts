@@ -30,6 +30,7 @@
 //     already-correct ones, are never touched, so clean data doesn't churn.
 
 import { nfc } from "./hebrew.ts";
+import { isPsalmTitle } from "./usfm.ts";
 
 type Node = Record<string, unknown>;
 
@@ -52,8 +53,9 @@ function sourceTextTotals(sourceVerseObjects: unknown[]): Map<string, number> {
       } else if (
         o["type"] === "milestone" ||
         // \d (Psalm superscription) carries alignable verse body — descend like
-        // collectSourceWords / buildSourceIndexMap do.
-        (o["type"] === "section" && o["tag"] === "d")
+        // collectSourceWords / buildSourceIndexMap do. isPsalmTitle matches the
+        // real usfm-js 3.5.0 `{tag:"d"}` (no `type`).
+        isPsalmTitle(o)
       ) {
         walk((o["children"] as unknown[] | undefined) ?? []);
       }

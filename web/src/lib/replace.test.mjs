@@ -2338,6 +2338,59 @@ function countAligned(content) {
   assert(words.find((x) => x.text === "watched")?.strongs.length === 0, "edited 'watched' is unaligned");
 }
 
+// ─── Case 74: real \d Psalm superscription is rendered, not dropped (#384) ──────
+// segmentByParagraphs keyed the \d branch on `type:"section" && tag:"d"`, but
+// usfm-js 3.5.0 parses a real superscription as `{tag:"d", text:"..."}` with NO
+// `type` field (only \s/\s1… get type:"section"; \d carries just display:true).
+// So the real node matched no branch and was DROPPED from the render, while
+// extractEditableText kept it — the classic silent-content-drop-on-save
+// signature. Parse the REAL production shape from USFM (never hand-build the
+// tree — hand-building is exactly what hid this: a hand-made {type:"section"}
+// node matched the dead branch and passed). isPsalmTitle now matches tag alone.
+{
+  console.log("\n[Case 74] Real \\d Psalm superscription is rendered, not dropped (#384)");
+  const src = String.raw`\id PSA
+\c 3
+\p
+\v 1 \d A psalm of David
+\q1 next line here
+`;
+  const tvo = usfm.toJSON(src).chapters["3"]["1"].verseObjects;
+
+  // Sanity: this is the real usfm-js shape — a bare {tag:"d"} with no `type`.
+  const dNode = tvo.find((n) => n && n.tag === "d");
+  assert(!!dNode, "parsed a \\d node from real USFM");
+  assert(dNode && dNode.type === undefined, `real \\d node has NO type field (got ${JSON.stringify(dNode && dNode.type)})`);
+
+  // (a) display render must include the superscription text (FAILED before fix).
+  const shown = renderHighlightedHTML(tvo, new Set());
+  assert(shown.includes("A psalm of David"), `renderHighlightedHTML shows the superscription (got ${JSON.stringify(shown)})`);
+
+  // (b) editable render must include it too.
+  const editable = renderEditableHTML(tvo, new Set());
+  assert(editable.includes("A psalm of David"), `renderEditableHTML shows the superscription (got ${JSON.stringify(editable)})`);
+
+  // (c) save-path parity: the editable render's normalized textContent must
+  // equal the diff baseline extractEditableText exactly, or a zero-typing save
+  // (Shell's no-op guard) diffs a render WITHOUT the superscription against a
+  // baseline WITH it and silently drops it on PATCH. Same helper as Case 47b.
+  const textContent = (html) =>
+    html
+      .replace(/<[^>]*>/g, "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&");
+  const displayed = textContent(editable);
+  const baseline = extractEditableText({ verseObjects: tvo });
+  assert(baseline.includes("A psalm of David"), "extractEditableText baseline surfaces the superscription");
+  assert(
+    normalizeEditable(displayed) === baseline,
+    `editable textContent matches the diff baseline (displayed ${JSON.stringify(normalizeEditable(displayed))} vs baseline ${JSON.stringify(baseline)})`,
+  );
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);

@@ -26,7 +26,7 @@
 // alignment), unchanged for callers / UI.
 
 import { nfc } from "./hebrew.ts";
-import { extractPlainText } from "./usfm.ts";
+import { extractPlainText, isPsalmTitle } from "./usfm.ts";
 import { tokenizeEditableText } from "./replace.ts";
 
 export interface SourceWord {
@@ -603,10 +603,10 @@ function collectSourceWords(verseObjects: unknown[]): CollectedSourceWord[] {
         });
       } else if (
         o["type"] === "milestone" ||
-        // \d (Psalm superscription) is type:"section" but its content IS
-        // alignable verse body — descend like a milestone so its \w tokens
-        // are covered. Mirrors collectMilestoneRuns in highlight.ts.
-        (o["type"] === "section" && o["tag"] === "d")
+        // \d (Psalm superscription) carries alignable verse body — descend like
+        // a milestone so its \w tokens are covered. isPsalmTitle matches the
+        // real usfm-js 3.5.0 `{tag:"d"}` (no `type`). Mirrors highlight.ts.
+        isPsalmTitle(o)
       ) {
         walkSrc((o["children"] as unknown[] | undefined) ?? []);
       }

@@ -12,7 +12,7 @@
 
 import type { HighlightKey } from "./highlight";
 import { matchNorm, matchSourceTokens } from "./highlight.ts";
-import { isCharacterWrapper } from "./usfm.ts";
+import { isCharacterWrapper, isPsalmTitle } from "./usfm.ts";
 
 // Build a HighlightKey from a Hebrew/Greek string + 1-based occurrence.
 // All callers (picker + buildQuoteFromSelection + collectTargetTokens)
@@ -80,7 +80,8 @@ export function collectSourceWordNodes(verseObjects: unknown[]): SourceWordNode[
       } else if (
         o["type"] === "milestone" ||
         isCharacterWrapper(o) ||
-        (o["type"] === "section" && o["tag"] === "d")
+        // \d matches the real usfm-js 3.5.0 `{tag:"d"}` (no `type`) via isPsalmTitle.
+        isPsalmTitle(o)
       ) {
         walk((o["children"] as unknown[] | undefined) ?? []);
       }
@@ -245,11 +246,11 @@ export function collectTargetTokens(
           ? [...stack, { content, occurrence, key: tokenKey(content, occurrence) }]
           : stack;
         walk(children, nextStack);
-      } else if (o["type"] === "section" && o["tag"] === "d") {
-        // \d (Psalm superscription) is type:"section" but its content IS
-        // alignable verse body — descend, carrying the current ancestor
-        // stack unchanged (it contributes no source of its own). Mirrors
-        // collectMilestoneRuns / collectUhbWords.
+      } else if (isPsalmTitle(o)) {
+        // \d (Psalm superscription) carries alignable verse body — descend,
+        // carrying the current ancestor stack unchanged (it contributes no
+        // source of its own). isPsalmTitle matches the real usfm-js 3.5.0
+        // `{tag:"d"}` (no `type`). Mirrors collectMilestoneRuns / collectUhbWords.
         walk((o["children"] as unknown[] | undefined) ?? [], stack);
       } else if (isCharacterWrapper(o)) {
         // \qs (Selah) and other character wrappers hold \zaln / \w content
