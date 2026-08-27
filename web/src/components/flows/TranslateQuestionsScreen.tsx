@@ -975,13 +975,16 @@ export default function TranslateQuestionsScreen({
   // the row and not about a field.
   function chipFor(id: string, rowForChip: TqRow | null, dirty: boolean) {
     const s = statuses[id];
-    if (s === "approved") return { kind: "approved" as FlowStatusKind, label: t("translation.stateApproved") };
-    // Live, unsaved typing in the open editor reads as "Edited"; a saved-but-not-
-    // yet-approved row (edited this session, or loaded already 'edited') reads as
-    // "Pending" so it's clear which rows still need approval.
+    // Live, unsaved typing in the open editor reads as "Edited" and wins over
+    // any saved verdict — `dirty` is only ever true for the current row, which
+    // is the one the user jumped to *because* it holds unsaved text, so an
+    // "Approved" chip there would hide exactly what they came to find (#342).
+    // A saved-but-not-yet-approved row (edited this session, or loaded already
+    // 'edited') reads as "Pending" so it's clear which rows still need approval.
     if (dirty) {
       return { kind: "edited" as FlowStatusKind, label: t("translation.stateEdited") };
     }
+    if (s === "approved") return { kind: "approved" as FlowStatusKind, label: t("translation.stateApproved") };
     if (editedIds.has(id) || rowForChip?.translation_state === "edited") {
       return { kind: "edited" as FlowStatusKind, label: t("flowTranslate.status.pending") };
     }
