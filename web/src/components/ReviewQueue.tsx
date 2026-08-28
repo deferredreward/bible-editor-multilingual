@@ -77,6 +77,7 @@ import {
   verseObjectsOf,
 } from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
+import { isApprovableRow } from "../lib/reviewApproval";
 import { buildQuoteFromSelection, selectionFromQuote } from "../lib/quoteBuilder";
 import { shortSupport } from "../lib/supportReference";
 import type { HighlightKey } from "../lib/highlight";
@@ -751,13 +752,13 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   async function handleApproveAll(kind: RowKindTQ) {
     if (!data || approveAllProgress) return;
     const source: QueueRow[] = kind === "tn" ? data.tn : data.tq;
-    // Trashed notes are excluded on purpose: validating one would promote a row
-    // the editor has already thrown away into the nightly context-repo export's
-    // few-shot set (api/src/rows.ts:943). tq has no trashed_at, so the guard is
-    // a no-op there.
-    const list = source.filter(
-      (r) => r.translation_state !== "validated" && (r as TnRow).trashed_at == null,
-    );
+    // Only rows that actually have a draft to validate are approvable (see
+    // isApprovableRow): the server refuses to validate a never-drafted row
+    // (translation_state IS NULL) or a trashed note, so including those made
+    // Approve-all 404 and halt on the first pristine row, and put a number on the
+    // button the click could never reach (#238). tq has no trashed_at, so the
+    // trashed guard is a no-op there.
+    const list = source.filter(isApprovableRow);
     setApproveAllError(null);
     if (list.length === 0) return;
     setApproveAllProgress({ done: 0, total: list.length });
@@ -1186,14 +1187,11 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     );
   }
 
-  // Same filter handleApproveAll uses — trashed notes are skipped there, so
-  // counting them here would put a number on the button that the click can
-  // never reach ("Approve all notes (1)" doing nothing). tq has no trashed_at,
-  // so the questions count needs no equivalent guard.
-  const unapprovedNotes = data.tn.filter(
-    (r) => r.translation_state !== "validated" && r.trashed_at == null,
-  ).length;
-  const unapprovedQuestions = data.tq.filter((r) => r.translation_state !== "validated").length;
+  // Same filter handleApproveAll uses (isApprovableRow): counting rows the click
+  // can never reach — trashed notes, or pristine rows the server won't validate —
+  // would put a number on the button that Approve-all can never work down (#238).
+  const unapprovedNotes = data.tn.filter(isApprovableRow).length;
+  const unapprovedQuestions = data.tq.filter(isApprovableRow).length;
   const rowState = selectedRow ? stateLabel(selectedRow.translation_state) : "draft";
   const chipKind = isTrashed ? "trashed" : rowState === "validated" ? "approved" : rowState;
   // A bridged note/question (ref_raw e.g. "13:26-27") must show every covered

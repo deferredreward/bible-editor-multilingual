@@ -99,7 +99,12 @@ import { useProjectConfig, isTranslationProject } from "../../hooks/useProjectCo
 import { useSourceQuestions } from "../../hooks/useSourceQuestions";
 import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { resolveSourceRef } from "../../lib/sourceRef";
-import { buildVerseIndex } from "../../lib/verseRange";
+import {
+  buildVerseIndex,
+  coveredLaneSlices,
+  noteCoveredVerses,
+  noteRefLabel,
+} from "../../lib/verseRange";
 import { realChapters } from "../../lib/bookSummary";
 import { resolveFlowChipStatus, flowChipKind, type FlowChipStatus } from "../../lib/flowStatusChip";
 import { drafts, rowKey } from "../../sync/drafts";
@@ -790,8 +795,21 @@ export default function TranslateQuestionsScreen({
   // ── scripture context ────────────────────────────────────────────────────
   const ultIndex = useMemo(() => buildVerseIndex(data?.verses?.ULT), [data?.verses]);
   const ustIndex = useMemo(() => buildVerseIndex(data?.verses?.UST), [data?.verses]);
-  const ultText = row ? (ultIndex[row.verse]?.plain_text ?? null) : null;
-  const ustText = row ? (ustIndex[row.verse]?.plain_text ?? null) : null;
+
+  // A question whose `ref_raw` spans verses ("1:2-3", "1:2,4") must show the
+  // text of every verse it covers, not just the leading one — tq refs are
+  // free-typed, so ranges are at least as likely here as in tn (#351, same bug
+  // as #341). No OL index is passed: tq questions carry no quote, so the lanes
+  // render plain text and never need a highlight anchor.
+  const coveredVerses = useMemo(() => (row ? noteCoveredVerses(row) : []), [row]);
+  const ultText = useMemo(
+    () => coveredLaneSlices(ultIndex, undefined, coveredVerses).plainText,
+    [ultIndex, coveredVerses],
+  );
+  const ustText = useMemo(
+    () => coveredLaneSlices(ustIndex, undefined, coveredVerses).plainText,
+    [ustIndex, coveredVerses],
+  );
 
   const sourceQuestion = row ? (sourceQuestions.get(row.id) ?? null) : null;
 
@@ -1106,7 +1124,9 @@ export default function TranslateQuestionsScreen({
             {r
               ? r.verse === 0
                 ? t("flowQuestions.introRef", { book, chapter })
-                : `${book} ${chapter}:${r.verse}`
+                : // Same range-aware label as the card, so a bridged question
+                  // reads "1:2-3" in the list too (#351).
+                  `${book} ${noteRefLabel(r)}`
               : id}
           </Typography>
           <Typography
@@ -1320,7 +1340,7 @@ export default function TranslateQuestionsScreen({
                         {r
                           ? r.verse === 0
                             ? t("flowQuestions.introRef", { book, chapter })
-                            : `${book} ${chapter}:${r.verse}`
+                            : `${book} ${noteRefLabel(r)}`
                           : id}
                       </Typography>
                       <Typography
@@ -1390,7 +1410,11 @@ export default function TranslateQuestionsScreen({
               <Typography sx={{ fontSize: "0.875rem", fontWeight: 700, color: REF_COLOR, mb: 0.75 }}>
                 {row.verse === 0
                   ? t("flowQuestions.introRef", { book, chapter: row.chapter })
-                  : `${book} ${row.chapter}:${row.verse}`}
+                  : // `ref_raw` is the only place a question's range lives
+                    // (tq_rows has no verse_end); noteRefLabel prints it when it
+                    // names the span the lanes actually show, else falls back to
+                    // chapter:verse (#351).
+                    `${book} ${noteRefLabel(row)}`}
               </Typography>
               <Lane label={litLabel} text={ultText} labelFontFamily={theme.typography.fontFamily} />
               <Lane label={simLabel} text={ustText} labelFontFamily={theme.typography.fontFamily} />

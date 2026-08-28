@@ -22,6 +22,12 @@ import { currentUserId, requireEditor } from "./auth.ts";
 import { importJobOutput } from "./pipelineImport.ts";
 import { getProjectConfig } from "./projectConfig.ts";
 import { buildTranslateOptions, normalizeRowIds, normalizeTranslateRowIdsJson } from "./translateOptions.ts";
+import {
+  PIPELINE_COVERAGE_WHERE,
+  PIPELINE_DEDUP_WHERE,
+  coverageVerseRange,
+  isNarrowerTranslateScope,
+} from "./pipelineDedupSql.ts";
 import { getAiProviderConfig, resolveDispatchAi, scrubSecret } from "./aiProvider.ts";
 import { decryptApiKey } from "./aiKeyCrypto.ts";
 import { applyContextRef } from "./assistedContextRef.ts";
@@ -1295,20 +1301,17 @@ pipelines.post("/start", requireEditor, async (c) => {
     parsed.data.pipelineType === "translate" ? (parsed.data.translate?.verseStart ?? 0) : null;
   const dedupVerseEnd =
     parsed.data.pipelineType === "translate" ? (parsed.data.translate?.verseEnd ?? 0) : null;
-  const dup = await c.env.DB.prepare(
-    `SELECT j.job_id, j.user_id, j.pipeline_type, j.book, j.start_chapter,
+  // The projected columns are identical for both conflict queries (exact
+  // identity and coverage) — the 409 body renders the same `existing` block
+  // either way.
+  const conflictColumns = `j.job_id, j.user_id, j.pipeline_type, j.book, j.start_chapter,
             j.end_chapter, j.state, j.current_skill, j.current_status,
-            j.created_at, j.updated_at, u.dcs_username AS started_by_username
+            j.created_at, j.updated_at, u.dcs_username AS started_by_username`;
+  let dup = await c.env.DB.prepare(
+    `SELECT ${conflictColumns}
        FROM pipeline_jobs j
        LEFT JOIN users u ON u.id = j.user_id
-      WHERE j.book = ?1 AND j.start_chapter = ?2 AND j.end_chapter = ?3
-        AND j.pipeline_type = ?4
-        AND (?5 IS NULL OR COALESCE(json_extract(j.options_json, '$.resourceType'), 'tn') = ?5)
-        AND (?6 IS NULL OR COALESCE(json_extract(j.options_json, '$.rowIds'), 'ALL') = ?6)
-        AND (?7 IS NULL OR COALESCE(json_extract(j.options_json, '$.verseStart'), 0) = ?7)
-        AND (?8 IS NULL OR COALESCE(json_extract(j.options_json, '$.verseEnd'), 0) = ?8)
-        AND j.state IN ('queued', 'dispatching', 'running',
-                        'paused_for_outage', 'paused_for_usage_limit')
+      WHERE ${PIPELINE_DEDUP_WHERE}
       ORDER BY j.created_at ASC
       LIMIT 1`,
   )
@@ -1323,6 +1326,50 @@ pipelines.post("/start", requireEditor, async (c) => {
       dedupVerseEnd,
     )
     .first<PublicJobSummary & { user_id: number }>();
+  // #347 item 1 — "broader blocks narrower" (decided 2026-08-27). Exact identity
+  // above is not enough: a row-scoped or verse-ranged translate started while a
+  // CHAPTER-WIDE translate of the same book/chapter/resource is in flight would
+  // redraft rows the running job already covers (duplicate upstream work,
+  // serialized by the single slot, last apply wins). Same for a verse range
+  // nested inside a covering verse range. When the incoming request is the
+  // narrower one, look for a covering in-flight job and answer with ITS id, using
+  // the same already_running / 409 shape as the exact-dup path.
+  //
+  // One-way by construction: this runs ONLY when the request itself is narrower,
+  // so the reverse direction — a chapter-wide request while a row-scoped job runs
+  // — is untouched and proceeds exactly as before. Non-translate pipelines never
+  // reach it. See pipelineDedupSql.ts for the covering shapes and for the
+  // deliberately-open gap (row-scoped request inside a verse-range job, which
+  // would need a rowId → verse lookup this route does not do).
+  const isTranslateStart = parsed.data.pipelineType === "translate";
+  const coverageVerses = coverageVerseRange(
+    isTranslateStart ? parsed.data.translate?.verseStart : undefined,
+    isTranslateStart ? parsed.data.translate?.verseEnd : undefined,
+  );
+  const requestIsNarrowerScope = isNarrowerTranslateScope(
+    parsed.data.pipelineType,
+    dedupNormRowIds,
+    coverageVerses,
+  );
+  if (!dup && requestIsNarrowerScope) {
+    dup = await c.env.DB.prepare(
+      `SELECT ${conflictColumns}
+         FROM pipeline_jobs j
+         LEFT JOIN users u ON u.id = j.user_id
+        WHERE ${PIPELINE_COVERAGE_WHERE}
+        ORDER BY j.created_at ASC
+        LIMIT 1`,
+    )
+      .bind(
+        book,
+        startChapter,
+        endChapter,
+        dedupResourceType,
+        coverageVerses.start,
+        coverageVerses.end,
+      )
+      .first<PublicJobSummary & { user_id: number }>();
+  }
   if (dup) {
     if (dup.user_id === userId) {
       const resp: StartResponse = {

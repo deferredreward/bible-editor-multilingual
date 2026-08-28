@@ -198,7 +198,7 @@
     "twArticle": "translationWords article",
     "articleList": "Articles",
     "alignment": "Alignment",
-    "search": "Search"
+    "search": "Web Search (external)"
   },
   "panelBody": {
     "selectNote": "Select a translationNote to see its translationAcademy article.",
@@ -710,6 +710,8 @@
     "questions": "Questions",
     "alignment": "Alignment",
     "search": "Search",
+    "searchExternal": "Web Search (external)",
+    "searchExternalDisclosure": "This is a third-party tool, not your project — queries you type here leave the app.",
     "new": "new",
     "all": "all",
     "done": "done",
@@ -798,6 +800,7 @@
     "failedToLoad": "failed to load {{book}} {{chapter}}: {{error}}",
     "reconnecting": "reconnecting… (attempt {{attempt}})",
     "loadingChapter": "loading {{book}} {{chapter}}…",
+    "markersRestored": "Paragraph and poetry marks were restored in {{ref}} {{bibleVersion}} — the editor lost them during this edit. To remove them on purpose, delete the marks in a save of their own.",
     "editLeftUnaligned_one": "This edit left {{count}} word unaligned in {{ref}} {{bibleVersion}} — re-align in the Alignment panel.",
     "editLeftUnaligned_other": "This edit left {{count}} words unaligned in {{ref}} {{bibleVersion}} — re-align in the Alignment panel.",
     "chapterLockBanner": "AI {{pipelineType}} run in progress for {{book}} {{chapter}} — started {{started}}. Editing is locked for this chapter. You can still mark notes to keep before the new set lands.",
@@ -1587,7 +1590,8 @@
     "redoNeedsQuote": "Redo needs a quote on this note — the AI needs the phrase to explain.",
     "redoMissingData": "This note is missing something the AI needs.",
     "noLaneTextForAi": "No {{label}} text for this verse — the AI has nothing to work from.",
-    "quoteMatchFailed": "Couldn't match this note's quote to the {{label}} alignment.",
+    "quoteNotAligned": "Couldn't match this quote to the {{label}} alignment — copy the support phrase exactly from {{label}}.",
+    "sourceQuoteNotAligned": "Couldn't match this Hebrew or Greek quote to the {{label}} alignment — check it against the original-language text, or align those words in {{label}}.",
     "aiUnavailable": "AI drafting isn't set up for this workspace yet.",
     "redoFailed": "Couldn't get a new draft ({{status}}).",
     "redoStarted": "The AI is redrafting this note in the background — the new draft appears here when it lands.",
