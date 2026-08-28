@@ -80,7 +80,12 @@ import {
 } from "../../lib/alignment";
 import { computeGhosts, dismissedGhostKey, type Ghost } from "../../lib/alignmentSuggest";
 import { analyzeAlignmentDelta, guardBlocksSave, lostAlignedWords } from "../../lib/alignmentDelta";
-import { buildVerseIndex, concatSourceRange, formatVerseLabel } from "../../lib/verseRange";
+import {
+  buildVerseIndex,
+  concatSourceRange,
+  formatVerseLabel,
+  verseObjectsOf,
+} from "../../lib/verseRange";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { versionIsRtl, versionLabel } from "../../lib/versionLabels";
 import { extractEditableText, extractPlainText, normalizeEditable } from "../../lib/usfm";
@@ -145,11 +150,6 @@ function countSourceWords(row: VerseDto | undefined): number {
   };
   walk(verseObjects ?? []);
   return n;
-}
-
-function verseObjectsOf(v: VerseDto | null): unknown[] | null {
-  const vo = (v?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
-  return Array.isArray(vo) ? vo : null;
 }
 
 interface PendingLoss {
