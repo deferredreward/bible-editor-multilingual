@@ -25,7 +25,7 @@
 // matches raw with no further work.
 
 import { nfc } from "./hebrew.ts";
-import { isCharacterWrapper, isInFlowMarker, isTsMilestone, liftMarkerText, SECTION_HEADER_TAGS } from "./usfm.ts";
+import { isCharacterWrapper, isInFlowMarker, isTsMilestone, isZalnMilestone, liftMarkerText, SECTION_HEADER_TAGS } from "./usfm.ts";
 
 // U+2060 WORD JOINER glues UHB clitic morphemes to their host word
 // (הָ⁠אֶ֧בֶן); U+200D ZERO WIDTH JOINER plays the same role in some corpora.
@@ -154,10 +154,11 @@ function matchGroupsAt(
   return matched;
 }
 
-function nodeIsMilestone(n: unknown): n is Record<string, unknown> {
-  const o = n as Record<string, unknown> | null;
-  return !!o && o["type"] === "milestone" && o["tag"] === "zaln";
-}
+// Source/target walks descend only `\zaln` alignment milestones — the shared
+// rule lives in usfm.ts (`isZalnMilestone`) so the picker walk in quoteBuilder
+// (`collectSourceWordNodes`) and these matcher walks can never diverge on which
+// milestones to descend (issue #370).
+const nodeIsMilestone = isZalnMilestone;
 
 function nodeIsWord(n: unknown): n is Record<string, unknown> {
   const o = n as Record<string, unknown> | null;
