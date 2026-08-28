@@ -25,6 +25,7 @@ import {
   MAX_ATTEMPTS_SENTINEL,
   eligibleForVersionThread,
   isMaxAttemptsBlocked,
+  shouldAnnounceResult,
   targetKey,
 } from "./outboxTargeting.ts";
 import { workspaceDbName } from "./workspace";
@@ -1073,6 +1074,11 @@ async function drainPass() {
       next = stored;
       return "kept";
     };
+    //
+    // `persisted` records whether that persist committed, so the listener
+    // dispatch below can tell a genuine terminal exit from one that got
+    // walked back (upstream issue #570).
+    let persisted = true;
     try {
       if (result.kind === "ok") {
         await settleAfterDispatch(() => "delete");
@@ -1163,6 +1169,7 @@ async function drainPass() {
         });
       }
     } catch (persistErr) {
+      persisted = false;
       // Best-effort recovery — if IndexedDB itself failed, the op may be
       // half-written. Force pending so the next drain pass tries again —
       // unless quarantine already owns it.
@@ -1177,7 +1184,9 @@ async function drainPass() {
       }
     }
 
-    for (const l of resultListeners) l(next, result);
+    if (shouldAnnounceResult(result.kind, persisted)) {
+      for (const l of resultListeners) l(next, result);
+    }
     void notify();
   }
 }
