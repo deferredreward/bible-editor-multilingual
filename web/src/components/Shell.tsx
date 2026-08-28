@@ -94,6 +94,7 @@ import {
   mergeOverride,
   setLayoutHidden,
   setLayoutTree,
+  setClassicSplitRatio,
   upsertUserLayout,
   deleteUserLayout,
   setActiveLayoutId as persistActiveLayoutId,
@@ -535,7 +536,22 @@ export function Shell({
   const [scrollNonce, setScrollNonce] = useState(0);
   const requestScrollToActive = useCallback(() => setScrollNonce((n) => n + 1), []);
 
-  const [splitRatio, setSplitRatio] = useState<number | null>(null);
+  // Classic's manual scripture/resources split. Seeded from the persisted layout
+  // store so a drag survives reloads (issue #373); `null` until the user first
+  // drags (or after a double-click reset), when the shell uses its computed
+  // `autoSplit` instead. Persisted on drag-commit / reset via the handlers wired
+  // into WorkspaceLayout below — never on every mousemove tick.
+  const [splitRatio, setSplitRatio] = useState<number | null>(
+    () => loadLayoutStore().overrides[CLASSIC_LAYOUT_ID]?.scriptureSplit ?? null,
+  );
+  const commitSplitRatio = useCallback((ratio: number) => {
+    setSplitRatio(ratio);
+    setClassicSplitRatio(CLASSIC_LAYOUT_ID, ratio);
+  }, []);
+  const resetSplitRatio = useCallback(() => {
+    setSplitRatio(null);
+    setClassicSplitRatio(CLASSIC_LAYOUT_ID, null);
+  }, []);
   // TopBar's "More ▸ Export USFM" menu item opens this component's scope/
   // version Menu via its imperative handle — see the trigger-less
   // <ExportUsfmButton hideTrigger /> mounted below.
@@ -1334,7 +1350,6 @@ export function Shell({
         : undefined,
     [bookHook, mode, bookHook?.summary],
   );
-  useEffect(() => { setSplitRatio(null); }, [colsVisible, mode]);
 
   // Pre-load lexicon entries for every UHB Strong's in the loaded chapter
   // AND every loaded chapter in book mode, so the per-word tooltips in the
@@ -2706,7 +2721,11 @@ export function Shell({
         });
       return;
     }
-    const result = smartEditVerse(base.content, oldEditable, plain);
+    // `plain` is raw DOM textContent, so the dropped-marker-chip guard applies
+    // here and only here — see smartEditVerse's `capturedFromDom` (#606).
+    const result = smartEditVerse(base.content, oldEditable, plain, {
+      capturedFromDom: true,
+    });
     // Heads-up when this save drops alignment. Editing a word's text or order
     // unaligns that word by design — the engine preserves only the words it
     // didn't have to touch — and the loss is otherwise easy to miss: the editor
@@ -2728,6 +2747,20 @@ export function Shell({
       pushPipelineToast(
         t("shell.editLeftUnaligned", {
           count: newlyUnaligned,
+          ref: `${book} ${chapterNum}:${verseNum}`,
+          bibleVersion,
+        }),
+        "info",
+      );
+    }
+    // The editor handed back text with none of its paragraph/poetry marks and
+    // no word changed, so the engine restored them rather than wipe the verse's
+    // lineation (#606). That is the right call for a dropped-chip capture, but
+    // it also overrides a translator who genuinely meant to remove every mark in
+    // the same save — so say so, and name the way to do it.
+    if (result.markerCaptureGuarded) {
+      pushPipelineToast(
+        t("shell.markersRestored", {
           ref: `${book} ${chapterNum}:${verseNum}`,
           bibleVersion,
         }),
@@ -3899,6 +3932,8 @@ export function Shell({
         railWidth={railWidth}
         effectiveSplit={effectiveSplit}
         onSplitRatioChange={setSplitRatio}
+        onSplitCommit={commitSplitRatio}
+        onSplitReset={resetSplitRatio}
         band={band}
         bandRegions={bandRegions}
         bandHiddenRegions={bandHiddenRegions}

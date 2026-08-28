@@ -20,6 +20,33 @@ export function tnRedoUsesPipeline(row: Pick<TnRedoRow, "verse">): boolean {
   return isIntroTnRow(row);
 }
 
+// Escape hatch for intro Redo: a fresh single-row translate rarely needs this
+// long, but the spinner must not stick forever if onComplete never fires.
+export const INTRO_REDO_TIMEOUT_MS = 15 * 60 * 1000;
+
+// When a row-scoped intro Redo is answered `already_running`, pipelineStore.start
+// latched onto a broader in-flight translate rather than starting a fresh
+// single-row run: per #347 item 1, a covering chapter-wide job is returned with
+// its own id. Chapter runs are documented as ~1h (pipelineStore header), so the
+// 15-minute budget would flip a perfectly healthy run to a false `timeout`
+// failure (#376). Give the shared job a chapter-run-sized budget instead.
+export const CHAPTER_REDO_TIMEOUT_MS = 90 * 60 * 1000;
+
+/**
+ * Stuck-spinner budget (ms) for an intro Redo, chosen from how
+ * `pipelineStore.start` answered. An `already_running` answer means we're
+ * waiting on a broader job already in flight (chapter-wide, documented ~1h), so
+ * a fresh-run 15-minute timeout would misreport a healthy run as `timeout`
+ * (#376). Every other status keeps the short single-row budget.
+ */
+export function introRedoTimeoutMs(
+  startStatus: "running" | "queued" | "already_running",
+): number {
+  return startStatus === "already_running"
+    ? CHAPTER_REDO_TIMEOUT_MS
+    : INTRO_REDO_TIMEOUT_MS;
+}
+
 export function tnRedoBlockedReason(
   row: TnRedoRow | null | undefined,
   opts: {

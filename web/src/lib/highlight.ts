@@ -25,7 +25,7 @@
 // matches raw with no further work.
 
 import { nfc } from "./hebrew.ts";
-import { isCharacterWrapper, isInFlowMarker, isTsMilestone, liftMarkerText, SECTION_HEADER_TAGS } from "./usfm.ts";
+import { isCharacterWrapper, isInFlowMarker, isTsMilestone, isZalnMilestone, liftMarkerText, SECTION_HEADER_TAGS } from "./usfm.ts";
 
 // U+2060 WORD JOINER glues UHB clitic morphemes to their host word
 // (הָ⁠אֶ֧בֶן); U+200D ZERO WIDTH JOINER plays the same role in some corpora.
@@ -154,10 +154,11 @@ function matchGroupsAt(
   return matched;
 }
 
-function nodeIsMilestone(n: unknown): n is Record<string, unknown> {
-  const o = n as Record<string, unknown> | null;
-  return !!o && o["type"] === "milestone" && o["tag"] === "zaln";
-}
+// Source/target walks descend only `\zaln` alignment milestones — the shared
+// rule lives in usfm.ts (`isZalnMilestone`) so the picker walk in quoteBuilder
+// (`collectSourceWordNodes`) and these matcher walks can never diverge on which
+// milestones to descend (issue #370).
+const nodeIsMilestone = isZalnMilestone;
 
 function nodeIsWord(n: unknown): n is Record<string, unknown> {
   const o = n as Record<string, unknown> | null;
@@ -730,10 +731,14 @@ function segmentByParagraphs(
         const { wrapper, isBlank } = paragraphClass(tag);
         const seg: Segment = { wrapper, tag, html: "", isBlank };
         segments.push(seg);
-        if (tag === "ts") {
-          // \ts\* is a standalone chunk divider — anything that follows
-          // (text, the next paragraph marker, ...) belongs to a fresh
-          // segment, not inside the divider block.
+        if (tag === "ts" || isBlank) {
+          // \ts\* and \b are standalone spacer blocks that render no inline
+          // content of their own — segmentsToHtml discards a blank segment's
+          // html — so anything that follows (text, the next paragraph marker,
+          // ...) belongs to a fresh segment, not accumulated into the spacer
+          // where it would be thrown away. Without this a bare text node after
+          // a \b vanished from the render while extractEditableText kept it,
+          // the #345/#357 save-path drop reached through the blank branch (#386B).
           current = { wrapper: "", tag: null, html: "", isBlank: false };
           segments.push(current);
         } else {
@@ -818,14 +823,20 @@ function segmentsToHtml(segments: Segment[], emitChips: boolean): string {
     if (seg.html === "" && !seg.wrapper) continue;
     const cls = seg.wrapper || "be-line";
     if (seg.isBlank) {
-      out.push(`<div class="${cls}">${emitChips && seg.tag ? chipForTag(seg.tag) : "&nbsp;"}</div>`);
+      // Chip mode emits the marker chip with a trailing space so the editor's
+      // textContent matches extractEditableText's "\b " (usfm.ts). Without it
+      // the two are one space apart, so Shell.saveVerseDraft's no-op guard
+      // misses and a zero-typing blur fires a phantom PATCH (#386A).
+      out.push(`<div class="${cls}">${emitChips && seg.tag ? chipForTag(seg.tag) + " " : "&nbsp;"}</div>`);
       continue;
     }
     if (seg.tag === "ts") {
       // \ts\* renders as a horizontal divider regardless of edit mode.
       // The chip carries the literal marker text so editing it still
-      // round-trips through tokenizeEditableText.
-      const chip = emitChips ? chipForTag("ts") : `<span class="be-tok be-tok-ts">\\ts\\*</span>`;
+      // round-trips through tokenizeEditableText. Chip mode adds the trailing
+      // space extractEditableText emits for "\ts\* ", same parity fix as the
+      // blank branch above (#386A).
+      const chip = emitChips ? chipForTag("ts") + " " : `<span class="be-tok be-tok-ts">\\ts\\*</span>`;
       out.push(`<div class="${cls}">${chip}</div>`);
       continue;
     }
@@ -870,6 +881,43 @@ export function renderEditableHTML(
   return segmentsToHtml(segments, true);
 }
 
+// A recognized-but-empty verseObjects tree (or one of only unrecognized/
+// marker nodes) renders to "" from segmentsToHtml — that is not paintable
+// content. Callers must fall back to the plain_text baseline instead of
+// writing "" into the DOM, which blanks the pane with no way to type the
+// text back. See issue #529.
+//
+// A marker-only tree (e.g. a lone \q1 with no following text) does NOT
+// render to "": segmentsToHtml fills the empty block with a zero-width
+// space (`&#8203;`) so contenteditable has somewhere to put the caret,
+// producing non-empty-but-invisible markup like `<div class="be-q-1">
+// &#8203;</div>`. That passes a trim()-only check and paints a text-free
+// pane in the read-only paths. Strip tags and known invisible entities
+// before judging emptiness. See issue #568.
+function stripToVisibleText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&#8203;/g, "")
+    // …and the same filler in its LITERAL form. overlayFindMarks re-escapes
+    // every run it paints into, which turns a `&#8203;` back into a bare
+    // U+200B — if only the entity spelling counted as invisible here, a
+    // painted render could classify paintable where its unpainted twin does
+    // not, and the caller would write text-free markup into the pane. Same
+    // #568 trap, one encoding along.
+    .replace(/​/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'");
+}
+
+export function isPaintableHtml(html: string | null | undefined): html is string {
+  if (typeof html !== "string" || html.trim() === "") return false;
+  return stripToVisibleText(html).trim() !== "";
+}
+
 // Convenience: pick the right highlight set for a given bible_version.
 // `sourceContent` is the active verse's UHB/UGNT verse content; pass it for
 // ULT/UST so the highlighter can OL-anchor the match (see findTargetHighlights).
@@ -891,4 +939,244 @@ export function highlightsFor(
   }
   const sourceVo = (sourceContent as { verseObjects?: unknown[] } | null)?.verseObjects;
   return findTargetHighlights(verseObjects, quote, occ, Array.isArray(sourceVo) ? sourceVo : undefined);
+}
+
+// Splits an HTML string into a flat sequence of `<tag ...>` tokens and raw
+// text-run tokens, in document order. No nesting/tree is built — callers
+// that need to reason about text content across tag boundaries (like
+// overlayFindMarks below) walk this list directly. Never handles arbitrary
+// HTML (no comments, no `>` inside attribute values) — safe here because
+// every caller only ever feeds it output from this module's own renderers.
+function splitHtmlTokens(html: string): Array<{ tag: string } | { text: string }> {
+  const tokens: Array<{ tag: string } | { text: string }> = [];
+  let i = 0;
+  while (i < html.length) {
+    if (html[i] === "<") {
+      const end = html.indexOf(">", i);
+      if (end === -1) {
+        tokens.push({ tag: html.slice(i) });
+        break;
+      }
+      tokens.push({ tag: html.slice(i, end + 1) });
+      i = end + 1;
+    } else {
+      const next = html.indexOf("<", i);
+      const raw = next === -1 ? html.slice(i) : html.slice(i, next);
+      tokens.push({ text: raw });
+      i = next === -1 ? html.length : next;
+    }
+  }
+  return tokens;
+}
+
+// Decodes the small, fixed set of entities this module's own renderers ever
+// emit (escapeHtml's &<>"', plus the literal &nbsp; / &#8203; segmentsToHtml
+// uses for spacing) back to their real characters — i.e. the same string a
+// browser's `textContent` would read for this run. Not a general HTML
+// entity decoder; every caller only ever feeds it this module's own output.
+function decodeKnownEntities(raw: string): string {
+  return raw.replace(/&amp;|&lt;|&gt;|&quot;|&#39;|&nbsp;|&#(\d+);/g, (m, num) => {
+    switch (m) {
+      case "&amp;":
+        return "&";
+      case "&lt;":
+        return "<";
+      case "&gt;":
+        return ">";
+      case "&quot;":
+        return '"';
+      case "&#39;":
+        return "'";
+      case "&nbsp;":
+        return " ";
+      default:
+        return num ? String.fromCodePoint(parseInt(num, 10)) : m;
+    }
+  });
+}
+
+// Paint Find-overlay match marks onto an already-rendered chip HTML string
+// (renderEditableHTML / renderHighlightedHTML output) instead of replacing
+// it with plain, marker-free text. See #642: the editable cell stays
+// contentEditable while Find is open, and whatever HTML is painted here is
+// exactly what a keystroke's `textContent` capture reads back — substituting
+// marker-free plain text there silently drops every `\q`/`\p` chip from the
+// save. Operating on the chip HTML's own text runs (not its markup) means
+// this never has to understand chip structure: whatever text is already
+// there — chip labels, escaped verse text — is exactly what the DOM's
+// `textContent` will present, tag tokens pass through byte-for-byte.
+//
+// A match that would span more than one text run (crossing a chip's tag
+// boundary) is silently skipped rather than force-split across it — this is
+// decoration only, and a botched split risks corrupting the very markup the
+// capture reads.
+//
+// A match that falls inside a chip's own literal label ("q" in "\q1") is
+// skipped too: the chip is editor chrome, not verse text, and the Find
+// overlay — which searches marker-free plain_text — counted no such hit.
+// Painting one would show a result the results list does not have.
+//
+// `activeRange` is a [start,end) pair from the Find overlay's match index,
+// built against that same marker-free plain_text — one coordinate system
+// short of this chip HTML's own text, since every "\q1 " label shifts the
+// offsets after it by 4. `plainOffsets` below rebuilds the translation
+// between the two (extractPlainText's rules: a marker reads as one
+// separating space, whitespace runs collapse, ends are trimmed) so the
+// `-active` class lands on the occurrence the overlay actually selected.
+export function overlayFindMarks(
+  html: string,
+  re: RegExp,
+  activeRange?: { start: number; end: number } | null,
+): string {
+  if (!html) return html;
+  const tokens = splitHtmlTokens(html);
+  // Decode each text run to the string a browser's `textContent` would read,
+  // and note whether it sits inside a chip label (`span.be-tok`).
+  const decoded: Array<string | null> = [];
+  const inChip: boolean[] = [];
+  const starts: number[] = [];
+  const openIsChip: boolean[] = [];
+  let chipDepth = 0;
+  let full = "";
+  for (const tok of tokens) {
+    if ("text" in tok) {
+      const text = decodeKnownEntities(tok.text);
+      decoded.push(text);
+      inChip.push(chipDepth > 0);
+      starts.push(full.length);
+      full += text;
+      continue;
+    }
+    decoded.push(null);
+    inChip.push(false);
+    starts.push(-1);
+    const info = classifyTag(tok.tag);
+    if (info.kind === "open") {
+      openIsChip.push(info.isChip);
+      if (info.isChip) chipDepth++;
+    } else if (info.kind === "close") {
+      if (openIsChip.pop()) chipDepth = Math.max(0, chipDepth - 1);
+    }
+  }
+  // full-offset → plain_text-offset, for the activeRange comparison.
+  const plainOffsets = new Int32Array(full.length + 1);
+  {
+    let plainLen = 0;
+    // Leading whitespace (and a verse-leading marker's separator) is trimmed
+    // out of plain_text, so start as if a space had just been emitted.
+    let lastWasSpace = true;
+    let chipJustClosed = false;
+    for (let i = 0; i < tokens.length; i++) {
+      const text = decoded[i];
+      if (text === null) continue;
+      const base = starts[i];
+      if (inChip[i]) {
+        // The literal "\q1" label exists only in the chip render.
+        for (let k = 0; k < text.length; k++) plainOffsets[base + k] = plainLen;
+        if (text.length > 0) chipJustClosed = true;
+        continue;
+      }
+      let k = 0;
+      if (chipJustClosed) {
+        // segmentsToHtml emits exactly one space after a chip; it belongs to
+        // the label, not to the verse text.
+        if (text[0] === " ") {
+          plainOffsets[base] = plainLen;
+          k = 1;
+        }
+        // extractPlainText reads the marker itself as one separating space,
+        // then collapses runs — so emit one only if there isn't one already.
+        if (!lastWasSpace) {
+          plainLen++;
+          lastWasSpace = true;
+        }
+        chipJustClosed = false;
+      }
+      for (; k < text.length; k++) {
+        plainOffsets[base + k] = plainLen;
+        const ch = text[k];
+        // Caret filler for an empty block — render-only, never in plain_text.
+        if (ch === "​") continue;
+        if (/\s/.test(ch)) {
+          if (!lastWasSpace) {
+            plainLen++;
+            lastWasSpace = true;
+          }
+        } else {
+          plainLen++;
+          lastWasSpace = false;
+        }
+      }
+    }
+    plainOffsets[full.length] = plainLen;
+  }
+  const chipRanges: Array<[number, number]> = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const text = decoded[i];
+    if (text !== null && inChip[i] && text.length > 0) chipRanges.push([starts[i], starts[i] + text.length]);
+  }
+  const local = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+  const hits: Array<{ start: number; end: number; isActive: boolean }> = [];
+  let m: RegExpExecArray | null;
+  local.lastIndex = 0;
+  while ((m = local.exec(full)) !== null) {
+    const start = m.index;
+    const end = m.index + m[0].length;
+    if (m[0].length === 0) local.lastIndex++;
+    if (chipRanges.some(([cs, ce]) => start < ce && end > cs)) continue;
+    const isActive =
+      !!activeRange &&
+      plainOffsets[start] === activeRange.start &&
+      plainOffsets[end] === activeRange.end;
+    hits.push({ start, end, isActive });
+  }
+  if (hits.length === 0) return html;
+  let hitIdx = 0;
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const text = decoded[i];
+    if (text === null) {
+      out.push((tokens[i] as { tag: string }).tag);
+      continue;
+    }
+    const nodeStart = starts[i];
+    const nodeEnd = nodeStart + text.length;
+    // Every hit's start falls in exactly one run (runs partition `full`
+    // contiguously). One that also ends within this run is fully contained
+    // and gets decorated; one that starts here but ends past `nodeEnd`
+    // crosses into the next tag/run — skip decorating it (its tail bytes
+    // just render as plain text in whichever run they land in) but still
+    // consume it so a later run doesn't try to re-match its start.
+    const mine: Array<{ start: number; end: number; isActive: boolean }> = [];
+    while (hitIdx < hits.length && hits[hitIdx].start >= nodeStart && hits[hitIdx].start < nodeEnd) {
+      const h = hits[hitIdx];
+      hitIdx++;
+      if (h.end <= nodeEnd) mine.push(h);
+    }
+    // Untouched runs go back verbatim, so entity spellings this module emits
+    // (`&#8203;`, `&nbsp;`) survive the round trip byte-for-byte.
+    if (mine.length === 0) {
+      out.push((tokens[i] as { text: string }).text);
+      continue;
+    }
+    let cursor = 0;
+    for (const h of mine) {
+      const ls = h.start - nodeStart;
+      const le = h.end - nodeStart;
+      out.push(escapeHtml(text.slice(cursor, ls)));
+      out.push(`<mark class="${h.isActive ? "be-find be-find-active" : "be-find"}">${escapeHtml(text.slice(ls, le))}</mark>`);
+      cursor = le;
+    }
+    out.push(escapeHtml(text.slice(cursor)));
+  }
+  return out.join("");
+}
+
+// Where a tag token sits in the element stack, and whether it opens a chip
+// label (`span.be-tok`) — the literal "\p"/"\q1" text that exists only in
+// the editable chip render and in no plain_text.
+function classifyTag(tag: string): { kind: "open" | "close" | "self"; isChip: boolean } {
+  if (tag.startsWith("</")) return { kind: "close", isChip: false };
+  if (/\/\s*>$/.test(tag)) return { kind: "self", isChip: false };
+  return { kind: "open", isChip: /class="[^"]*\bbe-tok\b/.test(tag) };
 }

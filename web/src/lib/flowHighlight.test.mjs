@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 
 import { flowLaneSegments, flowLaneSegmentsAcross } from "./flowHighlight.ts";
 import { extractPlainText } from "./usfm.ts";
+import { verseBoundaryText } from "./verseRange.ts";
 
 // ── fixture builders (usfm-js node shapes) ───────────────────────────────────
 const w = (text, occ, occs) =>
@@ -236,15 +237,45 @@ const SPAN_V27_PLAIN = "أَنَا جَاءَ";
 test("combined span marks one token per resolving verse, not the shared surface form", () => {
   const segs = flowLaneSegmentsAcross(
     [
-      { verseObjects: SPAN_V26_VO, plainText: SPAN_V26_PLAIN, sourceVerseObjects: null },
-      { verseObjects: SPAN_V27_VO, plainText: SPAN_V27_PLAIN, sourceVerseObjects: null },
+      { verse: 26, verseObjects: SPAN_V26_VO, plainText: SPAN_V26_PLAIN, sourceVerseObjects: null },
+      { verse: 27, verseObjects: SPAN_V27_VO, plainText: SPAN_V27_PLAIN, sourceVerseObjects: null },
     ],
     "ἐγώ",
     1,
   );
   assert.deepEqual(marks(segs), ["أَنَا"]);
-  // The whole span's text is still rendered, verses joined by a single space.
-  assert.equal(joined(segs), `${SPAN_V26_PLAIN} ${SPAN_V27_PLAIN}`);
+  // The whole span's text is still rendered, verses separated by the boundary
+  // marker naming the verse that follows.
+  assert.equal(
+    joined(segs),
+    `${SPAN_V26_PLAIN}${verseBoundaryText(27)}${SPAN_V27_PLAIN}`,
+  );
+});
+
+test("the verse boundary is an unmarked segment naming the next verse (#351)", () => {
+  // A discontinuous ref ("13:26,28") renders two non-adjacent verses; without a
+  // marker they read as one sentence with the skipped verse invisible.
+  const segs = flowLaneSegmentsAcross(
+    [
+      { verse: 26, verseObjects: SPAN_V26_VO, plainText: SPAN_V26_PLAIN, sourceVerseObjects: null },
+      { verse: 28, verseObjects: SPAN_V27_VO, plainText: SPAN_V27_PLAIN, sourceVerseObjects: null },
+    ],
+    "ἐγώ",
+    1,
+  );
+  const boundary = segs.find((s) => s.text === verseBoundaryText(28));
+  assert.ok(boundary, "a segment carries the boundary marker for verse 28");
+  assert.equal(boundary.marked, false, "the boundary marker is never highlighted");
+  assert.ok(joined(segs).includes("28"), "the skipped-verse gap is visible in the text");
+});
+
+test("a single slice carries no boundary marker", () => {
+  const segs = flowLaneSegmentsAcross(
+    [{ verse: 26, verseObjects: SPAN_V26_VO, plainText: SPAN_V26_PLAIN, sourceVerseObjects: null }],
+    "ἐγώ",
+    1,
+  );
+  assert.equal(joined(segs), SPAN_V26_PLAIN);
 });
 
 test("concatenating the two verses into one tree is what double-marks (defect pin)", () => {
@@ -263,6 +294,7 @@ test("a single slice is the plain single-verse path", () => {
   const across = flowLaneSegmentsAcross(
     [
       {
+        verse: 2,
         verseObjects: MRK_13_2_ULT_VO,
         plainText: MRK_13_2_ULT_PLAIN,
         sourceVerseObjects: MRK_13_2_UGNT_VO,
@@ -284,14 +316,17 @@ test("a single slice is the plain single-verse path", () => {
 test("a slice whose quote doesn't resolve contributes its plain text unmarked", () => {
   const segs = flowLaneSegmentsAcross(
     [
-      { verseObjects: SPAN_V26_VO, plainText: SPAN_V26_PLAIN, sourceVerseObjects: null },
-      { verseObjects: null, plainText: SPAN_V27_PLAIN, sourceVerseObjects: null },
+      { verse: 26, verseObjects: SPAN_V26_VO, plainText: SPAN_V26_PLAIN, sourceVerseObjects: null },
+      { verse: 27, verseObjects: null, plainText: SPAN_V27_PLAIN, sourceVerseObjects: null },
     ],
     "ἐγώ",
     1,
   );
   assert.deepEqual(marks(segs), ["أَنَا"]);
-  assert.equal(joined(segs), `${SPAN_V26_PLAIN} ${SPAN_V27_PLAIN}`);
+  assert.equal(
+    joined(segs),
+    `${SPAN_V26_PLAIN}${verseBoundaryText(27)}${SPAN_V27_PLAIN}`,
+  );
 });
 
 test("no slices renders nothing", () => {
