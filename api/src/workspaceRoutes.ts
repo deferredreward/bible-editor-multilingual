@@ -12,6 +12,7 @@ import {
   serializeWorkspaceCookie,
   workspaceEnv,
   claimWorkspace,
+  isClaimBlocked,
   getPoolStatus,
   registerPoolSlot,
   type Workspace,
@@ -213,6 +214,10 @@ workspaceRoutes.post("/pool/claim", async (c) => {
     exportOwner: typeof body?.exportOwner === "string" ? body.exportOwner : undefined,
   });
   if (!result) return c.json({ error: "pool_exhausted" }, 503);
+  // A non-claimed (or claimed-but-unresolvable-here) row already holds this org,
+  // so the UNIQUE(org) index would reject a new slot (issue #382). Surface a
+  // clear 409 rather than the old 500 — and never silently reuse the held row.
+  if (isClaimBlocked(result)) return c.json({ error: "org_held", status: result.status }, 409);
   return c.json(
     { ok: true, slug: result.workspace.slug, org: result.workspace.org, alreadyClaimed: result.alreadyClaimed },
     result.alreadyClaimed ? 200 : 201,

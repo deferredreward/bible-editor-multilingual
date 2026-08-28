@@ -9,7 +9,7 @@
 
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { registerPoolSlot, claimWorkspace, getPoolStatus, listWorkspaces } from "./workspaces.ts";
+import { registerPoolSlot, claimWorkspace, isClaimBlocked, getPoolStatus, listWorkspaces } from "./workspaces.ts";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -241,6 +241,55 @@ console.log("[claimWorkspace] rejects invalid org/label without touching the poo
   await assertThrows(() => claimWorkspace(env, { org: "OkOrg", label: "" }), "empty label throws");
   await assertThrows(() => claimWorkspace(env, { org: "OkOrg", label: "x".repeat(65) }), "over-long label throws");
   assert(rowBySlug(db, "pool1").status === "available", "no slot consumed by a rejected claim");
+}
+
+// ── claimWorkspace: a non-claimed row holding the org blocks cleanly (#382) ──
+// findClaimedByOrg only sees resolvable `claimed` rows, but UNIQUE(org) spans
+// EVERY status. A retired/failed/provisioning row holding the org used to make
+// the claim UPDATE trip UNIQUE(org) -> 500 -> a permanently unclaimable org.
+// The pre-check must refuse cleanly (a defined, non-throwing result) and consume
+// no spare slot.
+console.log("[claimWorkspace] a non-claimed row holding the org blocks cleanly, consuming no slot");
+{
+  for (const heldStatus of ["retired", "failed", "provisioning"]) {
+    const db = freshDb();
+    const env = makeEnv(db);
+    // A row holding org X in a non-claimed status (no live binding needed — it's
+    // never resolved). Plus a genuinely live available slot that must survive.
+    db.prepare(
+      "INSERT INTO workspaces (slug, label, org, binding, status) VALUES ('held', 'Held', 'HeldOrg', 'DB_GONE', ?)",
+    ).run(heldStatus);
+    await registerPoolSlot(env, { binding: "DB_POOL1" }); // must NOT be consumed
+
+    const claim = await claimWorkspace(env, { org: "HeldOrg", label: "Whatever" });
+    assert(isClaimBlocked(claim), `${heldStatus} row holding org -> defined blocked result (no throw)`);
+    assert(claim.status === heldStatus, `${heldStatus}: blocked result reports the holding row's status`);
+    assert(rowBySlug(db, "pool1").status === "available", `${heldStatus}: no spare slot consumed`);
+    // Case-insensitively too: a differently-cased claim for the same org blocks.
+    const mixed = await claimWorkspace(env, { org: "heldORG", label: "Whatever" });
+    assert(isClaimBlocked(mixed), `${heldStatus}: case-variant claim for the held org also blocks`);
+    assert(rowBySlug(db, "pool1").status === "available", `${heldStatus}: case-variant claim consumes no slot`);
+  }
+}
+
+// ── claimWorkspace: a claimed row whose binding isn't live here blocks (#382) ─
+// The variant reachable TODAY (no retirement path required): a `claimed` row
+// for org X whose binding is not a live D1 on this deployment. findClaimedByOrg
+// returns parseEntry(...) === null, so the org looked unclaimed and the claim
+// used to trip UNIQUE(org) -> 500. Must block cleanly instead.
+console.log("[claimWorkspace] a claimed-but-unresolvable-here row for the org blocks cleanly");
+{
+  const db = freshDb();
+  const env = makeEnv(db);
+  db.prepare(
+    "INSERT INTO workspaces (slug, label, org, binding, status) VALUES ('dead', 'Dead', 'DeadOrg', 'DB_GONE', 'claimed')",
+  ).run();
+  await registerPoolSlot(env, { binding: "DB_POOL1" }); // must NOT be consumed
+
+  const claim = await claimWorkspace(env, { org: "DeadOrg", label: "Whatever" });
+  assert(isClaimBlocked(claim), "claimed row with a dead binding -> defined blocked result (not a 500)");
+  assert(claim.status === "claimed", "blocked result reports status 'claimed'");
+  assert(rowBySlug(db, "pool1").status === "available", "no spare slot consumed for the dead-binding claimed org");
 }
 
 // ── getPoolStatus ────────────────────────────────────────────────────────────

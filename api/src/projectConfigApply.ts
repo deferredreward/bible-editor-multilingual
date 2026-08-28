@@ -18,6 +18,7 @@
 import type { Env } from "./index";
 import { PRESETS, DEFAULT_PRESET, presetForOrg, materialize, clearProjectConfigCache, exportOwnerFor, type ProjectConfig, type ResourceKey } from "./projectConfig.ts";
 import { dcsName, isIdent } from "./repoUrl.ts";
+import { canonicalOrgName } from "./orgCanonical.ts";
 import {
   configHash,
   desiredLaneConfig,
@@ -405,14 +406,23 @@ export async function applyProjectConfig(
   const currentPreset = beforeRow?.preset ?? DEFAULT_PRESET;
   const beforeCfg = materialize(currentPreset, beforeRow?.overrides_json ?? null);
 
-  const overridesIntent = resolveOverridesIntent(currentPreset, preset, requestOverrides);
-  // NOTE: org-name canonicalization on this path is deliberately NOT done here.
-  // The tenancy guard below keys off dataExportIdentity, which compares `org`
-  // case-SENSITIVELY (`org=${cfg.org}`). Canonicalizing a stored mis-cased org
-  // (e.g. "bsoj"→"BSOJ") on a re-apply would register as an identity change and
-  // trip the project_not_empty 409 on a populated project. Canonicalizing here
-  // safely requires first making dataExportIdentity case-insensitive for
-  // org/exportOwner — tracked as follow-up on issue #306.
+  let overridesIntent = resolveOverridesIntent(currentPreset, preset, requestOverrides);
+  // Canonicalize a custom-gl `org`/`exportOrg` override to DCS's casing before
+  // it's persisted (issue #306). Both, not just `org` — leaving `exportOrg`
+  // as-typed would let the two diverge in stored casing even though they
+  // usually name the same org. Safe to do unconditionally here:
+  // dataExportIdentity already case-folds both via `dcsName`
+  // (api/src/repoUrl.ts:101-103, and `exportOwnerFor` for `exportOrg`), so a
+  // canonicalized value and the as-typed one it replaces compare as the SAME
+  // identity and never trip the project_not_empty guard below. Best-effort —
+  // canonicalOrgName fails open to the input on any DCS non-200/network error,
+  // so a lookup hiccup never blocks an apply.
+  if (overridesIntent && typeof overridesIntent.org === "string") {
+    overridesIntent = { ...overridesIntent, org: await canonicalOrgName(env, overridesIntent.org) };
+  }
+  if (overridesIntent && typeof overridesIntent.exportOrg === "string") {
+    overridesIntent = { ...overridesIntent, exportOrg: await canonicalOrgName(env, overridesIntent.exportOrg) };
+  }
   const overridesJsonForWrite =
     overridesIntent === undefined
       ? (beforeRow?.overrides_json ?? null)

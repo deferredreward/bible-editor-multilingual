@@ -160,7 +160,13 @@ interface WorkspaceLayoutProps {
   restoreLabel: (label: string) => string;
   // Classic-only divider (the hand-rolled 8px flex divider from Phase 2).
   effectiveSplit: number;
+  // Live drag: fires per mousemove tick (cheap React state only, no persistence).
   onSplitRatioChange: (ratio: number) => void;
+  // Drag-commit: fires once on mouse-up with the final ratio, so the persisted
+  // write to the layout store happens once per drag, not per frame (issue #373).
+  onSplitCommit: (ratio: number) => void;
+  // Double-click the divider to return Classic to its computed autoSplit.
+  onSplitReset: () => void;
   // Responsive layout band (phone/tablet/desktop) — see lib/layoutBands.ts.
   // Shell derives this from the theme's breakpoints and passes it down so
   // both the Classic and generic render paths can react to it.
@@ -232,6 +238,8 @@ export function WorkspaceLayout({
   restoreLabel,
   effectiveSplit,
   onSplitRatioChange,
+  onSplitCommit,
+  onSplitReset,
   band,
   bandHiddenRegions,
   bandRegions,
@@ -262,10 +270,13 @@ export function WorkspaceLayout({
     null;
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
+  // Latest ratio produced by the in-progress drag, committed once on mouse-up.
+  const latestSplitRef = useRef<number | null>(null);
   useEffect(() => () => { document.body.style.cursor = ""; document.body.style.userSelect = ""; }, []);
   const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     isDraggingRef.current = true;
+    latestSplitRef.current = null;
     document.body.style.cursor = "ew-resize";
     document.body.style.userSelect = "none";
     const onMouseMove = (ev: MouseEvent) => {
@@ -273,7 +284,9 @@ export function WorkspaceLayout({
       const rect = splitContainerRef.current.getBoundingClientRect();
       const available = rect.width - railWidth;
       const offset = ev.clientX - rect.left - railWidth;
-      onSplitRatioChange(Math.min(0.8, Math.max(0.2, offset / available)));
+      const ratio = Math.min(0.8, Math.max(0.2, offset / available));
+      latestSplitRef.current = ratio;
+      onSplitRatioChange(ratio);
     };
     const onMouseUp = () => {
       isDraggingRef.current = false;
@@ -281,10 +294,13 @@ export function WorkspaceLayout({
       document.body.style.userSelect = "";
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      // Persist once, only if the drag actually moved the divider.
+      if (latestSplitRef.current !== null) onSplitCommit(latestSplitRef.current);
+      latestSplitRef.current = null;
     };
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
-  }, [railWidth, onSplitRatioChange]);
+  }, [railWidth, onSplitRatioChange, onSplitCommit]);
 
   // Persist only user-driven resizes (not initial mount / programmatic). The
   // callback fires once per resized Group; its layout map is keyed by our Panel
@@ -356,6 +372,7 @@ export function WorkspaceLayout({
           {showScripture && showResources && (
             <Box
               onMouseDown={handleDividerMouseDown}
+              onDoubleClick={onSplitReset}
               sx={{
                 width: "8px",
                 flexShrink: 0,

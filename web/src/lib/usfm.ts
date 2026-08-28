@@ -167,6 +167,23 @@ export function isCharacterWrapper(node: unknown): boolean {
   return typeof o["tag"] === "string" && CHARACTER_WRAPPER_TAGS.has(o["tag"]);
 }
 
+// The ONE milestone-descent rule for SOURCE-word walks (issue #370). Alignment
+// data wraps source `\w` tokens in `\zaln-s`/`\zaln-e` milestones; a source
+// walk must descend those to reach the words, but must NOT descend other
+// milestone kinds (e.g. `\k-s`/`\k-e` keyterm milestones), because their `\w`
+// children would then be counted as extra source words and drift every
+// position-bearing consumer. Both the picker walk (`collectSourceWordNodes` in
+// quoteBuilder.ts) and the matcher walk (`collectBareWords` /
+// `matchSourceTokens` in highlight.ts, via `nodeIsMilestone`) route their
+// milestone gate through this, so the two can never diverge again — the exact
+// class of drift that #364/#368 kept re-introducing. `\qs`-style content
+// wrappers and `\d` superscriptions are descended too, but by their own
+// predicates (`isCharacterWrapper` / the `\d` section check) alongside this one.
+export function isZalnMilestone(node: unknown): node is Record<string, unknown> {
+  const o = node as Record<string, unknown> | null;
+  return !!o && o["type"] === "milestone" && o["tag"] === "zaln";
+}
+
 // A character wrapper holds verse content that belongs to THIS verse and must
 // stay put — only true line markers lead the NEXT verse and may drift onto it.
 // Used by the trailing-marker drift pair so a verse-final `\qs Selah[\qs*]`
