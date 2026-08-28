@@ -798,6 +798,7 @@
     "failedToLoad": "failed to load {{book}} {{chapter}}: {{error}}",
     "reconnecting": "reconnecting… (attempt {{attempt}})",
     "loadingChapter": "loading {{book}} {{chapter}}…",
+    "markersRestored": "Paragraph and poetry marks were restored in {{ref}} {{bibleVersion}} — the editor lost them during this edit. To remove them on purpose, delete the marks in a save of their own.",
     "editLeftUnaligned_one": "This edit left {{count}} word unaligned in {{ref}} {{bibleVersion}} — re-align in the Alignment panel.",
     "editLeftUnaligned_other": "This edit left {{count}} words unaligned in {{ref}} {{bibleVersion}} — re-align in the Alignment panel.",
     "chapterLockBanner": "AI {{pipelineType}} run in progress for {{book}} {{chapter}} — started {{started}}. Editing is locked for this chapter. You can still mark notes to keep before the new set lands.",

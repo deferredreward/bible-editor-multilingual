@@ -858,6 +858,7 @@
     "failedToLoad": "فشل تحميل {{book}} {{chapter}}: {{error}}",
     "reconnecting": "جارٍ إعادة الاتصال… (المحاولة {{attempt}})",
     "loadingChapter": "جارٍ تحميل {{book}} {{chapter}}…",
+    "markersRestored": "تمت استعادة علامات الفقرات والشعر في {{ref}} {{bibleVersion}} — فقدها المحرِّر أثناء هذا التعديل. لحذفها عمدًا، احذف العلامات في حفظ مستقل.",
     "editLeftUnaligned_one": "ترك هذا التعديل {{count}} كلمة غير مُحاذاة في {{ref}} {{bibleVersion}} — أعد المحاذاة في لوحة المحاذاة.",
     "editLeftUnaligned_zero": "ترك هذا التعديل {{count}} كلمة غير مُحاذاة في {{ref}} {{bibleVersion}} — أعد المحاذاة في لوحة المحاذاة.",
     "editLeftUnaligned_two": "ترك هذا التعديل {{count}} كلمتين غير مُحاذاتين في {{ref}} {{bibleVersion}} — أعد المحاذاة في لوحة المحاذاة.",

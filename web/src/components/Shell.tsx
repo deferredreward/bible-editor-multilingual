@@ -2706,7 +2706,11 @@ export function Shell({
         });
       return;
     }
-    const result = smartEditVerse(base.content, oldEditable, plain);
+    // `plain` is raw DOM textContent, so the dropped-marker-chip guard applies
+    // here and only here — see smartEditVerse's `capturedFromDom` (#606).
+    const result = smartEditVerse(base.content, oldEditable, plain, {
+      capturedFromDom: true,
+    });
     // Heads-up when this save drops alignment. Editing a word's text or order
     // unaligns that word by design — the engine preserves only the words it
     // didn't have to touch — and the loss is otherwise easy to miss: the editor
@@ -2728,6 +2732,20 @@ export function Shell({
       pushPipelineToast(
         t("shell.editLeftUnaligned", {
           count: newlyUnaligned,
+          ref: `${book} ${chapterNum}:${verseNum}`,
+          bibleVersion,
+        }),
+        "info",
+      );
+    }
+    // The editor handed back text with none of its paragraph/poetry marks and
+    // no word changed, so the engine restored them rather than wipe the verse's
+    // lineation (#606). That is the right call for a dropped-chip capture, but
+    // it also overrides a translator who genuinely meant to remove every mark in
+    // the same save — so say so, and name the way to do it.
+    if (result.markerCaptureGuarded) {
+      pushPipelineToast(
+        t("shell.markersRestored", {
           ref: `${book} ${chapterNum}:${verseNum}`,
           bibleVersion,
         }),
