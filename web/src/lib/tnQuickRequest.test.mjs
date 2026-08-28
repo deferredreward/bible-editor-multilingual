@@ -319,6 +319,9 @@ test("the OL-failure strings name both scripts and give no English-only advice (
   const keys = [
     ["appShell", "shell", "aiSourceQuoteNotFound"],
     ["flowReview", "queue", "sourceQuoteNotAligned"],
+    // #360: the flows notes screen (the demo surface) split its combined
+    // unalignable-quote branch and owes the same OL-path contract.
+    ["flowTranslate", "sourceQuoteNotAligned"],
   ];
   const at = (obj, keyPath) => keyPath.reduce((o, k) => (o == null ? o : o[k]), obj);
 

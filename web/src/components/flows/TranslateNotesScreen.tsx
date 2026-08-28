@@ -1150,14 +1150,19 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
             ? t("flowTranslate.noLaneTextForAi", { label: litLabel })
             : built.error.reason === "missing_ust_verse"
               ? t("flowTranslate.noLaneTextForAi", { label: simLabel })
-              : // Both unalignable-quote reasons land here: this copy is
-                // already script-neutral ("this note's quote"), so it reads
-                // correctly for an English phrase and for a Hebrew/Greek
-                // quote alike (#346).
-                built.error.reason === "hebrew_not_found" ||
-                  built.error.reason === "source_quote_not_found"
-                ? t("flowTranslate.quoteMatchFailed", { label: litLabel })
-                : t("flowTranslate.redoMissingData"),
+              : // The two unalignable-quote reasons need DIFFERENT copy: the
+                // English-path advice ("copy the support phrase") is meaningless
+                // for a Hebrew/Greek quote, and the original-language advice is
+                // meaningless for an English phrase. This screen used to collapse
+                // both onto one diagnostic-only string, leaving the demo surface
+                // the only place with no remediation (#360); Shell/ReviewQueue
+                // already split them (#346). Both interpolate {{label}} rather
+                // than hardcoding "ULT" (#7 — BSOJ/Arabic).
+                built.error.reason === "source_quote_not_found"
+                ? t("flowTranslate.sourceQuoteNotAligned", { label: litLabel })
+                : built.error.reason === "hebrew_not_found"
+                  ? t("flowTranslate.quoteNotAligned", { label: litLabel })
+                  : t("flowTranslate.redoMissingData"),
         );
         return;
       }
