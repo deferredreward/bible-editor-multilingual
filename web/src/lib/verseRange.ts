@@ -104,6 +104,29 @@ export function noteCoveredVerses(row: { verse: number; ref_raw?: string | null 
   return [...covered].sort((x, y) => x - y);
 }
 
+// How many covered verses a single note card paints into each scripture lane.
+// Distinct from NOTE_SPAN_CAP: that one bounds the Set-building work so a
+// malformed ref can't hang; this one bounds what one card RENDERS. A legitimate
+// bridged note spans a handful of verses (MRK "13:26-27"), so a free-text typo
+// like "1:1-200" would otherwise flood BOTH the ULT and UST lanes of one card
+// with the whole chapter, plus ~2N tree walks per row change (issue #385).
+export const LANE_RENDER_CAP = 12;
+
+// Clamp a covered-verse list (from `noteCoveredVerses`) for lane rendering.
+// Returns at most `cap` verses to paint, plus the full count so the caller can
+// show a "showing N of M" hint. Leaves NOTE_SPAN_CAP and the lock/checkoff/
+// overlap paths untouched — this only bounds what one card renders, never what a
+// note is considered to cover. The list is already sorted ascending with the
+// leading verse first, so slicing the head keeps the note's own verse visible.
+export function clampCoveredForRender(
+  coveredVerses: number[],
+  cap: number = LANE_RENDER_CAP,
+): { verses: number[]; total: number; clamped: boolean } {
+  const total = coveredVerses.length;
+  if (total <= cap) return { verses: coveredVerses, total, clamped: false };
+  return { verses: coveredVerses.slice(0, cap), total, clamped: true };
+}
+
 // True when a note/question row covers any verse in the inclusive display
 // window [rangeStart, rangeEnd]. Reduces to `verse in [start,end]` for singletons.
 export function noteOverlapsRange(
@@ -174,10 +197,10 @@ export function concatSourceRange(
 
 // The verse tree of a scripture row, or null when the row carries none. The
 // same `content.verseObjects` cast is hand-rolled in a dozen components; this
-// export is where they should converge — AlignScreen's copy is retired (#351),
-// the rest (ScriptureScreen, TranslateAlignScreen, VerseScreen, WordsScreen,
-// ReviewQueue, tnQuickRequest) are still local, so a change here does NOT yet
-// reach every call site.
+// export is where they should converge. AlignScreen's copy is retired (#351),
+// and ReviewQueue + tnQuickRequest are retired here (#388); the rest
+// (ScriptureScreen, TranslateAlignScreen, VerseScreen, WordsScreen) are still
+// local, so a change here does NOT yet reach every call site.
 export function verseObjectsOf(dto: VerseDto | null | undefined): unknown[] | null {
   const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
   return Array.isArray(vo) ? vo : null;
