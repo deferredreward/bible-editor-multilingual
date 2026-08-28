@@ -315,6 +315,72 @@ test("buildTnQuickRequest leaves a single-verse note's scripture unchanged (#388
   }
 });
 
+// A single USFM bridge row: `\v 26-27` is stored under verse_start 26 with
+// verse_end 27, so buildVerseIndex maps BOTH keys 26 and 27 to the one DTO. This
+// is distinct from makeBridgedGreekPayload, where 26 and 27 are two separate
+// scripture rows — here the ULT/UST lane rows are themselves the bridge.
+function makeUsfmBridgeLanePayload() {
+  const at = (chapter, verse) => ({ book: "MRK", chapter, verse });
+  const bridge = (verseObjects, plainText) => ({
+    ...at(13, 26),
+    verse_end: 27,
+    bible_version: "test",
+    plain_text: plainText,
+    version: 1,
+    updated_by: null,
+    updated_at: 0,
+    content: { verseObjects },
+  });
+  return {
+    book: "MRK",
+    chapter: 13,
+    verses: {
+      ULT: { 26: bridge([gms("ἐρχόμενον", ["coming", "in", "clouds"])], "coming in clouds and gathering") },
+      // UST bridge carries no alignment, exercising the whole-verse selection fallback.
+      UST: { 26: bridge([], "they will see and be gathered") },
+      UGNT: { 26: verseVO([gw("ἐρχόμενον"), gt(" ")], "ἐρχόμενον", at(13, 26)) },
+    },
+    tn: [],
+    tq: [],
+    twl: [],
+    verseStatuses: [],
+    verseLaneChecks: [],
+  };
+}
+
+test("buildTnQuickRequest does not double a USFM-bridge lane row's text (#388)", () => {
+  const row = makeRow({ verse: 26, ref_raw: "13:26-27", quote: "ἐρχόμενον" });
+  const result = buildTnQuickRequest(row, makeUsfmBridgeLanePayload());
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    // buildVerseIndex maps verses 26 AND 27 to the same bridge DTO, so a naive
+    // per-verse join appended the whole verse text twice. Dedupe by DTO identity:
+    // the text appears exactly once (before the fix this was "…gathering …
+    // gathering").
+    assert.equal(result.request.ult.verse, "coming in clouds and gathering");
+    assert.equal(result.request.ust.verse, "they will see and be gathered");
+  }
+});
+
+test("buildTnQuickRequest keeps the UST fallback selection on the leading verse of a bridged note (#388)", () => {
+  const row = makeRow({ verse: 26, ref_raw: "13:26-27", quote: "ἐρχόμενον" });
+  const result = buildTnQuickRequest(row, makeBridgedGreekPayload());
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    // ust.verse (the CONTEXT the AI reasons over) spans both verses…
+    assert.equal(
+      result.request.ust.verse,
+      "They will see me arriving I will send angels to gather my people",
+    );
+    // …but the UST alignment misses, so the SELECTION falls back — and that
+    // fallback must be the leading verse alone, not the whole joined range. The
+    // quote's occurrence is counted per verse against the leading verse (26), so
+    // widening the selection to verse 27's text is a scope error. Before the fix
+    // this was the full "…arriving I will send angels to gather my people".
+    assert.equal(result.request.ust.selection, "They will see me arriving");
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Copy contract (#346). A unit test can't render the components, but the defect
 // this fixes was purely "a call site forgot that the OL path needs its own
