@@ -1565,6 +1565,7 @@
     "hebrew": "Hebrew",
     "greek": "Greek",
     "laneNoText": "No {{label}} text exists for this verse in this workspace. That is normal in a translation-mode workspace whose target lanes have not been drafted yet.",
+    "laneClampHint": "Showing the first {{shown}} of {{total}} verses this reference covers — check the reference if that looks wrong.",
     "englishNote": "English note",
     "noSourceForNote": "The English source for this note isn't available — it may have been added here rather than translated from the published notes.",
     "noSourceRepo": "No English source repository is configured for notes, so there is nothing to compare against.",

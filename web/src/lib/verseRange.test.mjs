@@ -12,6 +12,8 @@ import {
   noteCoveredVerses,
   noteOverlapsRange,
   coveredLaneSlices,
+  clampCoveredForRender,
+  LANE_RENDER_CAP,
   noteRefLabel,
   verseBoundaryText,
   verseObjectsOf,
@@ -142,6 +144,41 @@ function mkVerse(verse, verseEnd, voCount = 1) {
   assert(cv(0, "1:intro") === "[0]", "intro ref → [0]");
   // Malformed huge range from free-text input is bounded (no runaway loop).
   assert(noteCoveredVerses({ verse: 1, ref_raw: "1:1-1000000000" }).length <= 402, "huge range is bounded");
+}
+
+// --- clampCoveredForRender (issue #385: a free-text ref typo must not flood a
+// card's lanes with the whole chapter; NOTE_SPAN_CAP bounds the hang, this
+// bounds the render) ---
+{
+  // A legitimate short bridge renders every verse — unclamped, referentially
+  // identical so the lane useMemos don't churn.
+  const short = noteCoveredVerses({ verse: 2, ref_raw: "1:2-3" });
+  const shortOut = clampCoveredForRender(short);
+  assert(!shortOut.clamped, "legitimate 1:2-3 is not clamped");
+  assert(JSON.stringify(shortOut.verses) === "[2,3]", "1:2-3 still renders both verses");
+  assert(shortOut.total === 2, "1:2-3 total is 2");
+  assert(shortOut.verses === short, "unclamped list is returned by reference");
+
+  // The success-check scenario: "1:1-200" retyped into the reference expands to
+  // 200 covered verses but paints at most LANE_RENDER_CAP into the lanes.
+  const flood = noteCoveredVerses({ verse: 1, ref_raw: "1:1-200" });
+  assert(flood.length === 200, `1:1-200 covers 200 verses (got ${flood.length})`);
+  const floodOut = clampCoveredForRender(flood);
+  assert(floodOut.clamped, "1:1-200 is clamped for render");
+  assert(floodOut.verses.length === LANE_RENDER_CAP, "clamps to LANE_RENDER_CAP verses");
+  assert(floodOut.total === 200, "clamp reports the full covered total (200)");
+  assert(floodOut.verses[0] === 1, "clamp keeps the leading verse first");
+
+  // Exactly at the cap → not clamped (boundary).
+  const exact = Array.from({ length: LANE_RENDER_CAP }, (_, i) => i + 1);
+  assert(!clampCoveredForRender(exact).clamped, "a list of exactly the cap is not clamped");
+  // One over → clamped.
+  assert(clampCoveredForRender([...exact, 99]).clamped, "cap+1 is clamped");
+  // Custom cap honored.
+  assert(
+    JSON.stringify(clampCoveredForRender([1, 2, 3, 4], 2).verses) === "[1,2]",
+    "explicit cap slices the head",
+  );
 }
 
 // --- noteOverlapsRange ---
