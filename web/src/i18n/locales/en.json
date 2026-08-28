@@ -198,7 +198,7 @@
     "twArticle": "translationWords article",
     "articleList": "Articles",
     "alignment": "Alignment",
-    "search": "Search"
+    "search": "Web Search (external)"
   },
   "panelBody": {
     "selectNote": "Select a translationNote to see its translationAcademy article.",
@@ -710,6 +710,8 @@
     "questions": "Questions",
     "alignment": "Alignment",
     "search": "Search",
+    "searchExternal": "Web Search (external)",
+    "searchExternalDisclosure": "This is a third-party tool, not your project — queries you type here leave the app.",
     "new": "new",
     "all": "all",
     "done": "done",
