@@ -40,6 +40,14 @@ export interface LayoutOverride {
   // stable subjects to describe. The full tree is the only representation that
   // can express an arrangement the spec never contained.
   tree?: LayoutNode;
+  // Classic's manual scripture/resources split ratio (fraction of width given to
+  // the scripture column, 0..1). Classic renders through WorkspaceLayout's
+  // hand-rolled flexbox branch via `effectiveSplit`, NOT through the `sizes`
+  // record the generic split tree uses — so its drag needs its own persisted
+  // field here (issue #373). Absent = the user has never dragged, so the shell
+  // falls back to its computed `autoSplit`. Only meaningful under
+  // `builtin:classic`; other layouts persist their divider drags in `sizes`.
+  scriptureSplit?: number;
 }
 
 const SCRIPTURE_MODES: readonly ScriptureMode[] = ["stacked", "columns", "book"];
@@ -118,6 +126,13 @@ function sanitizeOverride(x: unknown): LayoutOverride | null {
   if (x.tree !== undefined) {
     const tree = validateLayoutNode(x.tree);
     if (tree) out.tree = tree;
+  }
+  // `scriptureSplit` drops ONLY itself on a bad value (same forgiveness as
+  // `tree`): a corrupt split must not cost the user their sizes / hidden state.
+  // Clamp to a sane [0.1, 0.9] band — a hair wider than the drag's [0.2, 0.8]
+  // so a legitimate stored edge is never silently discarded.
+  if (typeof x.scriptureSplit === "number" && Number.isFinite(x.scriptureSplit)) {
+    out.scriptureSplit = Math.min(0.9, Math.max(0.1, x.scriptureSplit));
   }
   return out;
 }
@@ -251,6 +266,21 @@ export function setLayoutHidden(
   const store = loadLayoutStore();
   const existing = store.overrides[layoutId] ?? {};
   store.overrides[layoutId] = { ...existing, hidden };
+  saveLayoutStore(store);
+  return store;
+}
+
+// Set (or CLEAR, with `ratio: null`) Classic's manual scripture/resources split
+// ratio. A dedicated helper rather than `mergeOverride` because "reset to auto"
+// must DELETE the field (mergeOverride only ever adds), and because it is keyed
+// to `builtin:classic` alone — no other layout consults `effectiveSplit`.
+export function setClassicSplitRatio(layoutId: string, ratio: number | null): LayoutStore {
+  const store = loadLayoutStore();
+  const existing = store.overrides[layoutId] ?? {};
+  const next: LayoutOverride = { ...existing };
+  if (ratio === null) delete next.scriptureSplit;
+  else next.scriptureSplit = Math.min(0.9, Math.max(0.1, ratio));
+  store.overrides[layoutId] = next;
   saveLayoutStore(store);
   return store;
 }
