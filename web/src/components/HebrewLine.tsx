@@ -102,10 +102,14 @@ export function HebrewLine({ verseObjects, lexiconMap, highlights, prevHighlight
         // usfm-js also parks a childless `\qs Selah\qs*` (and an unclosed
         // `\qs Selah`) as {tag:"qs", text:"Selah"} with NO children — mirror
         // highlight.ts's wrapper branch and emit the wrapper's own text so
-        // Selah stays visible in those shapes (issue #364).
+        // Selah stays visible in those shapes (issue #364). Tag it `be-qs`
+        // exactly as highlight.ts's wrapper branch does (openSpan("be-qs")),
+        // so a childless `\qs Selah` reads as the italic/muted liturgical
+        // marker — not ordinary body text — under any container that pulls
+        // markHighlightSx (issue #370, unblocked by the #357 style in #391).
         if (isCharacterWrapper(o) && typeof o["text"] === "string" && o["text"] !== "") {
           items.push(
-            <span key={`t${items.length}`}>{String(o["text"])}</span>,
+            <span key={`t${items.length}`} className="be-qs">{String(o["text"])}</span>,
           );
         }
         walk((o["children"] as unknown[] | undefined) ?? []);
