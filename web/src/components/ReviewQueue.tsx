@@ -748,7 +748,8 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   }
 
   // Sequential per-row validate calls — there is no bulk-validate endpoint.
-  // Stops at the first failure and reports exactly how far it got.
+  // A per-row failure is skipped, not fatal: the batch runs to the end and a
+  // summary of what could not be approved is reported afterwards.
   async function handleApproveAll(kind: RowKindTQ) {
     if (!data || approveAllProgress) return;
     const source: QueueRow[] = kind === "tn" ? data.tn : data.tq;
@@ -762,6 +763,8 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     setApproveAllError(null);
     if (list.length === 0) return;
     setApproveAllProgress({ done: 0, total: list.length });
+    let approved = 0;
+    let firstFailure: { row: QueueRow; status: number | null } | null = null;
     for (let i = 0; i < list.length; i++) {
       const row = list[i];
       try {
@@ -770,28 +773,36 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
             ? await api.validateNote(row.id, book, true)
             : await api.validateQuestion(row.id, book, true);
         applyLocalRowReplacement(kind, updated);
-        setApproveAllProgress({ done: i + 1, total: list.length });
+        approved += 1;
       } catch (err) {
-        const st = err instanceof ApiError ? err.status : null;
-        const extra =
-          st === 404
-            ? t("flowReview.queue.approveAllExtraNoDraft")
-            : st === 409
-              ? t("flowReview.queue.approveAllExtraLocked")
-              : "";
-        setApproveAllError(
-          t("flowReview.queue.approveAllStopped", {
-            ref: refFor(book, row),
-            status: st ?? t("flowReview.common.errorWord"),
-            extra,
-            done: i,
-            total: list.length,
-          }),
-        );
-        break;
+        // Skip this row and keep going — one rejection (a raced trash, a chapter
+        // lock, a server guard 404) must never abort the rest of the batch (#238).
+        if (!firstFailure) {
+          firstFailure = { row, status: err instanceof ApiError ? err.status : null };
+        }
       }
+      setApproveAllProgress({ done: i + 1, total: list.length });
     }
     setApproveAllProgress(null);
+    if (firstFailure) {
+      const st = firstFailure.status;
+      const extra =
+        st === 404
+          ? t("flowReview.queue.approveAllExtraNoDraft")
+          : st === 409
+            ? t("flowReview.queue.approveAllExtraLocked")
+            : "";
+      setApproveAllError(
+        t("flowReview.queue.approveAllPartial", {
+          ref: refFor(book, firstFailure.row),
+          status: st ?? t("flowReview.common.errorWord"),
+          extra,
+          approved,
+          failed: list.length - approved,
+          total: list.length,
+        }),
+      );
+    }
   }
 
   async function handleAddRow(kind: RowKindTQ) {
