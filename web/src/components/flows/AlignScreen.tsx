@@ -90,6 +90,7 @@ import { isHebrewBook } from "../../lib/sourceSearch";
 import { versionIsRtl, versionLabel } from "../../lib/versionLabels";
 import { extractEditableText, extractPlainText, normalizeEditable } from "../../lib/usfm";
 import { smartEditVerse } from "../../lib/replace";
+import { collectSourceWordNodes } from "../../lib/quoteBuilder";
 import { SCRIPTURE_FONT_STACK } from "../../theme";
 
 export interface AlignScreenProps extends FlowScreenContext {
@@ -135,21 +136,13 @@ function buildSlice(
 }
 
 // Source word-token count of one row — used only to offset the side-by-side
-// panels into the shared strip's union span. Mirrors Shell's countSourceWords.
+// panels into the shared strip's union span. Mirrors Shell's countSourceWords;
+// both project off quoteBuilder's shared `collectSourceWordNodes` so the offset
+// counts exactly the words UhbStrip positions (#370 — the hand-rolled walk here
+// descended any milestone and no `\qs` wrapper).
 function countSourceWords(row: VerseDto | undefined): number {
   const verseObjects = (row?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
-  let n = 0;
-  const walk = (nodes: unknown[]) => {
-    for (const x of nodes ?? []) {
-      const o = x as Record<string, unknown> | null;
-      if (!o) continue;
-      if (o["type"] === "word" && o["tag"] === "w") n++;
-      else if (o["type"] === "milestone" || (o["type"] === "section" && o["tag"] === "d"))
-        walk((o["children"] as unknown[] | undefined) ?? []);
-    }
-  };
-  walk(verseObjects ?? []);
-  return n;
+  return collectSourceWordNodes(verseObjects ?? []).length;
 }
 
 interface PendingLoss {

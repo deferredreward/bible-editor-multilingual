@@ -60,7 +60,7 @@ import { buildVerseIndex, concatSourceRange, formatVerseLabel, noteCoveredVerses
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
 import { versionLabel } from "../lib/versionLabels";
 import { findSourceForTargetText, extractTargetSelectionText, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
-import { buildQuoteFromSelection, selectionFromQuote } from "../lib/quoteBuilder";
+import { buildQuoteFromSelection, collectSourceWordNodes, selectionFromQuote } from "../lib/quoteBuilder";
 import { resolveSpanToSource } from "../lib/twlResolve";
 import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
 import { nfc } from "../lib/hebrew";
@@ -145,28 +145,15 @@ function buildAlignerSlice(sourceData: ChapterPayload, verse: number, bibleVersi
 // Word-token count of one source verse row — text/punctuation nodes excluded,
 // matching the position enumeration in UhbStrip/buildSourceIndexMap. Used to
 // compute each dual panel's posOffset within the union span.
+//
+// Projected off quoteBuilder's shared `collectSourceWordNodes` so the descent
+// rule (zaln milestones, `\qs` character wrappers, `\d` superscriptions) is the
+// single one in usfm.ts. The hand-rolled walk this replaced descended ANY
+// milestone and no wrapper, so a `\qs`-wrapped word both mis-counted here and
+// mis-positioned in UhbStrip — the offset and the strip drifted apart (#370).
 function countSourceWords(row: VerseDto | undefined): number {
   const verseObjects = (row?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
-  let n = 0;
-  const walk = (nodes: unknown[]) => {
-    for (const x of nodes ?? []) {
-      const o = x as Record<string, unknown> | null;
-      if (!o) continue;
-      if (o["type"] === "word" && o["tag"] === "w") n++;
-      // \d (Psalm superscription) is `type:"section"` but its content IS
-      // alignable Hebrew verse body — descend it like a milestone, mirroring
-      // collectMilestoneRuns in highlight.ts. Half of a cross-PR \d fix; the
-      // other source-word walkers (highlight/quoteBuilder/alignment/
-      // AlignmentPanel/UhbStrip) gain the same descent so posOffsets stay aligned.
-      else if (
-        o["type"] === "milestone" ||
-        (o["type"] === "section" && o["tag"] === "d")
-      )
-        walk((o["children"] as unknown[] | undefined) ?? []);
-    }
-  };
-  walk(verseObjects ?? []);
-  return n;
+  return collectSourceWordNodes(verseObjects ?? []).length;
 }
 
 const SCRIPTURE_MODE_KEY = "be:scriptureMode";

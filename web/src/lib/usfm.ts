@@ -184,6 +184,29 @@ export function isZalnMilestone(node: unknown): node is Record<string, unknown> 
   return !!o && o["type"] === "milestone" && o["tag"] === "zaln";
 }
 
+// The ONE descent rule for source-word walks: a node whose CHILDREN are source
+// verse body and must therefore be walked through, rather than a token of its
+// own (issue #370 item 2). Three kinds qualify:
+//   - `\zaln` alignment milestones (isZalnMilestone — and ONLY those; a `\k`
+//     keyterm milestone's `\w` is not verse-body source, see that predicate),
+//   - `\qs`-style character wrappers (isCharacterWrapper — a Selah aligned as
+//     `zaln → qs → w`, or `qs → zaln → w`; issue #331/#354),
+//   - `\d` Psalm superscriptions, which usfm-js types as `section` but whose
+//     content IS alignable Hebrew verse body.
+// `collectSourceWordNodes` (quoteBuilder.ts) is built on this, and the walks
+// that cannot project off it — because they render as they go, or interleave
+// text nodes — gate their descent on this predicate instead, so every
+// position-bearing consumer (UhbStrip's `wordPos`, Shell/AlignScreen's
+// `posOffsets`, AlignmentPanel/AlignSourceModel's source index maps) enumerates
+// exactly the same words in exactly the same order. Before #370 each site
+// hand-rolled `type === "milestone"` and none descended `\qs`, so a wrapped word
+// silently shifted every position after it.
+export function isSourceWordContainer(node: unknown): boolean {
+  const o = node as Record<string, unknown> | null;
+  if (!o) return false;
+  return isZalnMilestone(o) || isCharacterWrapper(o) || (o["type"] === "section" && o["tag"] === "d");
+}
+
 // A character wrapper holds verse content that belongs to THIS verse and must
 // stay put — only true line markers lead the NEXT verse and may drift onto it.
 // Used by the trailing-marker drift pair so a verse-final `\qs Selah[\qs*]`

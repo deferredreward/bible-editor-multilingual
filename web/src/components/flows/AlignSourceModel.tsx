@@ -27,47 +27,38 @@ import {
 } from "../../lib/alignment";
 import { suggestKey, type StreamWord } from "../../lib/alignmentSuggest";
 import { nfc } from "../../lib/hebrew";
+import { collectSourceWordNodes } from "../../lib/quoteBuilder";
 import type { VerseDto } from "../../sync/api";
 
 /**
  * Walk-position index for the source (UHB/UGNT) verse: `t:<nfc text>|<occ>`
  * and `s:<strong>|<occ>` both map to the token's 0-based position.
+ *
+ * Projected off quoteBuilder's shared `collectSourceWordNodes` — the same walk
+ * AlignmentPanel's copy now uses, so the drag canvas and the tap view enumerate
+ * identical positions. The hand-rolled walk this replaced descended any
+ * milestone and no `\qs` character wrapper, so a wrapped source word drifted
+ * every position after it (#370).
  */
 export function buildSourceIndexMap(sourceVerse: VerseDto | null): Map<string, number> {
   const map = new Map<string, number>();
   if (!sourceVerse?.content) return map;
   const verseObjects = (sourceVerse.content as { verseObjects?: unknown[] }).verseObjects;
   if (!Array.isArray(verseObjects)) return map;
-  let idx = 0;
   const textCount = new Map<string, number>();
   const strongCount = new Map<string, number>();
-  const walk = (nodes: unknown[]) => {
-    for (const n of nodes ?? []) {
-      const o = n as Record<string, unknown> | null;
-      if (!o) continue;
-      if (o["type"] === "word" && o["tag"] === "w") {
-        const text = nfc(String(o["text"] ?? ""));
-        const strong = String(o["strong"] ?? "");
-        const tOcc = (textCount.get(text) ?? 0) + 1;
-        const sOcc = (strongCount.get(strong) ?? 0) + 1;
-        textCount.set(text, tOcc);
-        strongCount.set(strong, sOcc);
-        const textKey = `t:${text}|${tOcc}`;
-        const strongKey = `s:${strong}|${sOcc}`;
-        if (!map.has(textKey)) map.set(textKey, idx);
-        if (!map.has(strongKey)) map.set(strongKey, idx);
-        idx++;
-      } else if (
-        o["type"] === "milestone" ||
-        // \d (Psalm superscription) is type:"section" but its content IS
-        // alignable verse body — descend it, matching AlignmentPanel.
-        (o["type"] === "section" && o["tag"] === "d")
-      ) {
-        walk((o["children"] as unknown[] | undefined) ?? []);
-      }
-    }
-  };
-  walk(verseObjects);
+  for (const { node, position } of collectSourceWordNodes(verseObjects)) {
+    const text = nfc(String(node["text"] ?? ""));
+    const strong = String(node["strong"] ?? "");
+    const tOcc = (textCount.get(text) ?? 0) + 1;
+    const sOcc = (strongCount.get(strong) ?? 0) + 1;
+    textCount.set(text, tOcc);
+    strongCount.set(strong, sOcc);
+    const textKey = `t:${text}|${tOcc}`;
+    const strongKey = `s:${strong}|${sOcc}`;
+    if (!map.has(textKey)) map.set(textKey, position);
+    if (!map.has(strongKey)) map.set(strongKey, position);
+  }
   return map;
 }
 
@@ -167,18 +158,13 @@ export function collectStrongKeys(
   }
   const sourceObjects = (sourceVerse?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
   if (Array.isArray(sourceObjects)) {
-    const walk = (nodes: unknown[]) => {
-      for (const n of nodes ?? []) {
-        const o = n as Record<string, unknown> | null;
-        if (!o) continue;
-        if (o["type"] === "word" && o["tag"] === "w") {
-          add(String(o["strong"] ?? ""), o["morph"] as string | undefined);
-        } else if (o["type"] === "milestone") {
-          walk((o["children"] as unknown[] | undefined) ?? []);
-        }
-      }
-    };
-    walk(sourceObjects);
+    // Shared source-word walk (usfm.ts descent rule), matching AlignmentPanel's
+    // `allStrongs`. The any-milestone walk this replaced skipped `\qs`-wrapped
+    // words, so a wrapped Strong's reached neither the lexicon nor the suggest
+    // keys (#370).
+    for (const { node } of collectSourceWordNodes(sourceObjects)) {
+      add(String(node["strong"] ?? ""), node["morph"] as string | undefined);
+    }
   }
   return { strongs: [...strongs], keys: [...keys] };
 }
