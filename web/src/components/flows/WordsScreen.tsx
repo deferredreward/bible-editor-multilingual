@@ -45,6 +45,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import { FlowNav } from "./FlowNav";
 import { FlowActionBar } from "./FlowActionBar";
 import { LockBanner } from "./FlowBanners";
+import { FlowStatusChip } from "./FlowStatusChip";
 import { WordsLexiconStrip, collectSourceWords } from "./WordsLexiconStrip";
 import type { FlowScreenContext } from "./types";
 
@@ -79,6 +80,11 @@ export interface WordsScreenProps extends FlowScreenContext {
   book: string;
   chapter: number;
   verse: number;
+  // Optional deep-link word-link row id (#/words/{book}/{ch}/{vs}?row={id}) —
+  // the SyncStatusBar "N unsaved" jump menu sends it so the screen selects the
+  // exact row holding the draft, not just the verse's first link. Mirrors
+  // TranslateNotesScreen's/TranslateQuestionsScreen's `rowId` prop (#335).
+  rowId?: string;
 }
 
 // rc://*/tw/dict/bible/kt/god  <->  kt/god
@@ -126,7 +132,7 @@ function verseObjectsOf(dto: VerseDto | undefined | null): unknown[] | null {
 // needs neither: identity is not shown here, and verse navigation moves the
 // hash (#/words/…) so the user stays on this screen rather than jumping to the
 // editor. Both are left undestructured rather than accepted-and-ignored.
-export default function WordsScreen({ role, book, chapter, verse }: WordsScreenProps) {
+export default function WordsScreen({ role, book, chapter, verse, rowId }: WordsScreenProps) {
   const theme = useTheme();
   const { t } = useTranslation();
   const isDesktop = useMediaQuery(theme.breakpoints.up("md")); // >=900: list + detail side by side
@@ -219,6 +225,30 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
   const selectedIndex = selectedId ? links.findIndex((r) => r.id === selectedId) : -1;
   const selectedRow = selectedIndex >= 0 ? links[selectedIndex] : null;
 
+  // Select the exact deep-linked row (#/words/{book}/{ch}/{vs}?row={id}) once
+  // per book/chapter/verse/rowId combination — guarded by seedKeyRef so a
+  // later manual row click (which changes `selectedId` but not the URL) is
+  // never fought back to the deep-linked row by this effect re-running on an
+  // unrelated `links` refresh (a save, a peer edit). Gated on `data` actually
+  // covering this book/chapter so it doesn't consume the key against an
+  // empty `links` array still waiting on the fetch. Mirrors
+  // TranslateNotesScreen's/TranslateQuestionsScreen's rowId seek (#335).
+  const seedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!data || data.book !== book || data.chapter !== chapter) return;
+    const key = `${book}:${chapter}:${verse}:${rowId ?? ""}`;
+    if (seedKeyRef.current === key) return;
+    seedKeyRef.current = key;
+    if (rowId != null && links.some((r) => r.id === rowId)) {
+      setSelectedId(rowId);
+      // <900 only: the deep link means "show me this row", not "show me the
+      // list" — jump straight to the detail pane, same as tapping the row.
+      setMobilePane("detail");
+    }
+    // else: fall through to the fallback effect below, which selects the
+    // verse's first row — a stale/trashed row id just degrades to that.
+  }, [data, book, chapter, verse, rowId, links]);
+
   // Keep the selection valid: first row when nothing is selected, or when the
   // selected row disappeared (deleted here or by a peer).
   useEffect(() => {
@@ -230,6 +260,35 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
       setSelectedId(links[0].id);
     }
   }, [links, selectedId]);
+
+  // Word-link rows in THIS book holding persisted unsaved typing (IndexedDB
+  // drafts from this browser). Drives the list's "Unsaved" chip so a
+  // translator following the top bar's "N unsaved" jump can see exactly which
+  // link it meant. Mirrors TranslateNotesScreen's/TranslateQuestionsScreen's
+  // draftRowIds (#335).
+  const [draftRowIds, setDraftRowIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    // `active` fences the subscription's initial async snapshot: subscribe()
+    // fires from a listAll() promise that unsubscribe does NOT cancel, so on a
+    // book change the outgoing effect's late snapshot could otherwise mark
+    // colliding row ids (ids are only unique per book) Unsaved.
+    let active = true;
+    const unsub = drafts.subscribe((list) => {
+      if (!active) return;
+      const ids = new Set<string>();
+      for (const d of list) {
+        if (d.quarantined) continue;
+        if (d.meta.kind === "row" && d.meta.rowKind === "twl" && d.meta.book === book) {
+          ids.add(d.meta.id);
+        }
+      }
+      setDraftRowIds(ids);
+    });
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, [book]);
 
   // Hydrate the edit form from the row, then from any persisted draft (unsaved
   // typing from this browser) — same explicit-Save-only shape as ReviewQueue.
@@ -766,6 +825,7 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
     quote: row.orig_words ?? "",
     occurrence: row.occurrence ?? 1,
     article: twLinkToId(row.tw_link),
+    draft: draftRowIds.has(row.id),
   }));
 
   const listPane = (
@@ -818,7 +878,12 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
                   sx={{ cursor: "pointer" }}
                 >
                   <TableCell dir={sourceIsHebrew ? "rtl" : "ltr"} sx={scriptureSx}>
-                    {r.quote}
+                    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexWrap: "wrap" }}>
+                      <Box component="span">{r.quote}</Box>
+                      {r.draft && (
+                        <FlowStatusChip kind="edited" label={t("flowTranslate.status.unsaved")} />
+                      )}
+                    </Stack>
                   </TableCell>
                   <TableCell>{r.occurrence}</TableCell>
                   <TableCell sx={{ textAlign: "start" }}>{r.article || "—"}</TableCell>
@@ -866,12 +931,17 @@ export default function WordsScreen({ role, book, chapter, verse }: WordsScreenP
                 minHeight: 44,
               }}
             >
-              <Typography
-                dir={sourceIsHebrew ? "rtl" : "ltr"}
-                sx={{ ...scriptureSx, fontSize: "1.05rem" }}
-              >
-                {r.quote || "—"}
-              </Typography>
+              <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexWrap: "wrap" }}>
+                <Typography
+                  dir={sourceIsHebrew ? "rtl" : "ltr"}
+                  sx={{ ...scriptureSx, fontSize: "1.05rem" }}
+                >
+                  {r.quote || "—"}
+                </Typography>
+                {r.draft && (
+                  <FlowStatusChip kind="edited" label={t("flowTranslate.status.unsaved")} />
+                )}
+              </Stack>
               <Typography variant="caption" color="text.secondary" component="div">
                 {t("flowVerse.words.cardMeta", {
                   occurrence: r.occurrence,

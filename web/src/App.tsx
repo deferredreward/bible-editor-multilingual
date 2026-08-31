@@ -45,7 +45,7 @@ type Location =
   | { view: "scripture"; book: string; chapter: number; verse: number }
   | { view: "align"; book: string; chapter: number; verse: number }
   | { view: "flowArticles" }
-  | { view: "words"; book: string; chapter: number; verse: number }
+  | { view: "words"; book: string; chapter: number; verse: number; rowId?: string | null }
   | { view: "ai" }
   | { view: "style" }
   | { view: "curate"; templateId: string | null }
@@ -245,6 +245,23 @@ function parseHash(): Location {
   const wb = location.hash.match(/^#\/words\/([A-Za-z0-9]+)$/);
   if (wb) {
     return { view: "translateWords", book: wb[1].toUpperCase() };
+  }
+  // #/words/{book}/{ch}[/{vs}][?row={id}]: the old flows twl (word-links)
+  // screen's own route contract, claimed ahead of the fv catch-all below so
+  // the optional ?row= tail (the SyncStatusBar "N unsaved" jump menu) reaches
+  // it — mirrors the #/notes and #/questions forms above (#335).
+  const wl = location.hash.match(/^#\/words\/([A-Za-z0-9]+)\/(\d+)(?:\/(\d+))?(?:\?row=([^&]+))?$/);
+  if (wl) {
+    return {
+      view: "words",
+      book: wl[1].toUpperCase(),
+      chapter: parseInt(wl[2], 10),
+      verse: wl[3] ? parseInt(wl[3], 10) : 1,
+      // Guarded decode (see the #/notes case above): a mangled percent
+      // sequence must not throw out of parseHash and blank the app; a wrong
+      // id just degrades to the verse's first row.
+      rowId: wl[4] ? safeDecode(wl[4]) : null,
+    };
   }
   const ts = location.hash.match(/^#\/scripture\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?$/);
   if (ts) {
@@ -904,7 +921,7 @@ export function App() {
             ) : loc.view === "flowArticles" ? (
               <ArticlesScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "words" ? (
-              <WordsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
+              <WordsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} rowId={loc.rowId ?? undefined} />
             ) : loc.view === "ai" ? (
               <AiScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "style" ? (
