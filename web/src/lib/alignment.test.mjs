@@ -3705,6 +3705,105 @@ const srcWordContents = (st) => st.groups.flatMap((g) => g.source).map((s) => ({
   );
 }
 
+// ─── Issue #413: alignment.ts's private `collectSourceWords` was the ninth
+//     wrapper-blind source walk — `type === "milestone" || \d`, no `\qs`. It is
+//     the POSITION-BEARING one the aligner's compound checks read, so a
+//     `\qs`-wrapped source word was absent from `sourceWords` entirely and every
+//     word after it resolved one position early. It now gates on the shared
+//     `isSourceWordContainer` (usfm.ts) — the same predicate
+//     `collectSourceWordNodes` is built on, with the same `\w` test — so it
+//     enumerates exactly what every UI walk does.
+//
+//     The observable defect: a compound card chaining the words on either SIDE
+//     of a wrapped word is genuinely non-contiguous (positions 0 and 2), but the
+//     old walk read them as 0 and 1 and `detectDoubledSourceMilestones` reported
+//     nothing. Hebrew compares go through nfc() on both sides (resolveExactPosition
+//     folds x-content with nfc; collectSourceWords stores nfc textKey).
+{
+  console.log("\n[#413] collectSourceWords descends \\qs; the compound detector sees true positions");
+
+  // A compound card chaining source words 1 and 3, skipping the middle one.
+  const compoundTarget = String.raw`\id PSA
+\c 3
+\p
+\v 8 \zaln-s |x-strong="H0259" x-content="אֶחָד" x-occurrence="1" x-occurrences="1"\*\zaln-s |x-strong="H7965" x-content="שָׁלוֹם" x-occurrence="1" x-occurrences="1"\*\w one peace|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*\zaln-e\*
+`;
+  const tvo = parseSingleVerse(compoundTarget).verseObjects;
+
+  // Source with the MIDDLE word inside a `\qs` wrapper (production Selah shape).
+  const wrappedSource = String.raw`\id PSA
+\c 3
+\v 8 \w אֶחָד|x-strong="H0259" x-occurrence="1" x-occurrences="1"\w* \qs \w סֶלָה|x-strong="H5542" x-occurrence="1" x-occurrences="1"\w*\qs* \w שָׁלוֹם|x-strong="H7965" x-occurrence="1" x-occurrences="1"\w*
+`;
+  // The SAME three words with no wrapper — the control that proves unwrapped
+  // content is byte-identical either side of the fix.
+  const plainSource = String.raw`\id PSA
+\c 3
+\v 8 \w אֶחָד|x-strong="H0259" x-occurrence="1" x-occurrences="1"\w* \w סֶלָה|x-strong="H5542" x-occurrence="1" x-occurrences="1"\w* \w שָׁלוֹם|x-strong="H7965" x-occurrence="1" x-occurrences="1"\w*
+`;
+  const wrappedVO = parseSingleVerse(wrappedSource).verseObjects;
+  const plainVO = parseSingleVerse(plainSource).verseObjects;
+
+  // Premise: the middle word really is inside a top-level \qs in one fixture and
+  // a bare sibling in the other — otherwise the case tests nothing.
+  const qs = wrappedVO.find((o) => o && o.tag === "qs");
+  assert(!!qs, "premise: the wrapped source fixture has a top-level \\qs node");
+  assert(
+    !!qs && Array.isArray(qs.children) && qs.children.some((c) => c && c.tag === "w"),
+    "premise: the \\qs wrapper holds the middle \\w child",
+  );
+  assert(
+    plainVO.filter((o) => o && o.type === "word" && o.tag === "w").length === 3,
+    "premise: the control source has all three words at top level",
+  );
+
+  // Wrapped: positions 0 and 2 with the Selah between ⇒ noncontiguous. Before
+  // the fix the wrapped word was invisible, שָׁלוֹם resolved to 1, and the card
+  // read as contiguous 0,1 — NO issue was reported at all.
+  const wrappedIssues = detectDoubledSourceMilestones(tvo, wrappedVO);
+  assert(
+    wrappedIssues.length === 1,
+    `the compound spanning the wrapped word is flagged (got ${wrappedIssues.length} issue(s))`,
+  );
+  assert(
+    wrappedIssues[0] && wrappedIssues[0].reason === "noncontiguous",
+    `flagged as noncontiguous (got ${wrappedIssues[0] && wrappedIssues[0].reason})`,
+  );
+  assert(
+    !!wrappedIssues[0] && wrappedIssues[0].sources.map((s) => s.position).join(",") === "0,2",
+    `positions skip the wrapped word rather than closing over it (got ${wrappedIssues[0] && wrappedIssues[0].sources.map((s) => s.position).join(",")})`,
+  );
+
+  // Control: the same card against the same three words UNWRAPPED must produce
+  // an identical verdict — the fix changes nothing on wrapper-less content.
+  const plainIssues = detectDoubledSourceMilestones(tvo, plainVO);
+  assert(
+    JSON.stringify(plainIssues) === JSON.stringify(wrappedIssues),
+    "unwrapped control yields a byte-identical issue list — no behavior change off the wrapper path",
+  );
+
+  // A genuinely CONTIGUOUS compound (the wrapped word and its neighbour) is
+  // still clean, so the fix reports true positions rather than just more issues.
+  const contiguousTarget = String.raw`\id PSA
+\c 3
+\p
+\v 8 \zaln-s |x-strong="H5542" x-content="סֶלָה" x-occurrence="1" x-occurrences="1"\*\zaln-s |x-strong="H7965" x-content="שָׁלוֹם" x-occurrence="1" x-occurrences="1"\*\w Selah peace|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*\zaln-e\*
+`;
+  const contiguousVO = parseSingleVerse(contiguousTarget).verseObjects;
+  assert(
+    detectDoubledSourceMilestones(contiguousVO, wrappedVO).length === 0,
+    "a compound over the wrapped word and its neighbour resolves as contiguous — clean",
+  );
+
+  // reformGluedMilestones shares the same walk and returns the SAME array
+  // reference when nothing reforms: a wrapped source must not perturb the
+  // clean-verse round-trip.
+  assert(
+    reformGluedMilestones(tvo, wrappedVO) === tvo,
+    "reformGluedMilestones round-trips a clean target byte-identically against a wrapped source",
+  );
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);

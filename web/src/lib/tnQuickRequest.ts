@@ -32,6 +32,7 @@ import {
   findSourceForTargetText,
 } from "./highlight.ts";
 import { GREEK, HEBREW } from "./scriptDetect.ts";
+import { isCharacterWrapper, isSourceWordContainer } from "./usfm.ts";
 import { shortSupport } from "./supportReference.ts";
 import {
   buildVerseIndex,
@@ -62,6 +63,15 @@ export function isOriginalLanguageQuote(s: string): boolean {
   return hasHebrew(s) || hasGreek(s);
 }
 
+// Scripture text of one verse for the AI prompt. Descent goes through the ONE
+// source-word rule (`isSourceWordContainer`, usfm.ts) rather than a private
+// any-milestone test, so the text the bot is shown covers exactly the words
+// every other walk enumerates (#413). Two shapes were previously lost: a
+// `\qs`-wrapped word (`\qs → \zaln → \w`, the production Selah) whose wrapper was
+// never descended, and a CHILDLESS `\qs Selah\qs*`, which usfm-js parks as
+// `{tag:"qs", text:"Selah"}` with no children at all — mirror HebrewLine's and
+// highlight.ts's wrapper branch and emit the wrapper's own text there, or Selah
+// silently vanishes from the prompt.
 function extractPlainText(verseObjects: unknown[]): string {
   let out = "";
   function walk(nodes: unknown[]) {
@@ -73,9 +83,11 @@ function extractPlainText(verseObjects: unknown[]): string {
         out += String(o["text"] ?? "");
       } else if (type === "word") {
         out += String(o["text"] ?? "");
-      } else if (type === "milestone") {
-        const children = (o["children"] as unknown[] | undefined) ?? [];
-        walk(children);
+      } else if (isSourceWordContainer(o)) {
+        if (isCharacterWrapper(o) && typeof o["text"] === "string" && o["text"] !== "") {
+          out += String(o["text"]);
+        }
+        walk((o["children"] as unknown[] | undefined) ?? []);
       }
     }
   }

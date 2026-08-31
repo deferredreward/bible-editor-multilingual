@@ -697,3 +697,86 @@ test("the OL-failure strings name both scripts and give no English-only advice (
     );
   }
 });
+
+// ─── Issue #413: the prompt's plain-text walk descended `type === "milestone"`
+//     only, so two `\qs` shapes never reached the AI. A wrapped word
+//     (`\qs → \zaln → \w`, the production ULT Selah) was skipped because the
+//     wrapper is `type:"quote"`, not a milestone; and a CHILDLESS
+//     `\qs Selah\qs*`, which usfm-js parks as `{tag:"qs", text:"Selah"}` with no
+//     children, had nothing to descend into at all. Descent now gates on the
+//     shared `isSourceWordContainer` (usfm.ts) and the wrapper's own text is
+//     emitted, mirroring HebrewLine's and highlight.ts's wrapper branch.
+//
+//     `plain_text` is deliberately blank on these fixtures: `plainOf` returns the
+//     stored string when present, so only an empty one exercises extractPlainText.
+
+// A `\qs` character wrapper around already-aligned content (`qs → zaln → w`).
+const gqs = (children) => ({ type: "quote", tag: "qs", endTag: "qs*", children });
+// A childless / text-bearing `\qs Selah\qs*` — no children, text on the node.
+const gqsText = (text) => ({ type: "quote", tag: "qs", endTag: "qs*", text });
+
+test("prompt scripture keeps \\qs-wrapped and childless-\\qs text (#413)", () => {
+  const at = { book: "GEN", chapter: 1, verse: 1 };
+  const payload = {
+    book: "GEN",
+    chapter: 1,
+    verses: {
+      ULT: {
+        1: verseVO(
+          [
+            gms("רֵאשִׁית", ["In the beginning"]),
+            gt(" "),
+            gqs([gms("סֶלָה", ["Selah"])]),
+            gt(" "),
+            gqsText("Amen"),
+          ],
+          "", // blank ⇒ plainOf falls through to extractPlainText
+          at,
+        ),
+      },
+      UST: { 1: verse("In the beginning", at) },
+      UHB: { 1: verseVO([gw("רֵאשִׁית"), gt(" ")], "רֵאשִׁית", at) },
+    },
+    tn: [],
+    tq: [],
+    twl: [],
+    verseStatuses: [],
+    verseLaneChecks: [],
+  };
+  const result = buildTnQuickRequest(
+    makeRow({ book: "GEN", chapter: 1, verse: 1, quote: "רֵאשִׁית" }),
+    payload,
+  );
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    // Before the fix: "In the beginning" — both Selah and Amen were dropped.
+    assert.equal(result.request.ult.verse, "In the beginning Selah Amen");
+  }
+});
+
+test("prompt scripture is unchanged for wrapper-less verseObjects (#413 control)", () => {
+  const at = { book: "GEN", chapter: 1, verse: 1 };
+  const payload = {
+    book: "GEN",
+    chapter: 1,
+    verses: {
+      ULT: { 1: verseVO([gms("רֵאשִׁית", ["In the beginning"]), gt(" then it was")], "", at) },
+      UST: { 1: verse("In the beginning", at) },
+      UHB: { 1: verseVO([gw("רֵאשִׁית"), gt(" ")], "רֵאשִׁית", at) },
+    },
+    tn: [],
+    tq: [],
+    twl: [],
+    verseStatuses: [],
+    verseLaneChecks: [],
+  };
+  const result = buildTnQuickRequest(
+    makeRow({ book: "GEN", chapter: 1, verse: 1, quote: "רֵאשִׁית" }),
+    payload,
+  );
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    // Byte-identical to the pre-#413 walk: text + word + zaln descent, nothing else.
+    assert.equal(result.request.ult.verse, "In the beginning then it was");
+  }
+});
