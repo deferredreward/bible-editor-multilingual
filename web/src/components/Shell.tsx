@@ -27,7 +27,7 @@ import { useTwlFilters } from "../hooks/useTwlFilters";
 import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { useLayoutBand } from "../hooks/useLayoutBand";
 import { outbox } from "../sync/outbox";
-import { api, CHECK_LANES } from "../sync/api";
+import { api, ApiError, CHECK_LANES } from "../sync/api";
 import type { BookLintIssue, ChapterPayload, CheckLane, TnRow, TqRow, TwlRow, VerseDto, TwlSuggestion, LaneReplacementEvent } from "../sync/api";
 import { refreshProjectConfig, useProjectConfig, useWorkflowLayouts } from "../hooks/useProjectConfig";
 import {
@@ -58,6 +58,7 @@ import {
 } from "../lib/alignmentDelta";
 import { buildVerseIndex, concatSourceRange, formatVerseLabel, noteCoveredVerses } from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
+import { isApprovableRow } from "../lib/reviewApproval";
 import { versionLabel } from "../lib/versionLabels";
 import { findSourceForTargetText, extractTargetSelectionText, type HighlightKey, type ReorderHighlight } from "../lib/highlight";
 import { buildQuoteFromSelection, collectSourceWordNodes, selectionFromQuote } from "../lib/quoteBuilder";
@@ -151,6 +152,14 @@ function buildAlignerSlice(sourceData: ChapterPayload, verse: number, bibleVersi
 // single one in usfm.ts. The hand-rolled walk this replaced descended ANY
 // milestone and no wrapper, so a `\qs`-wrapped word both mis-counted here and
 // mis-positioned in UhbStrip — the offset and the strip drifted apart (#370).
+
+// Classic-editor twin of ReviewQueue.tsx's private refFor — used only by
+// handleApproveAllNotes/handleApproveAllQuestions to name the first failure
+// in the batch summary toast.
+function refForRow(book: string, row: { chapter: number; verse: number }): string {
+  return row.verse === 0 ? `${book} ${row.chapter} intro` : `${book} ${row.chapter}:${row.verse}`;
+}
+
 function countSourceWords(row: VerseDto | undefined): number {
   const verseObjects = (row?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
   return collectSourceWordNodes(verseObjects ?? []).length;
@@ -973,6 +982,89 @@ export function Shell({
     },
     [book, applyLocalRowReplacement, pushPipelineToast, t],
   );
+
+  // ── Translation mode: classic "Approve all" (tN + tQ) ──
+  // Mirrors ReviewQueue.tsx's handleApproveAll (#408): sequential per-row
+  // validate calls (not fire-and-forget) so a batch-fatal 401/403 stops the
+  // loop instead of firing dozens more doomed requests, plus an end-of-batch
+  // summary via the classic toast surface instead of an inline banner. Only
+  // rows isApprovableRow lets through are attempted — see its comment for why
+  // (#238: a pristine/trashed row 404s and halts the whole run).
+  const approveAllNotesInFlightRef = useRef(false);
+  const handleApproveAllNotes = useCallback(async () => {
+    if (!data || approveAllNotesInFlightRef.current) return;
+    const list = data.tn.filter(isApprovableRow);
+    if (list.length === 0) return;
+    approveAllNotesInFlightRef.current = true;
+    let approved = 0;
+    let firstFailure: { row: TnRow; status: number | null } | null = null;
+    for (const row of list) {
+      try {
+        const updated = await api.validateNote(row.id, book, true);
+        applyLocalRowReplacement("tn", updated);
+        approved += 1;
+      } catch (e) {
+        const status = e instanceof ApiError ? e.status : null;
+        if (!firstFailure) firstFailure = { row, status };
+        if (status === 401 || status === 403) break;
+      }
+    }
+    approveAllNotesInFlightRef.current = false;
+    if (firstFailure) {
+      const total = list.length;
+      const failed = total - approved;
+      const extra = firstFailure.status === 404 ? t("flowReview.queue.approveAllExtraNoDraft") : "";
+      pushPipelineToast(
+        t("flowReview.queue.approveAllPartial", {
+          ref: refForRow(book, firstFailure.row),
+          status: firstFailure.status ?? t("flowReview.common.errorWord"),
+          extra,
+          approved,
+          failed,
+          total,
+        }),
+        "error",
+      );
+    }
+  }, [data, book, applyLocalRowReplacement, pushPipelineToast, t]);
+
+  const approveAllQuestionsInFlightRef = useRef(false);
+  const handleApproveAllQuestions = useCallback(async () => {
+    if (!data || approveAllQuestionsInFlightRef.current) return;
+    const list = data.tq.filter(isApprovableRow);
+    if (list.length === 0) return;
+    approveAllQuestionsInFlightRef.current = true;
+    let approved = 0;
+    let firstFailure: { row: TqRow; status: number | null } | null = null;
+    for (const row of list) {
+      try {
+        const updated = await api.validateQuestion(row.id, book, true);
+        applyLocalRowReplacement("tq", updated);
+        approved += 1;
+      } catch (e) {
+        const status = e instanceof ApiError ? e.status : null;
+        if (!firstFailure) firstFailure = { row, status };
+        if (status === 401 || status === 403) break;
+      }
+    }
+    approveAllQuestionsInFlightRef.current = false;
+    if (firstFailure) {
+      const total = list.length;
+      const failed = total - approved;
+      const extra = firstFailure.status === 404 ? t("flowReview.queue.approveAllExtraNoDraft") : "";
+      pushPipelineToast(
+        t("flowReview.queue.approveAllPartial", {
+          ref: refForRow(book, firstFailure.row),
+          status: firstFailure.status ?? t("flowReview.common.errorWord"),
+          extra,
+          approved,
+          failed,
+          total,
+        }),
+        "error",
+      );
+    }
+  }, [data, book, applyLocalRowReplacement, pushPipelineToast, t]);
 
   const [translatingQuestionIds, setTranslatingQuestionIds] = useState<Set<string>>(() => new Set());
 
@@ -3283,9 +3375,11 @@ export function Shell({
     onSetNotePreserve: handleSetNotePreserve,
     onSetNoteHint: handleSetNoteHint,
     onNoteApprove: handleApproveNote,
+    onApproveAllNotes: handleApproveAllNotes,
     onNoteTranslate: handleTranslateNote,
     translatingNoteIds: translatingRowIds,
     onQuestionApprove: handleApproveQuestion,
+    onApproveAllQuestions: handleApproveAllQuestions,
     onQuestionTranslate: handleTranslateQuestion,
     translatingQuestionIds,
     quoteBuildActiveNoteId: quoteBuildTarget?.kind === "tn" ? quoteBuildTarget.id : null,

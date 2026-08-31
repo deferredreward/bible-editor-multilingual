@@ -2956,7 +2956,6 @@
       "approveNeedsDraft": "Approve needs an AI draft first — this row hasn't been through the AI pipeline yet.",
       "approveFailed": "Approve failed ({{status}}).",
       "approveAllExtraNoDraft": " That row has no AI draft to approve yet.",
-      "approveAllExtraLocked": " The chapter may be locked by an AI run.",
       "approveAllPartial": "Approved {{approved}} of {{total}}. {{failed}} could not be approved (first: {{ref}} — {{status}}).{{extra}}",
       "noteAdded": "New note added.",
       "questionAdded": "New question added.",

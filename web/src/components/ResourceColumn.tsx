@@ -10,6 +10,7 @@ import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
 import { resolveSourceRef } from "../lib/sourceRef";
 import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
+import { isApprovableRow } from "../lib/reviewApproval";
 import { NotesPanelBody } from "./NotesPanel";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useSourceNotes } from "../hooks/useSourceNotes";
@@ -142,12 +143,18 @@ interface Props {
   // draft (validate value 1/0) and single-note Translate. Absent in the English
   // root project.
   onNoteApprove?: (id: string, value: boolean) => void;
+  // Sequential batch approve for every approvable tN row in the chapter (see
+  // isApprovableRow), with end-of-batch failure reporting — see
+  // Shell.tsx's handleApproveAllNotes.
+  onApproveAllNotes?: () => Promise<void> | void;
   onNoteTranslate?: (id: string) => void;
   // Rows with an in-flight single-note / chapter translate run (spinner).
   translatingNoteIds?: Set<string>;
   // ── Translation mode, tQ analogues ── Approve/un-approve + single-question
   // Translate for translationQuestions. Absent in the English root project.
   onQuestionApprove?: (id: string, value: boolean) => void;
+  // tQ analogue of onApproveAllNotes.
+  onApproveAllQuestions?: () => Promise<void> | void;
   onQuestionTranslate?: (id: string) => void;
   translatingQuestionIds?: Set<string>;
   // Translate English in a note's quote field to source-language text using
@@ -289,9 +296,11 @@ export function ResourceColumn({
   onSetNotePreserve,
   onSetNoteHint,
   onNoteApprove,
+  onApproveAllNotes,
   onNoteTranslate,
   translatingNoteIds,
   onQuestionApprove,
+  onApproveAllQuestions,
   onQuestionTranslate,
   translatingQuestionIds,
   onNoteTranslateQuote,
@@ -351,7 +360,7 @@ export function ResourceColumn({
       if (r.trashed_at != null) continue;
       total++;
       if (r.translation_state === "validated") validated++;
-      else if (r.translation_state === "ai_draft" || r.translation_state === "edited") draftIds.push(r.id);
+      else if (isApprovableRow(r)) draftIds.push(r.id);
     }
     return { total, validated, draftIds };
   }, [tn, translationMode]);
@@ -388,7 +397,7 @@ export function ResourceColumn({
     for (const r of tq) {
       total++;
       if (r.translation_state === "validated") validated++;
-      else if (r.translation_state === "ai_draft" || r.translation_state === "edited") draftIds.push(r.id);
+      else if (isApprovableRow(r)) draftIds.push(r.id);
     }
     return { total, validated, draftIds };
   }, [tq, translationMode]);
@@ -838,6 +847,7 @@ export function ResourceColumn({
             tnStats={tnStats}
             termsCount={termsCount}
             onNoteApprove={onNoteApprove}
+            onApproveAllNotes={onApproveAllNotes}
             renderNoteCard={renderNoteCard}
           />
         )}
@@ -892,6 +902,7 @@ export function ResourceColumn({
             onQuestionSave={onQuestionSave}
             onQuestionDelete={onQuestionDelete}
             onQuestionApprove={onQuestionApprove}
+            onApproveAllQuestions={onApproveAllQuestions}
             onQuestionTranslate={onQuestionTranslate}
             translatingQuestionIds={translatingQuestionIds}
           />

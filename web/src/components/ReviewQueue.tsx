@@ -796,12 +796,10 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     setApproveAllProgress(null);
     if (firstFailure) {
       const st = firstFailure.status;
-      const extra =
-        st === 404
-          ? t("flowReview.queue.approveAllExtraNoDraft")
-          : st === 409
-            ? t("flowReview.queue.approveAllExtraLocked")
-            : "";
+      // The validate endpoints are lock-exempt (api/src/rows.ts:1186-1189), so
+      // a 409 here can only be workspace_mismatch, which reloads the page —
+      // there is no reachable "chapter locked by an AI run" case to hint at.
+      const extra = st === 404 ? t("flowReview.queue.approveAllExtraNoDraft") : "";
       setApproveAllError(
         t("flowReview.queue.approveAllPartial", {
           ref: refFor(book, firstFailure.row),

@@ -26,6 +26,7 @@ import { QuestionsPanelBody } from "./QuestionsPanel";
 import { NotesPanelBody } from "./NotesPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
 import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
+import { isApprovableRow } from "../lib/reviewApproval";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useSourceNotes } from "../hooks/useSourceNotes";
 import { useSourceQuestions } from "../hooks/useSourceQuestions";
@@ -78,9 +79,11 @@ export function StackedResourcePanel({
   onSetNotePreserve,
   onSetNoteHint,
   onNoteApprove,
+  onApproveAllNotes,
   onNoteTranslate,
   translatingNoteIds,
   onQuestionApprove,
+  onApproveAllQuestions,
   onQuestionTranslate,
   translatingQuestionIds,
   onNoteTranslateQuote,
@@ -116,7 +119,7 @@ export function StackedResourcePanel({
       if (r.trashed_at != null) continue;
       total++;
       if (r.translation_state === "validated") validated++;
-      else if (r.translation_state === "ai_draft" || r.translation_state === "edited") draftIds.push(r.id);
+      else if (isApprovableRow(r)) draftIds.push(r.id);
     }
     return { total, validated, draftIds };
   }, [tn, translationMode]);
@@ -147,7 +150,7 @@ export function StackedResourcePanel({
     for (const r of tq) {
       total++;
       if (r.translation_state === "validated") validated++;
-      else if (r.translation_state === "ai_draft" || r.translation_state === "edited") draftIds.push(r.id);
+      else if (isApprovableRow(r)) draftIds.push(r.id);
     }
     return { total, validated, draftIds };
   }, [tq, translationMode]);
@@ -268,6 +271,7 @@ export function StackedResourcePanel({
           tnStats={tnStats}
           termsCount={termsCount}
           onNoteApprove={onNoteApprove}
+          onApproveAllNotes={onApproveAllNotes}
           renderNoteCard={(r) => renderNoteCard(r)}
         />
       )}
@@ -320,6 +324,7 @@ export function StackedResourcePanel({
           onQuestionSave={onQuestionSave}
           onQuestionDelete={onQuestionDelete}
           onQuestionApprove={onQuestionApprove}
+          onApproveAllQuestions={onApproveAllQuestions}
           onQuestionTranslate={onQuestionTranslate}
           translatingQuestionIds={translatingQuestionIds}
         />

@@ -3212,7 +3212,6 @@
       "approveNeedsDraft": "يتطلب الاعتماد مسودة ذكاء اصطناعي أولًا — لم يمر هذا الصف بخط معالجة الذكاء الاصطناعي بعد.",
       "approveFailed": "فشل الاعتماد ({{status}}).",
       "approveAllExtraNoDraft": " لا توجد لهذا الصف مسودة ذكاء اصطناعي لاعتمادها بعد.",
-      "approveAllExtraLocked": " قد يكون الأصحاح محتجزًا بعملية ذكاء اصطناعي.",
       "approveAllPartial": "اعتُمد {{approved}} من {{total}}. تعذّر اعتماد {{failed}} (الأول: {{ref}} — {{status}}).{{extra}}",
       "noteAdded": "أُضيفت ملاحظة جديدة.",
       "questionAdded": "أُضيف سؤال جديد.",
