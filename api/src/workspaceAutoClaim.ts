@@ -27,7 +27,7 @@
 // there would create an import cycle.
 
 import type { Env } from "./index";
-import { claimWorkspace, explicitWorkspaces, listWorkspaces } from "./workspaces.ts";
+import { claimWorkspace, explicitWorkspaces, isClaimBlocked, listWorkspaces } from "./workspaces.ts";
 import { listUserTeams, roleFromTeams, teamRoleNames, type DcsTeam } from "./dcsTeams.ts";
 import { isIdent } from "./repoUrl.ts";
 
@@ -38,6 +38,7 @@ export type AutoClaimOutcome =
   | "teams_unknown" // DCS didn't answer the teams call — never read as "not an admin"
   | "not_admin" // candidate orgs exist, but they're not on any of their admin teams
   | "pool_exhausted" // admin of an unregistered org, but no claimable `available` slot
+  | "org_held" // a row that ISN'T a resolvable claimed slot already holds the org (#382)
   | "already_claimed" // the org already owned a slot (idempotent re-login / race loser)
   | "claimed" // a slot was claimed for the org
   | "error"; // unexpected failure — logged; login proceeds unchanged
@@ -148,6 +149,19 @@ export async function autoClaimWorkspaceForAdmin(
         // provisions another slot — see docs/workspace-pool.md.
         console.warn(`[autoClaim] pool exhausted; no slot available for org "${org}" (${opts.dcsUsername})`);
         return { outcome: "pool_exhausted", org, teams };
+      }
+      // A row that isn't a resolvable claimed slot already holds this org —
+      // `retired`/`failed`/`provisioning`, or a claimed row whose binding is no
+      // longer a live D1 here. claimWorkspace refuses rather than tripping
+      // UNIQUE(org) (issue #382, fixed on main in #396). Fail soft like every
+      // other outcome: the admin still signs in against the existing roster,
+      // and an operator resolves the held row (the manual claim route surfaces
+      // the same condition as a 409 `org_held`).
+      if (isClaimBlocked(result)) {
+        console.warn(
+          `[autoClaim] org "${org}" is held by a ${result.status} row; not claiming a slot (${opts.dcsUsername})`,
+        );
+        return { outcome: "org_held", org, teams };
       }
       console.log(
         `[autoClaim] ${result.alreadyClaimed ? "org already had" : "claimed"} workspace ` +

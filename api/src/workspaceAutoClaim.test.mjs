@@ -21,7 +21,13 @@ import { readFileSync } from "node:fs";
 import { Hono } from "hono";
 import { SignJWT, jwtVerify } from "jose";
 import { callbackDcsAuth } from "./auth.ts";
-import { primeWorkspaces, resolveWorkspace, workspaceEnv, parseWorkspaceCookie } from "./workspaces.ts";
+import {
+  primeWorkspaces,
+  resolveWorkspace,
+  workspaceEnv,
+  parseWorkspaceCookie,
+  listWorkspaces,
+} from "./workspaces.ts";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -520,6 +526,90 @@ console.log("[autoClaim] an admin of TWO un-onboarded orgs consumes only one slo
       claimed2.some((r) => r.org === "BetaOrg"),
       "the remaining un-onboarded org is the one claimed second",
     );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// ── 9. A retired/failed row already holding the org blocks the claim ────────
+//
+// Regression for the #382 collision, whose fix landed on main in #396 and
+// widened claimWorkspace's return type. The roster is `status = 'claimed'` rows
+// only (readRegistry), so a `retired`/`failed` row holding the org is INVISIBLE
+// to listWorkspaces — the org still looks un-onboarded and is a candidate. But
+// UNIQUE(org) COLLATE NOCASE (0068) spans every status, so claiming a spare
+// slot for it would trip the index. claimWorkspace returns ClaimBlocked instead
+// of throwing; auto-claim must recognize that shape, consume no slot, and let
+// the login proceed. Before this was handled, ClaimBlocked fell into the
+// success branch and threw a TypeError on `result.workspace` — caught by the
+// module's outer try/catch, so it merely LOOKED fine while logging "[autoClaim]
+// failed … TypeError". The suite strips types, so only this case guards it.
+
+for (const heldStatus of ["retired", "failed"]) {
+  console.log(`[autoClaim] an org held by a '${heldStatus}' row blocks the claim without consuming a slot`);
+  const realFetch = globalThis.fetch;
+  try {
+    const sharedSql = sharedDbSqlite();
+    const pool1Sql = poolDbSqlite();
+    registerPoolRows(sharedSql, "pool1");
+    // A previously-onboarded-then-retired slot still holding NewOrg. Its
+    // binding is deliberately not a live D1 here, matching a decommissioned
+    // slot; what matters is that the org is held under a non-claimed status.
+    sharedSql.exec(
+      `INSERT INTO workspaces (slug, label, org, binding, status) ` +
+        `VALUES ('old', 'NewOrg', 'NewOrg', 'DB_OLD', '${heldStatus}');`,
+    );
+    const baseEnv = makeEnv(sharedSql, { DB_POOL1: pool1Sql });
+
+    await primeWorkspaces(baseEnv);
+    assert(
+      !listWorkspaces(baseEnv).some((w) => w.org.toLowerCase() === "neworg"),
+      `precondition: the '${heldStatus}' row is not in the roster, so the org still looks un-onboarded`,
+    );
+
+    // Case-variant on purpose: the UNIQUE index is COLLATE NOCASE, so "neworg"
+    // must collide with the stored "NewOrg" exactly as a same-case claim would.
+    globalThis.fetch = stubDcs({
+      id: 14,
+      login: "grace",
+      orgs: [{ username: "neworg" }],
+      teams: [team("neworg", "BE-Admins")],
+    });
+
+    // The registry assertions below hold on the BROKEN path too: an unhandled
+    // ClaimBlocked threw a TypeError that the module's own try/catch swallowed,
+    // so nothing was written either way. The warn log is what actually
+    // separates "recognized and refused" from "blew up and got caught", so
+    // capture it — this is the assertion that fails if the branch is removed.
+    const warnings = [];
+    const realWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    let res;
+    try {
+      ({ res } = await signIn(baseEnv, `state-grace-${heldStatus}`));
+    } finally {
+      console.warn = realWarn;
+    }
+
+    assert(res.status === 302, `login still completes (302), got ${res.status}`);
+    assert(
+      warnings.some((w) => w.includes(`is held by a ${heldStatus} row`)),
+      `the blocked claim is recognized and logged, got ${JSON.stringify(warnings)}`,
+    );
+    assert(
+      !warnings.some((w) => w.includes("[autoClaim] failed")),
+      `ClaimBlocked is handled, not thrown into the catch-all, got ${JSON.stringify(warnings)}`,
+    );
+    assert(
+      rows(sharedSql, "SELECT slug FROM workspaces WHERE status = 'available'").length === 1,
+      "the spare slot was NOT consumed for an org another row already holds",
+    );
+    assert(
+      rows(sharedSql, "SELECT slug FROM workspaces WHERE status = 'claimed'").length === 1,
+      "no new claimed row was written (only the pre-existing 'uw' remains)",
+    );
+    const held = sharedSql.prepare("SELECT status FROM workspaces WHERE slug = 'old'").get();
+    assert(held.status === heldStatus, `the held row was never silently reused, still '${held.status}'`);
   } finally {
     globalThis.fetch = realFetch;
   }

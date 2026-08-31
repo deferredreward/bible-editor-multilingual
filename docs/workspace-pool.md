@@ -69,7 +69,7 @@ admin team (`BE-Admins`, or `DCS_TEAM_ADMIN`): being an org **Owner** in Door43
 is not enough, and editors never claim — onboarding an org is an administrative
 act.
 
-**Two preconditions, both deliberate:**
+**Three preconditions, all deliberate:**
 
 1. `WORKSPACE_AUTOCLAIM = "true"` on the deployment. **Off by default.**
    git.door43.org is a public Gitea: anyone can create an org, create a team
@@ -87,6 +87,17 @@ act.
    the existing workspace explicit first — set `WORKSPACES` to a single entry
    describing it and deploy; `primeWorkspaces` persists it as a `claimed` row on
    first boot — and then adding a row is an addition, not a replacement.
+3. **#381 must be resolved first. Do not enable `WORKSPACE_AUTOCLAIM` until it
+   is.** An auto-claimed row carries no `export_owner`, and an org with no
+   preset falls through `presetForOrg` → `DEFAULT_PRESET` (`en-unfoldingword`)
+   → `exportOwnerFor` → the deployment's own `DCS_EXPORT_OWNER`. The nightly
+   export would then render that org's D1 into the **deployment's own** DCS
+   repos under the English root's repo names, using `DCS_SERVICE_TOKEN` — the
+   same class of data loss as the closed #237, reached with no operator in the
+   loop. Turning the flag on is what makes it reachable without one, so the
+   destination question has to be settled before the switch flips, not after.
+   #381 holds the options and is the owner's call; this doc is not the place
+   that decides it.
 
 - At most **one** slot per login. An admin of two un-onboarded orgs onboards the
   second on their next sign-in.
@@ -105,8 +116,17 @@ act.
   cookie for another workspace still wins resolution). The org is onboarded and
   they can switch to it; the slot is spent either way.
 - The claimed row gets no `export_owner`, so the workspace inherits the
-  deployment's `DCS_EXPORT_OWNER` for the nightly export. Set one on the row
-  before that matters — see #381.
+  deployment's `DCS_EXPORT_OWNER` for the nightly export — see precondition 3
+  above, which is why this is a blocker for enabling the flag rather than a
+  footnote. Until #381 lands, an operator must set `export_owner` on every
+  claimed row by hand.
+- An org already held by a **non-claimed** row (`retired` / `failed` /
+  `provisioning`, or a `claimed` row whose binding is no longer a live D1 here)
+  is refused rather than given a spare slot: the `UNIQUE(org)` index from `0068`
+  spans every status, so claiming would collide (#382). Logged as
+  `[autoClaim] org "X" is held by a <status> row`; the held row is never
+  silently reused. An operator retires the stale row properly, or claims for the
+  org through the endpoint below.
 
 Code: `api/src/workspaceAutoClaim.ts`, called from `callbackDcsAuth` in
 `api/src/auth.ts`. Tests: `api/src/workspaceAutoClaim.test.mjs`.
