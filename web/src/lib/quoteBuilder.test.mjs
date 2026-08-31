@@ -21,7 +21,8 @@ import {
   collectSourceWordNodes,
 } from "./quoteBuilder.ts";
 import { matchSourceTokens } from "./highlight.ts";
-import { isCharacterWrapper } from "./usfm.ts";
+import { isCharacterWrapper, isSourceWordContainer } from "./usfm.ts";
+import { nfc } from "./hebrew.ts";
 
 let failed = 0;
 function assert(cond, msg) {
@@ -284,6 +285,119 @@ function verseObjectsOf(rawUsfm, ch, v) {
     "picker offers no chip for the \\k-wrapped word",
   );
   assert(matchSourceTokens(svo, "two", 1).length === 0, "matcher highlights nothing for the \\k-wrapped word");
+}
+
+// ─── Case G (issue #370 item 2): every position-bearing SOURCE walk in the
+//     aligner now enumerates words through the ONE descent rule. Eight sites used
+//     to hand-roll `type === "milestone"` and none descended `\qs`, so a wrapped
+//     source word both vanished from their counts and shifted every position
+//     after it: Shell/AlignScreen/TranslateAlignScreen `countSourceWords` (the
+//     side-by-side posOffsets), AlignmentPanel/AlignSourceModel
+//     `buildSourceIndexMap` + `allStrongs`, and UhbStrip's `wordPos`.
+//
+//     Six of those now call `collectSourceWordNodes` outright, so this case
+//     covers them directly (count + position + Strong's). UhbStrip renders as it
+//     walks — it interleaves text nodes, so it can't project off the collector
+//     and instead gates on the shared `isSourceWordContainer` predicate. React
+//     can't be mounted in the node runner, so the walk is REBUILT here in the
+//     component's exact shape and asserted word-for-word against the collector:
+//     that parity is the guarantee the strip's `pos` and the panel's index map
+//     line up. Hebrew comparisons go through nfc() — a `\qs`-wrapped UHB word
+//     carries legacy combining-mark order while the fixture literal is NFC.
+{
+  console.log("\n[Case G] every source walk shares one descent rule; \\qs-wrapped word keeps its position (#370 item 2)");
+  // The production ULT/UHB Selah shape with the wrapper OUTSIDE the milestone
+  // (`\qs → \zaln → \w`, alignment.test.mjs Case 1), placed MID-verse so a
+  // skipped wrapper would misplace the word after it.
+  const source = String.raw`\id PSA
+\c 3
+\p
+\v 8 \zaln-s |x-strong="H0259" x-content="אֶחָד"\*\w אֶחָד|x-strong="H0259" x-occurrence="1" x-occurrences="1"\w*\zaln-e\* \qs \zaln-s |x-strong="H5542" x-content="סֶלָה"\*\w סֶלָה|x-strong="H5542" x-occurrence="1" x-occurrences="1"\w*\zaln-e\*\qs* \zaln-s |x-strong="H7965" x-content="שָׁלוֹם"\*\w שָׁלוֹם|x-strong="H7965" x-occurrence="1" x-occurrences="1"\w*\zaln-e\*
+`;
+  const svo = verseObjectsOf(source, "3", "8");
+
+  // Premise guards — the wrapper must sit at top level with the \zaln INSIDE it,
+  // or the case silently tests a shape the components never see.
+  const qs = svo.find((o) => o && o.tag === "qs");
+  assert(!!qs && isCharacterWrapper(qs), "premise: a top-level \\qs character wrapper exists");
+  assert(
+    !!qs && Array.isArray(qs.children) && qs.children.some((c) => c && c.tag === "zaln"),
+    "premise: the \\zaln milestone sits INSIDE the \\qs wrapper (production Selah shape)",
+  );
+  assert(isSourceWordContainer(qs), "premise: the shared predicate treats the \\qs wrapper as a container to descend");
+
+  const nodes = collectSourceWordNodes(svo);
+  const want = ["אֶחָד", "סֶלָה", "שָׁלוֹם"].map(nfc);
+
+  // countSourceWords (Shell posOffsets, AlignScreen, TranslateAlignScreen) is
+  // now exactly this length. The old walks returned 2 — the panel offset was one
+  // short and every downstream position slid.
+  assert(nodes.length === 3, `countSourceWords counts the wrapped word (got ${nodes.length}, was 2 before the fix)`);
+  assert(
+    nodes.map((n) => nfc(String(n.node.text ?? ""))).join("|") === want.join("|"),
+    "words enumerate in document order across the wrapper",
+  );
+  assert(
+    nodes.map((n) => n.position).join(",") === "0,1,2",
+    `positions are contiguous 0..2 — the word AFTER the wrapper does not drift (got ${nodes.map((n) => n.position).join(",")})`,
+  );
+
+  // buildSourceIndexMap (AlignmentPanel + AlignSourceModel) keys `t:<nfc>|<occ>`
+  // off these same nodes, so the wrapped word resolves and the following word
+  // keeps position 2 rather than collapsing onto 1.
+  const indexMap = new Map();
+  const textCount = new Map();
+  for (const { node, position } of nodes) {
+    const text = nfc(String(node.text ?? ""));
+    const tOcc = (textCount.get(text) ?? 0) + 1;
+    textCount.set(text, tOcc);
+    if (!indexMap.has(`t:${text}|${tOcc}`)) indexMap.set(`t:${text}|${tOcc}`, position);
+  }
+  assert(indexMap.get(`t:${nfc("סֶלָה")}|1`) === 1, "index map resolves the \\qs-wrapped word at position 1");
+  assert(indexMap.get(`t:${nfc("שָׁלוֹם")}|1`) === 2, "index map keeps the word after the wrapper at position 2");
+
+  // allStrongs (AlignmentPanel + AlignSourceModel): the wrapped word's Strong's
+  // must reach the lexicon prefetch / suggest keys.
+  const strongs = nodes.map((n) => String(n.node.strong ?? ""));
+  assert(strongs.includes("H5542"), `the \\qs-wrapped word's Strong's is collected (got ${strongs.join(",")})`);
+
+  // UhbStrip's wordPos walk, rebuilt in the component's exact shape: text nodes
+  // are emitted (not counted), \w tokens take the next position, and descent is
+  // gated on the SHARED predicate. It must agree with the collector word-for-word.
+  const stripWords = [];
+  let wordPos = 0;
+  const stripWalk = (ns) => {
+    for (const o of ns ?? []) {
+      if (!o) continue;
+      if (o.type === "text") continue; // rendered, never counted
+      else if (o.type === "word" && o.tag === "w") stripWords.push({ text: nfc(String(o.text ?? "")), pos: wordPos++ });
+      else if (isSourceWordContainer(o)) stripWalk(o.children ?? []);
+    }
+  };
+  stripWalk(svo);
+  assert(
+    stripWords.map((w) => `${w.text}@${w.pos}`).join("|") ===
+      nodes.map((n) => `${nfc(String(n.node.text ?? ""))}@${n.position}`).join("|"),
+    "UhbStrip's predicate-gated render walk matches the shared collector word-for-word and position-for-position",
+  );
+
+  // The rule really is ONE rule: a `\k` keyterm milestone stays undescended by
+  // the predicate too, so the strip walk can't reintroduce Case F's drift.
+  const keyterm = verseObjectsOf(
+    String.raw`\id PSA
+\c 1
+\v 1 \w one|x-occurrence="1" x-occurrences="1"\w* \k-s |x-content="two"\*\w two|x-occurrence="1" x-occurrences="1"\w*\k-e\* \w three|x-occurrence="1" x-occurrences="1"\w*
+`,
+    "1",
+    "1",
+  );
+  const kNode = keyterm.find((o) => o && o.type === "milestone" && o.tag === "k");
+  assert(!!kNode, "premise: a \\k keyterm milestone exists");
+  assert(!isSourceWordContainer(kNode), "the shared predicate does NOT descend a \\k keyterm milestone");
+  assert(
+    isSourceWordContainer(keyterm.find((o) => o && o.type === "milestone" && o.tag === "zaln") ?? { type: "milestone", tag: "zaln" }),
+    "the shared predicate DOES descend a \\zaln alignment milestone",
+  );
 }
 
 if (failed > 0) {

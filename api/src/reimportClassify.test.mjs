@@ -156,6 +156,54 @@ eq(
   "pristine tombstone → NOT reimportable (resurrection handled elsewhere)",
 );
 
+// ── admin_bulk_state: a bulk-approved row is NOT pristine (issue #394) ───────
+// The admin bulk review-state sweep (#296) and the Aquifer bulk approve (#393)
+// set translation_state but deliberately NOT updated_by, so without this test a
+// bulk-approved row still read as pristine and the nightly reimport rewrote its
+// CONTENT from master while the 'validated' label (and the now-stale
+// pre_draft_json) stayed put — the label describing content nobody approved.
+eq(
+  isReimportableRow({ updated_by: null, latestSource: null, deleted_at: null, admin_bulk_state: "none", kind: "tn" }),
+  false,
+  "bulk-approved never-drafted tn (stamp 'none', updated_by still null) → NOT reimportable",
+);
+eq(
+  isReimportableRow({
+    updated_by: null,
+    latestSource: null,
+    deleted_at: null,
+    admin_bulk_state: "ai_draft",
+    kind: "tq",
+  }),
+  false,
+  "bulk-swept tq (stamp records the displaced 'ai_draft' state) → NOT reimportable",
+);
+// The stamp outranks even the AI-only allowance: an admin made a deliberate
+// statement about this row, so master no longer gets to re-seed it.
+eq(
+  isReimportableRow({
+    updated_by: 7,
+    latestSource: AI_SOURCE,
+    deleted_at: null,
+    admin_bulk_state: "ai_draft",
+    kind: "tn",
+  }),
+  false,
+  "stamped AI-only tn → NOT reimportable (the bulk statement wins over the AI-only re-seed)",
+);
+// An unstamped row is unaffected — the guard must not quietly freeze the whole
+// reimport. Both the explicit-null and the field-absent shapes stay pristine.
+eq(
+  isReimportableRow({ updated_by: null, latestSource: null, deleted_at: null, admin_bulk_state: null, kind: "tn" }),
+  true,
+  "unstamped pristine tn (admin_bulk_state null) → still reimportable",
+);
+eq(
+  isReimportableRow({ updated_by: null, latestSource: null, deleted_at: null, kind: "twl" }),
+  true,
+  "twl (no admin_bulk_state column, field absent) → still reimportable",
+);
+
 // ── isReissuedTombstone (issue #427, option 2) ────────────────────────────────
 // A soft-deleted row keeps its (book, id) primary key forever, so master's row
 // bearing that id cannot land via the normal INSERT path. Which of the two

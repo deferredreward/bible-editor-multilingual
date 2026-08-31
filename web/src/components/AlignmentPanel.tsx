@@ -61,6 +61,7 @@ import {
   type StreamWord,
 } from "../lib/alignmentSuggest";
 import { nfc } from "../lib/hebrew";
+import { collectSourceWordNodes } from "../lib/quoteBuilder";
 import { SourceTooltipBody } from "./SourceTooltipBody";
 import { UhbStrip, buildTwHintMap, twHintFromMap } from "./UhbStrip";
 import {
@@ -776,18 +777,13 @@ export const AlignmentPanel = forwardRef<AlignmentPanelHandle, Props>(
       const sourceObjects = (sourceVerse?.content as { verseObjects?: unknown[] } | null)
         ?.verseObjects;
       if (Array.isArray(sourceObjects)) {
-        const walk = (nodes: unknown[]) => {
-          for (const n of nodes ?? []) {
-            const o = n as Record<string, unknown> | null;
-            if (!o) continue;
-            if (o["type"] === "word" && o["tag"] === "w") {
-              add(String(o["strong"] ?? ""), o["morph"] as string | undefined);
-            } else if (o["type"] === "milestone") {
-              walk((o["children"] as unknown[] | undefined) ?? []);
-            }
-          }
-        };
-        walk(sourceObjects);
+        // Shared source-word walk (usfm.ts descent rule) — the hand-rolled
+        // any-milestone walk this replaced missed every `\qs`-wrapped word, so a
+        // wrapped Strong's never reached the lexicon prefetch or /align/suggest
+        // (#370).
+        for (const { node } of collectSourceWordNodes(sourceObjects)) {
+          add(String(node["strong"] ?? ""), node["morph"] as string | undefined);
+        }
       }
       return { strongs: [...strongs], keys: [...keys] };
     }, [state, sourceVerse]);
@@ -2359,42 +2355,30 @@ function groupPositionKey(g: AlignmentGroup, indexMap: Map<string, number>): str
   return positions.some((p) => p < 0) ? null : positions.join(".");
 }
 
+// Projected off quoteBuilder's shared `collectSourceWordNodes` so the positions
+// this map hands out are the SAME enumeration UhbStrip's SourceVerseTokens
+// renders with (both now route their descent through usfm.ts's one rule). The
+// hand-rolled walk it replaced descended any milestone and no `\qs` character
+// wrapper, so a wrapped source word shifted the map one position out of step
+// with the strip and hover/highlight lit the neighbouring word (#370).
 function buildSourceIndexMap(sourceVerse: VerseDto | null): Map<string, number> {
   const map = new Map<string, number>();
   if (!sourceVerse?.content) return map;
   const verseObjects = (sourceVerse.content as { verseObjects?: unknown[] }).verseObjects;
   if (!Array.isArray(verseObjects)) return map;
-  let idx = 0;
   const textCount = new Map<string, number>();
   const strongCount = new Map<string, number>();
-  const walk = (nodes: unknown[]) => {
-    for (const n of nodes ?? []) {
-      const o = n as Record<string, unknown> | null;
-      if (!o) continue;
-      if (o["type"] === "word" && o["tag"] === "w") {
-        const text = nfc(String(o["text"] ?? ""));
-        const strong = String(o["strong"] ?? "");
-        const tOcc = (textCount.get(text) ?? 0) + 1;
-        const sOcc = (strongCount.get(strong) ?? 0) + 1;
-        textCount.set(text, tOcc);
-        strongCount.set(strong, sOcc);
-        const textKey = `t:${text}|${tOcc}`;
-        const strongKey = `s:${strong}|${sOcc}`;
-        if (!map.has(textKey)) map.set(textKey, idx);
-        if (!map.has(strongKey)) map.set(strongKey, idx);
-        idx++;
-      } else if (
-        o["type"] === "milestone" ||
-        // \d (Psalm superscription) is type:"section" but its content IS
-        // alignable verse body — descend so its \w tokens get walk positions
-        // matching SourceVerseTokens / collectSourceWords. Mirrors
-        // collectMilestoneRuns in highlight.ts.
-        (o["type"] === "section" && o["tag"] === "d")
-      ) {
-        walk((o["children"] as unknown[] | undefined) ?? []);
-      }
-    }
-  };
-  walk(verseObjects);
+  for (const { node, position } of collectSourceWordNodes(verseObjects)) {
+    const text = nfc(String(node["text"] ?? ""));
+    const strong = String(node["strong"] ?? "");
+    const tOcc = (textCount.get(text) ?? 0) + 1;
+    const sOcc = (strongCount.get(strong) ?? 0) + 1;
+    textCount.set(text, tOcc);
+    strongCount.set(strong, sOcc);
+    const textKey = `t:${text}|${tOcc}`;
+    const strongKey = `s:${strong}|${sOcc}`;
+    if (!map.has(textKey)) map.set(textKey, position);
+    if (!map.has(strongKey)) map.set(strongKey, position);
+  }
   return map;
 }

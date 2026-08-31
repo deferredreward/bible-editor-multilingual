@@ -14,6 +14,7 @@ import Box from "@mui/material/Box";
 import Popover from "@mui/material/Popover";
 import Typography from "@mui/material/Typography";
 import { SCRIPTURE_FONT_STACK } from "../../theme";
+import { collectSourceWordNodes } from "../../lib/quoteBuilder";
 import type { LexiconEntry } from "../../hooks/useLexicon";
 
 // Repo-relative path, not prose — kept out of the locale files so a translation
@@ -29,30 +30,22 @@ export interface SourceWord {
   position: number;
 }
 
-// Flatten a UHB/UGNT verse's verseObjects to its \w tokens. Walks children so a
-// verse wrapped in a milestone (or a \d section, as Psalm superscriptions are)
-// still yields its words — same shape QuoteBuilderPopper's collectUhbWords uses.
+// Flatten a UHB/UGNT verse's verseObjects to its \w tokens, projected off
+// quoteBuilder's shared `collectSourceWordNodes` so this strip's chips and their
+// `position` mean exactly what they mean to the picker, the aligner's index maps
+// and the highlight matcher (#413). The private walk this replaced descended ANY
+// node carrying `children` — broader than the shared rule at one end (it would
+// have walked a `\k` keyterm milestone or a footnote's contents into the chip
+// list) and its word test accepted any `type:"word"` regardless of tag, so the
+// two rules could disagree in both directions.
 export function collectSourceWords(verseObjects: unknown[] | null | undefined): SourceWord[] {
   if (!Array.isArray(verseObjects)) return [];
-  const out: SourceWord[] = [];
-  function walk(nodes: unknown[]) {
-    for (const node of nodes ?? []) {
-      const o = node as Record<string, unknown> | null;
-      if (!o) continue;
-      if (o["type"] === "word" && o["text"]) {
-        out.push({
-          text: String(o["text"]),
-          strong: String(o["strong"] ?? ""),
-          occurrence: parseInt(String(o["occurrence"] ?? "1"), 10) || 1,
-          position: out.length,
-        });
-      } else if (Array.isArray(o["children"])) {
-        walk(o["children"] as unknown[]);
-      }
-    }
-  }
-  walk(verseObjects);
-  return out;
+  return collectSourceWordNodes(verseObjects).map(({ node, position }) => ({
+    text: String(node["text"] ?? ""),
+    strong: String(node["strong"] ?? ""),
+    occurrence: parseInt(String(node["occurrence"] ?? "1"), 10) || 1,
+    position,
+  }));
 }
 
 export interface WordsLexiconStripProps {

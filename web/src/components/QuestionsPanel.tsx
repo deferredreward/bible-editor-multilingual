@@ -13,7 +13,7 @@
 // `activeResourceTab === "questions"` block so the classic tab stays
 // byte-identical.
 
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Box, Stack, Typography, Chip, Button, LinearProgress } from "@mui/material";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
@@ -44,6 +44,8 @@ export interface QuestionsPanelBodyProps {
   onQuestionSave: (id: string, patch: Partial<TqRow>) => void;
   onQuestionDelete: (id: string) => void;
   onQuestionApprove?: (id: string, value: boolean) => void;
+  // Sequential batch approve — see Shell.tsx's handleApproveAllQuestions.
+  onApproveAllQuestions?: () => Promise<void> | void;
   onQuestionTranslate?: (id: string) => void;
   translatingQuestionIds?: Set<string>;
 }
@@ -64,10 +66,14 @@ export function QuestionsPanelBody({
   onQuestionSave,
   onQuestionDelete,
   onQuestionApprove,
+  onApproveAllQuestions,
   onQuestionTranslate,
   translatingQuestionIds,
 }: QuestionsPanelBodyProps) {
   const { t } = useTranslation();
+  // Guards against a double-click firing a second overlapping batch while
+  // the first is still sequentially awaiting each row (#412).
+  const [approvingAll, setApprovingAll] = useState(false);
   const renderQuestionCard = (r: TqRow) => (
     <QuestionCard
       key={r.id}
@@ -136,9 +142,15 @@ export function QuestionsPanelBody({
               variant="outlined"
               color="success"
               startIcon={<CheckIcon sx={{ fontSize: "15px !important" }} />}
-              disabled={tqStats.draftIds.length === 0}
-              onClick={() => {
-                for (const id of tqStats.draftIds) onQuestionApprove(id, true);
+              disabled={tqStats.draftIds.length === 0 || approvingAll}
+              onClick={async () => {
+                if (!onApproveAllQuestions || approvingAll) return;
+                setApprovingAll(true);
+                try {
+                  await onApproveAllQuestions();
+                } finally {
+                  setApprovingAll(false);
+                }
               }}
               sx={{ minWidth: 0, fontSize: 11 }}
             >

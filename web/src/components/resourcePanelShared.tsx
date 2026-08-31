@@ -110,6 +110,7 @@ export function VerseGroupHead({
 export function SectionHead({
   title,
   count,
+  countNote,
   pinned,
   onTogglePin,
   onAdd,
@@ -120,6 +121,13 @@ export function SectionHead({
 }: {
   title: string;
   count: number;
+  /**
+   * Optional caption beside the count chip, explaining what the chip leaves
+   * out — currently "N trashed". `count` is the live-row denominator every
+   * other surface uses (#238); trashed rows are still rendered below, so
+   * without this the chip and the visible cards would disagree by N.
+   */
+  countNote?: string;
   pinned: boolean;
   onTogglePin: () => void;
   onAdd: () => void;
@@ -160,6 +168,11 @@ export function SectionHead({
         variant="outlined"
         sx={{ height: 18, fontFamily: "monospace", fontSize: 10 }}
       />
+      {countNote && (
+        <Typography variant="caption" sx={{ color: "text.disabled", whiteSpace: "nowrap" }}>
+          · {countNote}
+        </Typography>
+      )}
       <Tooltip
         title={pinned ? t("shell.unpinSection", { title: title.toLowerCase() }) : t("shell.pinSection", { title: title.toLowerCase() })}
       >

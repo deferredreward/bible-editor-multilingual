@@ -45,6 +45,37 @@ export type ValidatedTqRow = {
   updated_at: number;
 };
 
+/**
+ * The few-shot gold selectors: which rows become `examples/validated.jsonl` in
+ * the nightly context-repo export. Named constants (rather than SQL inlined in
+ * exportWorkflow.ts) so the exclusion rule below has one home and can be
+ * asserted in contextExport.test.mjs.
+ *
+ * `translation_state = 'validated'` alone is NOT enough to call a row
+ * human-approved gold. Two code paths write that state in BULK, about a body of
+ * imported work rather than about any row someone actually read:
+ *   * the admin bulk review-state sweep (reviewState.ts, issue #296), and
+ *   * the Aquifer importer's heuristic approve (aquiferImport.ts, issue #393).
+ * Both stamp `admin_bulk_state` (migration 0071), and `admin_bulk_state IS NULL`
+ * here is what keeps them out of the training set. A row approved one-at-a-time
+ * through POST /api/rows/{tn,tq}/:id/validate carries no stamp and is gold, as
+ * before.
+ *
+ * If you add a THIRD bulk approver, stamp it too — or this comment becomes a
+ * lie and unreviewed rows start teaching the model.
+ */
+export const VALIDATED_TN_EXAMPLES_SQL = `SELECT id, book, ref_raw, support_reference, quote, note, updated_at
+     FROM tn_rows
+    WHERE translation_state = 'validated'
+      AND admin_bulk_state IS NULL
+      AND deleted_at IS NULL AND trashed_at IS NULL`;
+
+export const VALIDATED_TQ_EXAMPLES_SQL = `SELECT id, book, ref_raw, question, response, updated_at
+     FROM tq_rows
+    WHERE translation_state = 'validated'
+      AND admin_bulk_state IS NULL
+      AND deleted_at IS NULL`;
+
 export type TemplateForRender = {
   support_ref: string;
   type: string | null;

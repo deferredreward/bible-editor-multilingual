@@ -117,6 +117,61 @@ const srcWord = (text) => ({ text, tag: "w", type: "word", strong: "H0000", occu
   assert(verseObjects[0].occurrences === "1" && verseObjects[0].children[0].occurrences === "1", "outer and inner now occurrences=1");
 }
 
+// ─── Issue #413: `sourceTextTotals` was wrapper-blind (`type === "milestone" ||
+//     \d`, no `\qs`), and its totals decide whether a token "appears exactly
+//     once" — the verdict that REWRITES stored content_json. A `\qs`-wrapped
+//     source word counted 0, so every over-counted milestone naming it was left
+//     alone as "content not found in source": conservative, but the correction
+//     the data needed silently never happened. The walk now gates on the shared
+//     `isSourceWordContainer` (usfm.ts), the same predicate collectSourceWords /
+//     collectSourceWordNodes descend by. Hebrew keys fold through nfc() on both
+//     sides (sourceTextTotals keys nfc(text); the milestone lookup nfc's
+//     x-content).
+{
+  console.log("\n[#413] a \\qs-wrapped source word counts toward the appears-once verdict");
+  // Production Selah shape: the source word sits inside a `\qs` character
+  // wrapper rather than at top level.
+  const qsWrap = (...children) => ({ tag: "qs", type: "quote", endTag: "qs*", children });
+  const wrappedSource = [srcWord("חֲנַנְיָה"), qsWrap(srcWord("סֶלָה"))];
+  // The SAME two words with no wrapper — the control proving unwrapped content
+  // is byte-identical either side of the fix.
+  const plainSource = [srcWord("חֲנַנְיָה"), srcWord("סֶלָה")];
+
+  // Two milestones over the wrapped token, stamped 1/2 and 2/2 — the JER 28:1
+  // AI-doubling pattern, but on a word the old walk could not see.
+  const target = () => [
+    zaln("סֶלָה", 1, 2, "Selah"),
+    { text: " ", type: "text" },
+    zaln("סֶלָה", 2, 2, "Selah"),
+  ];
+
+  const wrapped = correctSourceOccurrences(target(), wrappedSource);
+  assert(wrapped.changed === true, "the wrapped token is counted, so its over-counted milestones are corrected");
+  assert(wrapped.corrections.length === 2, `both milestones corrected (got ${wrapped.corrections.length})`);
+  assert(
+    wrapped.verseObjects[0].occurrence === "1" && wrapped.verseObjects[0].occurrences === "1" &&
+      wrapped.verseObjects[2].occurrence === "1" && wrapped.verseObjects[2].occurrences === "1",
+    "both milestones renumbered to 1/1",
+  );
+
+  const plain = correctSourceOccurrences(target(), plainSource);
+  assert(
+    JSON.stringify(plain) === JSON.stringify(wrapped),
+    "unwrapped control produces a byte-identical result — the wrapper only changes whether the word is FOUND",
+  );
+
+  // The conservative guards still hold with a wrapper in play: a token that
+  // genuinely appears TWICE (once wrapped, once bare) is ambiguous and must be
+  // left alone rather than clamped to 1/1.
+  const twiceSource = [srcWord("סֶלָה"), qsWrap(srcWord("סֶלָה"))];
+  const twice = correctSourceOccurrences(target(), twiceSource);
+  assert(twice.changed === false, "a token appearing twice (one wrapped) is left alone — never clamped");
+  assert(
+    JSON.stringify(twice.verseObjects) === JSON.stringify(target()),
+    "the untouched tree round-trips byte-identically",
+  );
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
   process.exit(1);
