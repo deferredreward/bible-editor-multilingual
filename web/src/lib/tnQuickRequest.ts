@@ -20,9 +20,11 @@
 //   drives verse highlighting. Lets a translator tweak the issue
 //   type and re-run without retyping English.
 //
-// Context: prev/next 5 verses within the current chapter; we don't
-// fetch neighboring chapters here (spec allows shorter arrays at
-// chapter edges).
+// Context: prev/next 5 verses within the current chapter, bracketing the
+// verses the note covers rather than its leading verse — a bridged note's
+// trailing verses are already in `verse`, so repeating them as context would
+// send the same scripture twice (#411). We don't fetch neighboring chapters
+// here (spec allows shorter arrays at chapter edges).
 
 import type { ChapterPayload, TnRow, TnQuickRequest, VerseDto } from "../sync/api";
 import {
@@ -31,7 +33,12 @@ import {
 } from "./highlight.ts";
 import { GREEK, HEBREW } from "./scriptDetect.ts";
 import { shortSupport } from "./supportReference.ts";
-import { buildVerseIndex, noteCoveredVerses, verseObjectsOf } from "./verseRange.ts";
+import {
+  buildVerseIndex,
+  clampCoveredForRender,
+  noteCoveredVerses,
+  verseObjectsOf,
+} from "./verseRange.ts";
 
 const CONTEXT_WINDOW = 5;
 const HEBREW_GAP = /[&…]+|\.{3}/g;
@@ -96,36 +103,62 @@ function plainOf(v: VerseDto | undefined): string {
 // note covering "26-27" reads keys 26 and 27 — both the one bridge object — and a
 // naive per-verse join would append its whole text twice (#388). Same guard the
 // slice builder uses (`coveredLaneSlices` in verseRange.ts).
+//
+// Returns the rows it consumed alongside the text: `gatherContext` skips them so
+// a lane row that straddles the edge of the covered range (a `\v 24-26` bridge
+// under a note covering 26-27) can't be emitted a second time as context (#411).
 function joinCoveredText(
   laneIndex: Record<number, VerseDto>,
   coveredVerses: number[],
-): string {
+): { text: string; used: Set<VerseDto> } {
   const parts: string[] = [];
-  const seen = new Set<VerseDto>();
+  const used = new Set<VerseDto>();
   for (const v of coveredVerses) {
     const dto = laneIndex[v];
-    if (!dto || seen.has(dto)) continue;
-    seen.add(dto);
+    if (!dto || used.has(dto)) continue;
+    used.add(dto);
     const text = plainOf(dto);
     if (text) parts.push(text);
   }
-  return parts.join(" ");
+  return { text: parts.join(" "), used };
 }
 
+// Prev/next context verses AROUND the covered range — never inside it. The
+// `verse` field already carries every covered verse joined, so anchoring both
+// windows to the leading verse handed the AI verse 27 twice for a bridged
+// "13:26-27" note: once inside `ult.verse`, once as `next5[0]` (#411). Anchor
+// prev5 before the FIRST rendered verse and next5 after the LAST one, and skip
+// any row the join already consumed.
+//
+// `byVerse` is deliberately the RAW per-version map (keyed by verse_start), not
+// the expanded index: an expanded index repeats a `\v 28-30` row under three
+// keys, which would push the same text into next5 three times — the duplication
+// this function exists to avoid.
+//
+// A discontinuous ref ("13:26,30") leaves its interior verses (27-29) out of
+// both the covered join and this window. That matches what the lanes render — a
+// discontinuous note paints only its listed verses — so context stays "what
+// surrounds the card", not "what fills its gaps".
 function gatherContext(
   byVerse: Record<number, VerseDto> | undefined,
-  verse: number,
+  firstVerse: number,
+  lastVerse: number,
+  used: Set<VerseDto>,
 ): { prev5: string[]; next5: string[] } {
   if (!byVerse) return { prev5: [], next5: [] };
   const prev5: string[] = [];
-  for (let v = Math.max(1, verse - CONTEXT_WINDOW); v < verse; v++) {
-    const text = plainOf(byVerse[v]);
+  for (let v = Math.max(1, firstVerse - CONTEXT_WINDOW); v < firstVerse; v++) {
+    const dto = byVerse[v];
+    if (!dto || used.has(dto)) continue;
+    const text = plainOf(dto);
     if (text) prev5.push(text);
   }
   const next5: string[] = [];
-  for (let v = verse + 1; v <= verse + CONTEXT_WINDOW; v++) {
-    if (!byVerse[v]) break;
-    const text = plainOf(byVerse[v]);
+  for (let v = lastVerse + 1; v <= lastVerse + CONTEXT_WINDOW; v++) {
+    const dto = byVerse[v];
+    if (!dto) break;
+    if (used.has(dto)) continue;
+    const text = plainOf(dto);
     if (text) next5.push(text);
   }
   return { prev5, next5 };
@@ -184,9 +217,19 @@ export function buildTnQuickRequest(
   // `verse` context text widens. `noteCoveredVerses` returns `[row.verse]` for a
   // singleton, so ultText/ustText are byte-identical to the old leading-verse
   // `plainOf(ultVerse)` for non-bridged rows.
-  const coveredVerses = noteCoveredVerses(row);
-  const ultText = joinCoveredText(ultIndex, coveredVerses);
-  const ustText = joinCoveredText(ustIndex, coveredVerses);
+  //
+  // Capped at LANE_RENDER_CAP, the same bound (and the same helper) #385 put on
+  // what one note card paints into a lane. `ref_raw` is free-typed, so a typo
+  // like "13:26-1000" would otherwise join the entire chapter into the prompt —
+  // NOTE_SPAN_CAP (400) only bounds the Set-building work, not the payload. The
+  // clamp keeps the head of the list, so the leading verse (which every
+  // selection/alignment lookup below anchors on) always survives, and the AI
+  // never receives more scripture than the card shows.
+  const coveredVerses = clampCoveredForRender(noteCoveredVerses(row)).verses;
+  const ult = joinCoveredText(ultIndex, coveredVerses);
+  const ust = joinCoveredText(ustIndex, coveredVerses);
+  const ultText = ult.text;
+  const ustText = ust.text;
   if (!ultText) return { ok: false, error: { reason: "missing_ult_verse" } };
   if (!ustText) return { ok: false, error: { reason: "missing_ust_verse" } };
 
@@ -200,7 +243,14 @@ export function buildTnQuickRequest(
   // verse, so the leading verse's text is the correct fallback scope. Identical to
   // ustText for a singleton note (noteCoveredVerses is `[verse]`), so non-bridged
   // rows are unchanged.
-  const ustLeadText = plainOf(ustVerse);
+  //
+  // Falls back to the joined range only when the UST lane has no row at the
+  // leading verse at all (a bridged note over an incomplete UST). Handing the bot
+  // the wider text is still better than handing it an empty selection, which is
+  // what the bare `plainOf(ustVerse)` produced there — the whole point of keeping
+  // a whole-verse fallback is to let the bot work rather than reject a draft the
+  // ULT already anchored (#411).
+  const ustLeadText = plainOf(ustVerse) || ustText;
   // UHB/UGNT verse for OL-anchoring the selection lookups — without it,
   // extractTargetSelectionText permanently degrades to GL-only matching
   // even though the source is already in the payload.
@@ -258,8 +308,14 @@ export function buildTnQuickRequest(
       ustLeadText.slice(0, 500);
   }
 
-  const ultCtx = gatherContext(ultByVerse, row.verse);
-  const ustCtx = gatherContext(ustByVerse, row.verse);
+  // Context brackets the rendered range, not the leading verse: for a bridged
+  // note the trailing covered verses are already inside ult.verse/ust.verse.
+  // coveredVerses is sorted ascending and always non-empty (noteCoveredVerses
+  // seeds it with row.verse), so first/last reduce to row.verse for a singleton.
+  const firstCovered = coveredVerses[0] ?? row.verse;
+  const lastCovered = coveredVerses[coveredVerses.length - 1] ?? row.verse;
+  const ultCtx = gatherContext(ultByVerse, firstCovered, lastCovered, ult.used);
+  const ustCtx = gatherContext(ustByVerse, firstCovered, lastCovered, ust.used);
 
   const request: TnQuickRequest = {
     ref: {

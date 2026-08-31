@@ -4,6 +4,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isOriginalLanguageQuote, buildTnQuickRequest } from "./tnQuickRequest.ts";
+// The prompt's covered-range join is capped with the same constant #385 put on
+// lane rendering; importing it keeps these tests honest if the number moves.
+import { LANE_RENDER_CAP } from "./verseRange.ts";
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const readWeb = (rel) => readFileSync(path.join(webRoot, rel), "utf8");
@@ -378,6 +381,201 @@ test("buildTnQuickRequest keeps the UST fallback selection on the leading verse 
     // widening the selection to verse 27's text is a scope error. Before the fix
     // this was the full "…arriving I will send angels to gather my people".
     assert.equal(result.request.ust.selection, "They will see me arriving");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Context must bracket the covered range, not the leading verse (#411). After
+// #399 widened ult.verse/ust.verse to span a bridged note, prev5/next5 were
+// still anchored on row.verse, so verse 27 of a "13:26-27" note arrived twice:
+// once inside `verse`, once as next5[0].
+// ---------------------------------------------------------------------------
+
+function makeBridgedContextPayload() {
+  const at = (chapter, verse) => ({ book: "MRK", chapter, verse });
+  return {
+    book: "MRK",
+    chapter: 13,
+    verses: {
+      ULT: {
+        24: verse("v24 ult", at(13, 24)),
+        25: verse("v25 ult", at(13, 25)),
+        26: verseVO([gms("ἐρχόμενον", ["coming", "in", "clouds"])], "coming in clouds", at(13, 26)),
+        27: verse("and he will gather his chosen ones", at(13, 27)),
+        28: verse("v28 ult", at(13, 28)),
+        29: verse("v29 ult", at(13, 29)),
+      },
+      UST: {
+        24: verse("v24 ust", at(13, 24)),
+        25: verse("v25 ust", at(13, 25)),
+        26: verse("They will see me arriving", at(13, 26)),
+        27: verse("I will send angels", at(13, 27)),
+        28: verse("v28 ust", at(13, 28)),
+      },
+      UGNT: { 26: verseVO([gw("ἐρχόμενον"), gt(" ")], "ἐρχόμενον", at(13, 26)) },
+    },
+    tn: [],
+    tq: [],
+    twl: [],
+    verseStatuses: [],
+    verseLaneChecks: [],
+  };
+}
+
+test("buildTnQuickRequest starts next5 after the LAST covered verse (#411)", () => {
+  const row = makeRow({ verse: 26, ref_raw: "13:26-27", quote: "ἐρχόμενον" });
+  const result = buildTnQuickRequest(row, makeBridgedContextPayload());
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.request.ult.verse, "coming in clouds and he will gather his chosen ones");
+    // Verse 27 is already inside ult.verse. Before the fix next5 was anchored at
+    // row.verse and led with verse 27's text again — the same scripture twice
+    // under two labels. Context now resumes at 28.
+    assert.deepEqual(result.request.ult.context.next5, ["v28 ult", "v29 ult"]);
+    assert.deepEqual(result.request.ust.context.next5, ["v28 ust"]);
+    // prev5 is unchanged for a note whose leading verse IS its first covered
+    // verse: still the five verses before it.
+    assert.deepEqual(result.request.ult.context.prev5, ["v24 ult", "v25 ult"]);
+  }
+});
+
+// A lane row that STRADDLES the start of the covered range: `\v 24-26` sits
+// under key 24 in the raw map but is what the covered join reads for verse 26.
+// prev5 walks the raw map, so without a used-row guard it re-emits that bridge's
+// whole text as context (#411).
+function makeStraddlingBridgePayload() {
+  const at = (chapter, verse) => ({ book: "MRK", chapter, verse });
+  const bridge = (verseObjects, plainText) => ({
+    ...at(13, 24),
+    verse_end: 26,
+    bible_version: "test",
+    plain_text: plainText,
+    version: 1,
+    updated_by: null,
+    updated_at: 0,
+    content: { verseObjects },
+  });
+  return {
+    book: "MRK",
+    chapter: 13,
+    verses: {
+      ULT: {
+        22: verse("v22 ult", at(13, 22)),
+        24: bridge([gms("ἐρχόμενον", ["coming", "in", "clouds"])], "v24 through v26"),
+        27: verse("and he will gather", at(13, 27)),
+      },
+      UST: {
+        26: verse("They will see me arriving", at(13, 26)),
+        27: verse("I will send angels", at(13, 27)),
+      },
+      UGNT: { 26: verseVO([gw("ἐρχόμενον"), gt(" ")], "ἐρχόμενον", at(13, 26)) },
+    },
+    tn: [],
+    tq: [],
+    twl: [],
+    verseStatuses: [],
+    verseLaneChecks: [],
+  };
+}
+
+test("buildTnQuickRequest keeps a straddling bridge row out of prev5 (#411)", () => {
+  const row = makeRow({ verse: 26, ref_raw: "13:26-27", quote: "ἐρχόμενον" });
+  const result = buildTnQuickRequest(row, makeStraddlingBridgePayload());
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    // The 24-26 bridge supplies verse 26's text, so it belongs to `verse`…
+    assert.equal(result.request.ult.verse, "v24 through v26 and he will gather");
+    // …and must not also appear as context. Before the fix prev5 was
+    // ["v22 ult", "v24 through v26"].
+    assert.deepEqual(result.request.ult.context.prev5, ["v22 ult"]);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The joined range is capped (#411). `ref_raw` is free-typed, so "13:26-1000"
+// would otherwise push the whole chapter into the AI payload — NOTE_SPAN_CAP
+// (400) bounds only the Set-building work, and #385's LANE_RENDER_CAP bounds
+// only what a card renders.
+// ---------------------------------------------------------------------------
+
+function makeLongChapterPayload(firstVerse, lastVerse) {
+  const at = (chapter, v) => ({ book: "MRK", chapter, verse: v });
+  const ULT = {};
+  const UST = {};
+  for (let v = firstVerse; v <= lastVerse; v++) {
+    ULT[v] =
+      v === firstVerse
+        ? verseVO([gms("ἐρχόμενον", ["coming"])], `v${v} ult`, at(13, v))
+        : verse(`v${v} ult`, at(13, v));
+    UST[v] = verse(`v${v} ust`, at(13, v));
+  }
+  return {
+    book: "MRK",
+    chapter: 13,
+    verses: { ULT, UST, UGNT: { [firstVerse]: verseVO([gw("ἐρχόμενον"), gt(" ")], "ἐρχόμενον", at(13, firstVerse)) } },
+    tn: [],
+    tq: [],
+    twl: [],
+    verseStatuses: [],
+    verseLaneChecks: [],
+  };
+}
+
+test("buildTnQuickRequest caps a runaway ref_raw range at LANE_RENDER_CAP verses (#411)", () => {
+  // A chapter with plenty of verses past the cap, and a typo'd ref that claims
+  // to cover all of them.
+  const lastVerse = 26 + LANE_RENDER_CAP + 5;
+  const payload = makeLongChapterPayload(26, lastVerse);
+  const row = makeRow({ verse: 26, ref_raw: "13:26-1000", quote: "ἐρχόμενον" });
+  const result = buildTnQuickRequest(row, payload);
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    const expectedVerses = [];
+    for (let v = 26; v < 26 + LANE_RENDER_CAP; v++) expectedVerses.push(`v${v} ult`);
+    // Exactly LANE_RENDER_CAP verses, head-first so the leading verse (which
+    // every selection lookup anchors on) survives. Before the fix this was every
+    // verse in the chapter.
+    assert.equal(result.request.ult.verse, expectedVerses.join(" "));
+    assert.equal(result.request.ult.verse.includes(`v${26 + LANE_RENDER_CAP} ult`), false);
+    // Context resumes right after the capped range rather than vanishing.
+    assert.equal(result.request.ult.context.next5[0], `v${26 + LANE_RENDER_CAP} ult`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// UST selection fallback when the lane has no row at the leading verse (#411).
+// ---------------------------------------------------------------------------
+
+test("buildTnQuickRequest falls back to the joined UST text when the lead verse is missing (#411)", () => {
+  const at = (chapter, verse) => ({ book: "MRK", chapter, verse });
+  const payload = {
+    book: "MRK",
+    chapter: 13,
+    verses: {
+      ULT: {
+        26: verseVO([gms("ἐρχόμενον", ["coming", "in", "clouds"])], "coming in clouds", at(13, 26)),
+        27: verse("and he will gather", at(13, 27)),
+      },
+      // No UST row at the note's leading verse 26 — only at 27.
+      UST: { 27: verse("I will send angels to gather my people", at(13, 27)) },
+      UGNT: { 26: verseVO([gw("ἐρχόμενον"), gt(" ")], "ἐρχόμενον", at(13, 26)) },
+    },
+    tn: [],
+    tq: [],
+    twl: [],
+    verseStatuses: [],
+    verseLaneChecks: [],
+  };
+  const row = makeRow({ verse: 26, ref_raw: "13:26-27", quote: "ἐρχόμενον" });
+  const result = buildTnQuickRequest(row, payload);
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    // #406 anchored this fallback to the leading verse, which is right whenever
+    // that verse exists — but when it does NOT, the anchor is empty and the bot
+    // was handed "" instead of some UST text. Prefer the joined range over
+    // nothing; the point of keeping a whole-verse fallback is to let the bot work
+    // rather than reject a draft the ULT already anchored.
+    assert.equal(result.request.ust.selection, "I will send angels to gather my people");
   }
 });
 
