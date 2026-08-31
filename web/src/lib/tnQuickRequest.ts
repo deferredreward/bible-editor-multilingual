@@ -90,13 +90,23 @@ function plainOf(v: VerseDto | undefined): string {
 // that would only add noise to a natural-language prompt — the model reasons over
 // running text. Reduces to the single leading verse for the common singleton, so
 // non-bridged rows are unchanged.
+//
+// Dedupes by DTO identity: when the lane row is itself a USFM bridge (`verse_end`),
+// buildVerseIndex maps every integer in its span to the SAME DTO reference, so a
+// note covering "26-27" reads keys 26 and 27 — both the one bridge object — and a
+// naive per-verse join would append its whole text twice (#388). Same guard the
+// slice builder uses (`coveredLaneSlices` in verseRange.ts).
 function joinCoveredText(
   laneIndex: Record<number, VerseDto>,
   coveredVerses: number[],
 ): string {
   const parts: string[] = [];
+  const seen = new Set<VerseDto>();
   for (const v of coveredVerses) {
-    const text = plainOf(laneIndex[v]);
+    const dto = laneIndex[v];
+    if (!dto || seen.has(dto)) continue;
+    seen.add(dto);
+    const text = plainOf(dto);
     if (text) parts.push(text);
   }
   return parts.join(" ");
@@ -182,6 +192,15 @@ export function buildTnQuickRequest(
 
   const ultVo = verseObjectsOf(ultVerse);
   const ustVo = verseObjectsOf(ustVerse);
+  // The UST whole-verse SELECTION fallback (used when the UST alignment carries
+  // no matching run) must stay anchored to the leading verse, even though
+  // ust.verse context now spans the whole covered range (#388). ustText widened
+  // to the joined range, so slicing it would hand the AI the entire bridge as the
+  // "selection"; the quote's occurrence is counted per verse against the leading
+  // verse, so the leading verse's text is the correct fallback scope. Identical to
+  // ustText for a singleton note (noteCoveredVerses is `[verse]`), so non-bridged
+  // rows are unchanged.
+  const ustLeadText = plainOf(ustVerse);
   // UHB/UGNT verse for OL-anchoring the selection lookups — without it,
   // extractTargetSelectionText permanently degrades to GL-only matching
   // even though the source is already in the payload.
@@ -220,7 +239,7 @@ export function buildTnQuickRequest(
     // rather than reject a draft the ULT already anchored.
     ustSelection =
       (ustVo && extractTargetSelectionText(ustVo, rawQuote, occurrence, sourceVo)) ||
-      ustText.slice(0, 500);
+      ustLeadText.slice(0, 500);
   } else {
     // English path: user typed English from ULT. The English IS the
     // ULT selection; look it up against ULT alignment for the Hebrew
@@ -236,7 +255,7 @@ export function buildTnQuickRequest(
     ultSelection = rawQuote;
     ustSelection =
       (ustVo && extractTargetSelectionText(ustVo, derivedHebrew, 1, sourceVo)) ||
-      ustText.slice(0, 500);
+      ustLeadText.slice(0, 500);
   }
 
   const ultCtx = gatherContext(ultByVerse, row.verse);
