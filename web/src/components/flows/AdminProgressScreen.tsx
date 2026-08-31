@@ -1,5 +1,5 @@
 // i18n: user-visible strings use t() with keys under the `adminPages`
-// namespace (en/ar values pending merge into web/src/i18n/locales/*.json).
+// namespace (en/ar values in web/src/i18n/locales/*.json).
 //
 // AdminProgressScreen — #/admin/progress, the Progress section of the
 // redesigned admin desk (rendered inside AdminDesk, which owns the rail
@@ -15,33 +15,43 @@
 //
 //   * The ONLY book-level aggregate is BookSummary (web/src/sync/api.ts:167-176)
 //     — per-chapter verses / tn / tq / twl counts, one GET /api/chapters/{book}
-//     per book (api.ts:1589-1590). Approval/validation rollups do NOT exist at
-//     book level: `translation_state` lives on individual rows inside
-//     ChapterPayload (api.ts:156-165), per-chapter payloads only, and fetching
-//     every chapter of every book (N+1) is forbidden.
+//     per book (api.ts:1589-1590). Since #104's 2026-08-27 rollup dispatch,
+//     each chapter additionally carries `tnValidated` / `tqValidated` /
+//     `versesDone` (api.ts:179-181; live rows with translation_state
+//     ='validated' plus verse_statuses done flags, api/src/chapters.ts:360-437)
+//     — approval progress at book level, still ONE request per book. There is
+//     still no workspace-wide rollup endpoint: summaries are fetched only for
+//     books present in the workspace (never the whole 66-book canon).
 //   * The workspace book list is GET /api/books → { books: BookListEntry[] }
 //     (api.ts:1704; BookListEntry api.ts:902-905) — book code + imported_at
 //     only, NO counts. So the board costs 1 (books) + N (one BookSummary per
-//     imported book, concurrency-limited to 4) requests — summaries are
-//     fetched only for books actually present in the workspace, never for the
-//     whole 66-book canon. Cheaper unlock: a workspace book-list endpoint that
-//     carries counts (e.g. GET /api/books growing per-book totals) would make
-//     this 1 request.
+//     imported book, concurrency-limited to 4) requests. Cheaper unlock: a
+//     workspace book-list endpoint that carries counts (e.g. GET /api/books
+//     growing per-book totals) would make this 1 request.
 //
 // What IS shown, with endpoint evidence:
 //
-//   * KPI tiles — content counts only, never completion percentages:
-//     books in workspace (GET /api/books), verses / notes / word links /
-//     questions (sums of the loaded BookSummary rows). While summaries are
-//     still loading the tiles say so instead of showing a partial number as
-//     if it were final.
-//   * Book package board — one row per imported book, with the counts
-//     BookSummary honestly provides (chapters / verses / tn / tq / twl) and
-//     an imported-at date from BookListEntry. Clicking a row expands a
-//     per-chapter drawer (same data, per chapter), mirroring the hub's inline
-//     expansion. Chapter 0 (front-matter intro rows) is excluded from counts,
-//     same as PackageHubScreen (its header, "BookSummary includes a chapter-0
-//     entry") — intro rows aren't reachable via the chapter-scoped screens.
+//   * KPI tiles — content counts (books / verses / notes / word links /
+//     questions, sums of the loaded BookSummary rows) plus one approval tile:
+//     "Approved" combines tnValidated + tqValidated + versesDone over
+//     tn + tq + verses across every loaded book (lib/packageLifecycle.ts
+//     reviewProgress + progressPercent — the same helper PackageHubScreen's
+//     lifecycle card uses). While summaries are still loading the tiles say
+//     so instead of showing a partial number as if it were final.
+//   * Book package board — one row per imported book: chapters / imported-at
+//     stay plain counts (BookListEntry has no validation concept for them);
+//     verses / notes / questions render as "{done} of {total}" with a thin
+//     progress bar (the per-chapter rollup, summed via reviewProgress); word
+//     links stay a plain count — the rollup has no twl-validated kind
+//     (api/src/chapters.ts:410-412 only aggregates tn_validated / tq_validated
+//     / verse_done). Clicking a row expands a per-chapter drawer with the same
+//     done/total treatment per chapter, mirroring the hub's inline expansion.
+//     Chapter 0 (front-matter intro rows) is excluded from counts, same as
+//     PackageHubScreen (its header, "BookSummary includes a chapter-0 entry")
+//     — intro rows aren't reachable via the chapter-scoped screens. A summary
+//     from an older API build (rollup fields undefined on every chapter) falls
+//     back to a plain count with no bar — reviewProgress returns null for that
+//     book rather than faking 0%.
 //   * Activity — the two real feeds ObserveScreen.tsx already surfaces:
 //     export snapshots via api.exportsList() (GET /api/exports, capped to
 //     FEED_LIMIT since only the top FEED_LIMIT merged items ever render) and
@@ -49,13 +59,14 @@
 //     Merged and sorted by timestamp (committed_at / updated_at, unix seconds
 //     — PipelineJobRow api.ts:1419-1420).
 //
-// What is OMITTED, and the unlock for each:
+// What is still OMITTED, and the unlock for each:
 //
-//   * Percent-complete / Overall / Literal / Simplified / Notes% / Articles
-//     columns and progress bars — no approval rollup endpoint. Unlock: the
-//     per-chapter `tnValidated` / `tqValidated` / `versesDone` extension to
-//     GET /api/chapters/{book} already proposed in PackageHubScreen.tsx's
-//     header.
+//   * Overall / Literal / Simplified / Articles columns from the design
+//     artifact — "Literal"/"Simplified" would mean per-resource-lane
+//     completion (ULT vs UST), which the rollup doesn't split out (it counts
+//     tn/tq/verse state, not per-lane draft state); "Articles" has no rollup
+//     at all (tW/tA article review isn't tracked by verse_statuses or
+//     translation_state). Neither is invented.
 //   * Step and Pair columns — workflow stages have no backend
 //     (docs/flows/02-architecture.md D2, restated in ObserveScreen.tsx's
 //     WorkflowStagesCard) and no pair-assignment model exists on any endpoint.
@@ -66,8 +77,10 @@
 //     on the same GET /api/chapters/{book} extension.
 //   * Waiting on — no validation-queue or nudge endpoint (artifact marks it
 //     Phase 2). Unlock: a queue endpoint plus a notification channel.
-//   * KPI tiles "Average progress" / "Awaiting final validation" / "Stalled"
-//     — all derive from the missing approval rollups above.
+//   * KPI tiles "Awaiting final validation" / "Stalled" — the rollup counts
+//     validated rows, not staleness or a queue position; there's no signal
+//     here for "waiting how long" or "not moving." Unlock: the same
+//     validation-queue endpoint Waiting on needs.
 //   * Human editing activity ("Pair 2 finished Align on Titus 1") — edits are
 //     audited in edit_log server-side (api.ts:41,836 reference it) but there
 //     is no list endpoint. Unlock: GET /api/activity (or /api/edit-log) with
@@ -90,6 +103,7 @@ import {
   Button,
   ButtonBase,
   Chip,
+  LinearProgress,
   Skeleton,
   Stack,
   Table,
@@ -116,6 +130,7 @@ import {
 } from "../../sync/api";
 import { bookName, BOOKS } from "../../lib/bookNames";
 import { realChapters } from "../../lib/bookSummary";
+import { progressPercent, reviewProgress, type ProgressPair } from "../../lib/packageLifecycle";
 import { useProjectConfig } from "../../hooks/useProjectConfig";
 
 export interface AdminProgressScreenProps extends FlowScreenContext {}
@@ -280,6 +295,28 @@ const NUM_CELL_SX = {
   whiteSpace: "nowrap",
 } as const;
 
+// One table-cell rendering of a review-rollup pair: "{done} of {total}" plus a
+// thin determinate bar, the same source data as PackageHubScreen's
+// ProgressLine (lib/packageLifecycle.ts) condensed for a dense admin table.
+// `done === null` means the rollup is absent for this row (older API build,
+// or a book whose summary predates it) — falls back to the plain total with
+// no bar, never a fake 0%.
+function ProgressCell({ done, total }: { done: number | null; total: number }) {
+  if (done === null) return <>{total}</>;
+  return (
+    <Box sx={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 0.25, minWidth: 64 }}>
+      <Typography component="span" sx={{ fontVariantNumeric: "tabular-nums", fontSize: "inherit" }}>
+        {done}/{total}
+      </Typography>
+      <LinearProgress
+        variant="determinate"
+        value={progressPercent({ done, total })}
+        sx={{ height: 3, borderRadius: 2, inlineSize: "100%" }}
+      />
+    </Box>
+  );
+}
+
 // One merged activity entry (see file header for the two real sources).
 interface FeedItem {
   key: string;
@@ -395,6 +432,11 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
     let loaded = 0;
     let errs = 0;
     const t: BookTotals = { chapters: 0, verses: 0, tn: 0, tq: 0, twl: 0 };
+    // Approved-progress rollup, combined across every loaded book's
+    // notes/questions/verses (reviewProgress per book, then summed) —
+    // `approved` stays null until at least one book actually carries the
+    // rollup fields, so the tile shows a skeleton rather than a fake 0%.
+    let approved: ProgressPair | null = null;
     for (const s of summaries.values()) {
       if (s.kind === "error") {
         errs += 1;
@@ -407,8 +449,14 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
       t.tn += bt.tn;
       t.tq += bt.tq;
       t.twl += bt.twl;
+      const prog = reviewProgress(realChapters(s.data));
+      if (prog) {
+        if (!approved) approved = { done: 0, total: 0 };
+        approved.done += prog.notes.done + prog.questions.done + prog.verses.done;
+        approved.total += prog.notes.total + prog.questions.total + prog.verses.total;
+      }
     }
-    return { loaded, errs, total: summaries.size, ...t };
+    return { loaded, errs, total: summaries.size, ...t, approved };
   }, [summaries]);
 
   // Sums are shown once every workspace book's summary has settled (loaded or
@@ -523,6 +571,19 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
             value={sumsReady ? kpis.tq : booksError ? "—" : <Skeleton width={48} />}
             cap={partialCap(t("adminPages.progress.kpiQuestionsCap"))}
           />
+          <KpiTile
+            label={t("adminPages.progress.kpiProgress")}
+            value={
+              sumsReady
+                ? kpis.approved
+                  ? `${Math.round(progressPercent(kpis.approved))}%`
+                  : "—" // sums settled but no book carried the rollup (old API build) — honest absence, not a stuck spinner
+                : booksError
+                  ? "—"
+                  : <Skeleton width={48} />
+            }
+            cap={partialCap(t("adminPages.progress.kpiProgressCap"))}
+          />
         </Box>
 
         {/* Book package board */}
@@ -569,8 +630,14 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
                     const s = summaries.get(b.book);
                     const open = expanded === b.book;
                     const totals = s?.kind === "ready" ? totalsOf(s.data) : null;
+                    const progress = s?.kind === "ready" ? reviewProgress(realChapters(s.data)) : null;
                     const cell = (n: number | null) =>
                       totals !== null ? n : s?.kind === "error" ? "—" : <Skeleton width={28} sx={{ marginInlineStart: "auto" }} />;
+                    // Notes/questions/verses render as a done-of-total bar once the
+                    // book's rollup is present; falls back to `cell` (plain count
+                    // or skeleton/error) whenever it isn't.
+                    const reviewCell = (done: number | undefined, total: number | undefined) =>
+                      totals !== null ? <ProgressCell done={done ?? null} total={total ?? 0} /> : cell(null);
                     return (
                       <BookRowGroup
                         key={b.book}
@@ -581,10 +648,10 @@ export default function AdminProgressScreen({ role }: AdminProgressScreenProps) 
                         cells={
                           <>
                             <TableCell sx={NUM_CELL_SX}>{cell(totals?.chapters ?? null)}</TableCell>
-                            <TableCell sx={NUM_CELL_SX}>{cell(totals?.verses ?? null)}</TableCell>
-                            <TableCell sx={NUM_CELL_SX}>{cell(totals?.tn ?? null)}</TableCell>
+                            <TableCell sx={NUM_CELL_SX}>{reviewCell(progress?.verses.done, totals?.verses)}</TableCell>
+                            <TableCell sx={NUM_CELL_SX}>{reviewCell(progress?.notes.done, totals?.tn)}</TableCell>
                             <TableCell sx={NUM_CELL_SX}>{cell(totals?.twl ?? null)}</TableCell>
-                            <TableCell sx={NUM_CELL_SX}>{cell(totals?.tq ?? null)}</TableCell>
+                            <TableCell sx={NUM_CELL_SX}>{reviewCell(progress?.questions.done, totals?.tq)}</TableCell>
                           </>
                         }
                       />
@@ -765,10 +832,16 @@ function BookRowGroup({
                       <TableCell sx={{ textAlign: "start", fontWeight: 600 }}>
                         {t("adminPages.progress.chapterN", { chapter: c.chapter })}
                       </TableCell>
-                      <TableCell sx={NUM_CELL_SX}>{c.verses}</TableCell>
-                      <TableCell sx={NUM_CELL_SX}>{c.tn}</TableCell>
+                      <TableCell sx={NUM_CELL_SX}>
+                        <ProgressCell done={c.versesDone ?? null} total={c.verses} />
+                      </TableCell>
+                      <TableCell sx={NUM_CELL_SX}>
+                        <ProgressCell done={c.tnValidated ?? null} total={c.tn} />
+                      </TableCell>
                       <TableCell sx={NUM_CELL_SX}>{c.twl}</TableCell>
-                      <TableCell sx={NUM_CELL_SX}>{c.tq}</TableCell>
+                      <TableCell sx={NUM_CELL_SX}>
+                        <ProgressCell done={c.tqValidated ?? null} total={c.tq} />
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
