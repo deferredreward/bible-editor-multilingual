@@ -66,7 +66,7 @@ import { SCRIPTURE_FONT_STACK } from "../../theme";
 import type { VerseDto } from "../../sync/api";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { versionLabel } from "../../lib/versionLabels";
-import { buildVerseIndex, noteOverlapsRange } from "../../lib/verseRange";
+import { buildVerseIndex, noteOverlapsRange, verseObjectsOf } from "../../lib/verseRange";
 
 export interface VerseScreenProps extends FlowScreenContext {
   book: string;
@@ -75,11 +75,6 @@ export interface VerseScreenProps extends FlowScreenContext {
 }
 
 type Mode = "read" | "audit";
-
-function verseObjectsOf(dto: VerseDto | undefined | null): unknown[] | null {
-  const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
-  return Array.isArray(vo) ? vo : null;
-}
 
 // The distinct rows of one lane's expanded index that overlap [start, end], in
 // verse order. `buildVerseIndex` maps every verse a row covers to the SAME DTO

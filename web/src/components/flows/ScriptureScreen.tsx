@@ -98,7 +98,7 @@ import {
 } from "../../lib/laneChecks";
 import { isHebrewBook } from "../../lib/sourceSearch";
 import { versionIsRtl, versionLabel } from "../../lib/versionLabels";
-import { buildVerseIndex, noteCoveredVerses } from "../../lib/verseRange";
+import { buildVerseIndex, noteCoveredVerses, verseObjectsOf } from "../../lib/verseRange";
 
 export interface ScriptureScreenProps extends FlowScreenContext {
   book: string;
@@ -121,11 +121,6 @@ const LANE_REPLACEMENT_REASONS = new Set([
   "lane_replacement_in_progress",
   "source_generation_mismatch",
 ]);
-
-function verseObjectsOf(dto: VerseDto | undefined | null): unknown[] | null {
-  const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
-  return Array.isArray(vo) ? vo : null;
-}
 
 export default function ScriptureScreen({ role, me, book, chapter, verse }: ScriptureScreenProps) {
   const theme = useTheme();

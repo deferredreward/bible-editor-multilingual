@@ -196,11 +196,11 @@ export function concatSourceRange(
 }
 
 // The verse tree of a scripture row, or null when the row carries none. The
-// same `content.verseObjects` cast is hand-rolled in a dozen components; this
-// export is where they should converge. AlignScreen's copy is retired (#351),
-// and ReviewQueue + tnQuickRequest are retired here (#388); the rest
-// (ScriptureScreen, TranslateAlignScreen, VerseScreen, WordsScreen) are still
-// local, so a change here does NOT yet reach every call site.
+// same `content.verseObjects` cast used to be hand-rolled in a dozen
+// components; they now all converge here. AlignScreen's copy retired in #351;
+// ReviewQueue + tnQuickRequest in #388's fix; and ScriptureScreen,
+// TranslateAlignScreen, VerseScreen, WordsScreen retired their local copies
+// onto this export as the last of #388's cleanup.
 export function verseObjectsOf(dto: VerseDto | null | undefined): unknown[] | null {
   const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
   return Array.isArray(vo) ? vo : null;
