@@ -15,6 +15,8 @@ import {
   buildContextRef,
   contextRepoOwner,
   sourceRowKey,
+  VALIDATED_TN_EXAMPLES_SQL,
+  VALIDATED_TQ_EXAMPLES_SQL,
 } from "./contextExport.ts";
 import {
   contextShrinkRefused,
@@ -659,6 +661,23 @@ console.log("assistedContextRef + owner + tsv truncation");
 
   assert(tsvLooksTruncated("ID\tNote\n"), "header-only TSV truncated");
   assert(!tsvLooksTruncated("Reference\tID\tTags\tSupportReference\tQuote\tOccurrence\tNote\nabcd\tx\t\t\t\t\ty\n"), "normal TSV ok");
+}
+
+// Few-shot gold selectors: bulk-approved rows must never become training gold
+// (issues #296 / #393). The behaviour is proved end-to-end against the real
+// schema in reviewState.test.mjs; this locks the filter into the SQL itself, so
+// "tidying" it out fails here too rather than only in the sqlite journey.
+console.log("contextExport — validated-example selectors exclude bulk sweeps");
+{
+  for (const [name, sql] of [
+    ["tn", VALIDATED_TN_EXAMPLES_SQL],
+    ["tq", VALIDATED_TQ_EXAMPLES_SQL],
+  ]) {
+    assert(sql.includes("translation_state = 'validated'"), `${name} selector still requires validated`);
+    assert(sql.includes("admin_bulk_state IS NULL"), `${name} selector excludes bulk-swept rows (#296/#393)`);
+    assert(sql.includes("deleted_at IS NULL"), `${name} selector excludes tombstones`);
+  }
+  assert(VALIDATED_TN_EXAMPLES_SQL.includes("trashed_at IS NULL"), "tn selector also excludes trashed rows");
 }
 
 console.log("ALL contextExport tests passed");

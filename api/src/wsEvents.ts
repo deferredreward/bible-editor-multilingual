@@ -40,6 +40,18 @@ export type WsEvent =
   // chapter, not one per row — telling open tabs their row list is stale. The
   // client prompts the user to save and refresh rather than refetching silently.
   | { type: "chapter.pipeline_applied"; book: string; chapter: number; pipeline_type: string }
+  // An admin just set this chapter's baseline review state in bulk (#296/#395).
+  // Like chapter.pipeline_applied this is a coalesced HINT — one per swept
+  // chapter, not one row.upserted per row, which would be a fanout storm on a
+  // whole-book sweep. Open tabs refetch the chapter's rows so their approval
+  // chips stop showing the pre-sweep state.
+  | {
+      type: "chapter.review_state_swept";
+      book: string;
+      chapter: number;
+      resource: "tn" | "tq";
+      state: "approved" | "needs_review";
+    }
   // A scripture lane just froze for a replacement (source swap). Open tabs must
   // quarantine any queued edits for that lane's bible_version and stop editing
   // it until the replacement settles — the active generation is about to flip.

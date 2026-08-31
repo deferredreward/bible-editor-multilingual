@@ -74,6 +74,14 @@ export interface ReimportableRow {
   // once updated_by is set.
   latestSource: string | null;
   deleted_at: number | null;
+  // Provenance stamp for a BULK review-state write (migration 0071): the admin
+  // sweep (reviewState.ts) or the Aquifer importer's bulk approve. tn/tq only —
+  // twl and verse have no such column, and pass undefined.
+  //
+  // MUST be selected by the caller. bookReimport.ts's two row SELECTs read it
+  // explicitly; if it is dropped from either, this field arrives `undefined`,
+  // the guard below silently never fires, and #394 is back with no test failing.
+  admin_bulk_state?: string | null;
   // tn-only human-owned protections. Ignored for tq/twl/verse.
   trashed_at?: number | null;
   preserve?: number | null;
@@ -94,8 +102,24 @@ export interface ReimportableRow {
 // safety predicate; the caller re-asserts the same conditions at write time
 // (version-CAS + flag re-assertion) so a human edit landing mid-import can't be
 // clobbered.
+//
+// A BULK REVIEW-STATE STAMP ALSO BLOCKS OVERWRITE (issue #394, option (a)).
+// The admin bulk sweep and the Aquifer bulk approve set translation_state (and
+// pre_draft_json) but deliberately NOT updated_by — authorship stays with
+// whoever wrote the note, matching the per-row validate helper. Without this
+// test such a row still reads as pristine, so the nightly reimport rewrites its
+// CONTENT from master while the 'validated' label and the now-stale
+// pre_draft_json snapshot stay put: the label then describes content nobody
+// approved. Option (b) (have the sweep claim updated_by) was rejected because
+// it makes bulk approval claim authorship of rows the admin never wrote, and
+// (c) (accept the overwrite) is the data-integrity smell the issue exists to
+// remove. So the stamp — which is precisely the record that someone made a
+// deliberate statement about this row — makes it non-pristine here. Content
+// drift on master for such a row is reported as `skipped_edited`, the same
+// visible outcome as any other human-owned row.
 export function isReimportableRow(r: ReimportableRow): boolean {
   if (r.deleted_at != null) return false;
+  if (r.admin_bulk_state != null) return false;
   if (r.kind === "tn") {
     if (r.trashed_at != null) return false;
     if (Number(r.preserve ?? 0) !== 0) return false;

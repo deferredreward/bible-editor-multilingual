@@ -89,6 +89,8 @@ import {
   renderContextPack,
   contextRepoOwner,
   contextRepoName,
+  VALIDATED_TN_EXAMPLES_SQL,
+  VALIDATED_TQ_EXAMPLES_SQL,
   type TranslationPrefsForRender,
   type ValidatedTnRow,
   type ValidatedTqRow,
@@ -570,16 +572,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     ).all<TermImport>();
     const terms = termRs.results ?? [];
 
-    const tnRs = await this.env.DB.prepare(
-      `SELECT id, book, ref_raw, support_reference, quote, note, updated_at
-         FROM tn_rows
-        WHERE translation_state = 'validated' AND deleted_at IS NULL AND trashed_at IS NULL`,
-    ).all<ValidatedTnRow>();
-    const tqRs = await this.env.DB.prepare(
-      `SELECT id, book, ref_raw, question, response, updated_at
-         FROM tq_rows
-        WHERE translation_state = 'validated' AND deleted_at IS NULL`,
-    ).all<ValidatedTqRow>();
+    // Selectors live in contextExport.ts — they carry the `admin_bulk_state IS
+    // NULL` rule that keeps bulk-approved rows out of the few-shot gold.
+    const tnRs = await this.env.DB.prepare(VALIDATED_TN_EXAMPLES_SQL).all<ValidatedTnRow>();
+    const tqRs = await this.env.DB.prepare(VALIDATED_TQ_EXAMPLES_SQL).all<ValidatedTqRow>();
     const tnRows = tnRs.results ?? [];
     const tqRows = tqRs.results ?? [];
 

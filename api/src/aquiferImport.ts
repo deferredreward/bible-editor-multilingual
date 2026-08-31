@@ -184,10 +184,22 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
     const stmts: D1PreparedStatement[] = [];
 
     // 1. Approve existing target-language notes (state flip + publish snapshot).
+    //
+    // This is a BULK approve, not a per-row human review: the rows are approved
+    // because a script decided they look like target-language text, not because
+    // anyone read them. So they are stamped `admin_bulk_state` (migration 0071)
+    // exactly like the admin bulk review-state sweep, and the few-shot selectors
+    // in contextExport.ts exclude them from training gold (issue #393 — decided
+    // "no, aquifer heuristic approval is not human-approved gold"). Without the
+    // stamp these rows silently became validated.jsonl examples, which made the
+    // "sweeps aren't gold" invariant narrower than contextExport.ts claims.
+    // The guard is `translation_state IS NULL`, so COALESCE always yields
+    // 'none' here — spelled out anyway to match the sweep's expression.
     for (const id of approveIds) {
       stmts.push(
         env.DB.prepare(
           `UPDATE tn_rows SET translation_state = 'validated',
+             admin_bulk_state = COALESCE(translation_state, 'none'),
              pre_draft_json = json_object('note', note, 'tags', tags), updated_at = ?3
            WHERE book = ?1 AND id = ?2 AND translation_state IS NULL`,
         ).bind(book, id, now),
