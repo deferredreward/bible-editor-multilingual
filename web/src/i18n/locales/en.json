@@ -2955,7 +2955,7 @@
       "approveFailed": "Approve failed ({{status}}).",
       "approveAllExtraNoDraft": " That row has no AI draft to approve yet.",
       "approveAllExtraLocked": " The chapter may be locked by an AI run.",
-      "approveAllStopped": "Stopped at {{ref}} — approve failed ({{status}}).{{extra}} {{done}} of {{total}} approved; the rest were not attempted.",
+      "approveAllPartial": "Approved {{approved}} of {{total}}. {{failed}} could not be approved (first: {{ref}} — {{status}}).{{extra}}",
       "noteAdded": "New note added.",
       "questionAdded": "New question added.",
       "addFailed": "Could not add ({{status}}).",

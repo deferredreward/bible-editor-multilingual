@@ -748,7 +748,9 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   }
 
   // Sequential per-row validate calls — there is no bulk-validate endpoint.
-  // Stops at the first failure and reports exactly how far it got.
+  // A per-row failure is skipped, not fatal: the batch runs to the end and a
+  // summary of what could not be approved is reported afterwards. The exception
+  // is a batch-fatal status (401/403), which stops the loop — see the catch.
   async function handleApproveAll(kind: RowKindTQ) {
     if (!data || approveAllProgress) return;
     const source: QueueRow[] = kind === "tn" ? data.tn : data.tq;
@@ -762,6 +764,8 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     setApproveAllError(null);
     if (list.length === 0) return;
     setApproveAllProgress({ done: 0, total: list.length });
+    let approved = 0;
+    let firstFailure: { row: QueueRow; status: number | null } | null = null;
     for (let i = 0; i < list.length; i++) {
       const row = list[i];
       try {
@@ -770,28 +774,45 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
             ? await api.validateNote(row.id, book, true)
             : await api.validateQuestion(row.id, book, true);
         applyLocalRowReplacement(kind, updated);
-        setApproveAllProgress({ done: i + 1, total: list.length });
+        approved += 1;
       } catch (err) {
-        const st = err instanceof ApiError ? err.status : null;
-        const extra =
-          st === 404
-            ? t("flowReview.queue.approveAllExtraNoDraft")
-            : st === 409
-              ? t("flowReview.queue.approveAllExtraLocked")
-              : "";
-        setApproveAllError(
-          t("flowReview.queue.approveAllStopped", {
-            ref: refFor(book, row),
-            status: st ?? t("flowReview.common.errorWord"),
-            extra,
-            done: i,
-            total: list.length,
-          }),
-        );
-        break;
+        // Skip this row and keep going — one rejection (a raced trash, a stale
+        // client row, a server guard 404) must never abort the rest of the batch (#238).
+        const failStatus = err instanceof ApiError ? err.status : null;
+        if (!firstFailure) {
+          firstFailure = { row, status: failStatus };
+        }
+        // ...with one exception: 401 (session dead) and 403 (role refused) are
+        // properties of the CALLER, not of this row, so they are certain to repeat
+        // for every remaining row. Grinding on would fire hundreds of doomed
+        // requests — each 401 also burns its own silent-refresh POST, since
+        // refreshAuthOnce() only coalesces *concurrent* callers and this loop is
+        // sequential — behind an already-visible session-expired banner. Stop and
+        // report how far we got.
+        if (failStatus === 401 || failStatus === 403) break;
       }
+      setApproveAllProgress({ done: i + 1, total: list.length });
     }
     setApproveAllProgress(null);
+    if (firstFailure) {
+      const st = firstFailure.status;
+      const extra =
+        st === 404
+          ? t("flowReview.queue.approveAllExtraNoDraft")
+          : st === 409
+            ? t("flowReview.queue.approveAllExtraLocked")
+            : "";
+      setApproveAllError(
+        t("flowReview.queue.approveAllPartial", {
+          ref: refFor(book, firstFailure.row),
+          status: st ?? t("flowReview.common.errorWord"),
+          extra,
+          approved,
+          failed: list.length - approved,
+          total: list.length,
+        }),
+      );
+    }
   }
 
   async function handleAddRow(kind: RowKindTQ) {
