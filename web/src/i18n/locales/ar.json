@@ -759,6 +759,7 @@
     "book": "سفر",
     "find": "بحث",
     "intro": "مقدمة",
+    "trashedCount": "{{count}} في المهملات",
     "board": "اللوحة",
     "resources": "الموارد",
     "notes": "ملاحظات",

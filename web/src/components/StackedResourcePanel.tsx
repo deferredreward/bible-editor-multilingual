@@ -26,7 +26,7 @@ import { QuestionsPanelBody } from "./QuestionsPanel";
 import { NotesPanelBody } from "./NotesPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
 import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
-import { isApprovableRow } from "../lib/reviewApproval";
+import { liveRowCount, reviewStats } from "../lib/reviewApproval";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useSourceNotes } from "../hooks/useSourceNotes";
 import { useSourceQuestions } from "../hooks/useSourceQuestions";
@@ -110,19 +110,12 @@ export function StackedResourcePanel({
     [projectConfig],
   );
   const sourceNotes = useSourceNotes(translationMode ? book : null, sourceProjection);
-  const tnStats = useMemo(() => {
-    if (!translationMode) return { total: 0, validated: 0, draftIds: [] as string[] };
-    let total = 0;
-    let validated = 0;
-    const draftIds: string[] = [];
-    for (const r of tn) {
-      if (r.trashed_at != null) continue;
-      total++;
-      if (r.translation_state === "validated") validated++;
-      else if (isApprovableRow(r)) draftIds.push(r.id);
-    }
-    return { total, validated, draftIds };
-  }, [tn, translationMode]);
+  // Shared with ResourceColumn — the two used to carry byte-identical copies of
+  // this loop, and the counting rule now lives once in reviewStats (#238).
+  const tnStats = useMemo(
+    () => reviewStats(translationMode ? tn : []),
+    [tn, translationMode],
+  );
   const [termsCount, setTermsCount] = useState(0);
   useEffect(() => {
     if (!translationMode || isReadOnly()) return;
@@ -142,18 +135,11 @@ export function StackedResourcePanel({
     [projectConfig],
   );
   const sourceQuestions = useSourceQuestions(translationMode ? book : null, sourceQuestionProjection);
-  const tqStats = useMemo(() => {
-    if (!translationMode) return { total: 0, validated: 0, draftIds: [] as string[] };
-    let total = 0;
-    let validated = 0;
-    const draftIds: string[] = [];
-    for (const r of tq) {
-      total++;
-      if (r.translation_state === "validated") validated++;
-      else if (isApprovableRow(r)) draftIds.push(r.id);
-    }
-    return { total, validated, draftIds };
-  }, [tq, translationMode]);
+  // tQ has no trashed_at column, so the shared helper's trashed arm is inert.
+  const tqStats = useMemo(
+    () => reviewStats(translationMode ? tq : []),
+    [tq, translationMode],
+  );
 
   // Per-panel pin — independent of ResourceColumn's shared `be:pinned` store,
   // since several stacked panels of the same kind could coexist.
@@ -209,9 +195,19 @@ export function StackedResourcePanel({
     [pinned, twl, ultVerseObjectsFor],
   );
 
-  const totalTn = pinned ? tn.length : tnForVerse.length;
+  // Live-row denominators, same rule as ResourceColumn / the book summary
+  // (#238). Trashed notes stay listed below, labelled rather than counted.
+  const tnCount = useMemo(
+    () => liveRowCount(pinned ? tn : tnForVerse),
+    [pinned, tn, tnForVerse],
+  );
+  const tqCount = useMemo(
+    () => liveRowCount(pinned ? tq : tqForVerse),
+    [pinned, tq, tqForVerse],
+  );
+  const totalTn = tnCount.live;
   const totalTwl = pinned ? twl.length : twlForVerse.length;
-  const totalTq = pinned ? tq.length : tqForVerse.length;
+  const totalTq = tqCount.live;
 
   const renderNoteCard = (r: TnRow) => (
     <NoteCard
@@ -262,6 +258,7 @@ export function StackedResourcePanel({
           tnForVerse={tnForVerse}
           tnGroups={tnGroups}
           totalTn={totalTn}
+          trashedTn={tnCount.trashed}
           pinned={pinned}
           onTogglePin={onTogglePin}
           onNoteCreate={onNoteCreate}

@@ -12,17 +12,20 @@ import type {
   VerseStatus,
   VerseLaneCheck,
 } from "./types";
-import { CHECK_LANES } from "./types";
-import { currentUserId, requireEditor } from "./auth";
-import { broadcastChapter } from "./wsEvents";
-import { recomputeTargetOccurrences } from "./importParsers";
+// Runtime (value) imports carry the .ts extension — same convention as rows.ts
+// — so this module loads under `node --experimental-strip-types`, which is what
+// the api test runner uses. Type-only imports are erased and need no extension.
+import { CHECK_LANES } from "./types.ts";
+import { currentUserId, requireEditor } from "./auth.ts";
+import { broadcastChapter } from "./wsEvents.ts";
+import { recomputeTargetOccurrences } from "./importParsers.ts";
 import {
   CorruptContentJsonError,
   corruptContentJsonBody,
   logCorruptContentJson,
   parseVerseContentJson,
 } from "./contentJson.ts";
-import { ensureLaneState, requireLaneState } from "./scriptureLane";
+import { ensureLaneState, requireLaneState } from "./scriptureLane.ts";
 
 export const chapters = new Hono<{ Bindings: Env; Variables: { userId?: number } }>();
 
@@ -59,6 +62,16 @@ chapters.get("/:book/:chapter", async (c) => {
   // cross-book id collisions can't leak the wrong source chip. Pre-0017
   // audit rows have NULL book; the `OR book IS NULL` keeps them visible
   // until the next edit naturally backfills.
+  // The tn arm below filters `deleted_at` ONLY — trashed rows are served on
+  // purpose. The trash is visible and restorable (a trashed note grays out at
+  // the bottom of its verse with a Restore button; the review rail has a
+  // "Trashed" status filter), so filtering `trashed_at` here would delete the
+  // trash UI, not fix a count. The count rule lives on the client instead:
+  // `reviewStats`/`liveRows` in web/src/lib/reviewApproval.ts exclude trashed
+  // rows from every denominator, matching this file's book-summary SQL below
+  // (`deleted_at IS NULL AND trashed_at IS NULL`). #238 — the payload carries
+  // them, the counts don't. Don't "fix" the asymmetry by narrowing this query;
+  // chapterCountDenominator.test.mjs pins both halves.
   const [verses, tn, tq, twl, statuses, laneChecks] = await Promise.all([
     db
       .prepare(

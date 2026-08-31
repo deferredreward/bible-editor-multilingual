@@ -41,7 +41,11 @@ export interface NotesPanelBodyProps {
   // (grouped by verse); null ⇒ active-verse-only view using `tnForVerse`.
   tnForVerse: TnRow[];
   tnGroups: Array<[number, TnRow[]]> | null;
+  // LIVE (non-trashed) note count — the one denominator (#238). Trashed notes
+  // are still listed, so `trashedTn` labels them rather than letting the badge
+  // silently disagree with the number of cards on screen.
   totalTn: number;
+  trashedTn?: number;
   pinned: boolean;
   onTogglePin: () => void;
   onNoteCreate: () => void;
@@ -64,6 +68,7 @@ export function NotesPanelBody({
   tnForVerse,
   tnGroups,
   totalTn,
+  trashedTn = 0,
   pinned,
   onTogglePin,
   onNoteCreate,
@@ -109,6 +114,7 @@ export function NotesPanelBody({
       <SectionHead
         title={t("shell.notes")}
         count={totalTn}
+        countNote={trashedTn ? t("shell.trashedCount", { count: trashedTn }) : undefined}
         pinned={pinned}
         onTogglePin={onTogglePin}
         onAdd={onNoteCreate}

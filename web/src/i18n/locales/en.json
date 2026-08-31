@@ -703,6 +703,7 @@
     "book": "book",
     "find": "find",
     "intro": "intro",
+    "trashedCount": "{{count}} trashed",
     "board": "Board",
     "resources": "Resources",
     "notes": "Notes",
