@@ -13,6 +13,9 @@
 // reading `verses[bv][n]` directly.
 
 import type { VerseDto } from "../sync/api";
+// Explicit `.ts` — these modules are run directly by the node --strip-types
+// test runner, where extensionless specifiers don't resolve.
+import { extractPlainText } from "./usfm.ts";
 
 export type VerseSpan = readonly [start: number, end: number];
 
@@ -101,6 +104,29 @@ export function noteCoveredVerses(row: { verse: number; ref_raw?: string | null 
   return [...covered].sort((x, y) => x - y);
 }
 
+// How many covered verses a single note card paints into each scripture lane.
+// Distinct from NOTE_SPAN_CAP: that one bounds the Set-building work so a
+// malformed ref can't hang; this one bounds what one card RENDERS. A legitimate
+// bridged note spans a handful of verses (MRK "13:26-27"), so a free-text typo
+// like "1:1-200" would otherwise flood BOTH the ULT and UST lanes of one card
+// with the whole chapter, plus ~2N tree walks per row change (issue #385).
+export const LANE_RENDER_CAP = 12;
+
+// Clamp a covered-verse list (from `noteCoveredVerses`) for lane rendering.
+// Returns at most `cap` verses to paint, plus the full count so the caller can
+// show a "showing N of M" hint. Leaves NOTE_SPAN_CAP and the lock/checkoff/
+// overlap paths untouched — this only bounds what one card renders, never what a
+// note is considered to cover. The list is already sorted ascending with the
+// leading verse first, so slicing the head keeps the note's own verse visible.
+export function clampCoveredForRender(
+  coveredVerses: number[],
+  cap: number = LANE_RENDER_CAP,
+): { verses: number[]; total: number; clamped: boolean } {
+  const total = coveredVerses.length;
+  if (total <= cap) return { verses: coveredVerses, total, clamped: false };
+  return { verses: coveredVerses.slice(0, cap), total, clamped: true };
+}
+
 // True when a note/question row covers any verse in the inclusive display
 // window [rangeStart, rangeEnd]. Reduces to `verse in [start,end]` for singletons.
 export function noteOverlapsRange(
@@ -169,14 +195,34 @@ export function concatSourceRange(
   };
 }
 
-function verseObjectsOf(dto: VerseDto | undefined): unknown[] | null {
+// The verse tree of a scripture row, or null when the row carries none. The
+// same `content.verseObjects` cast is hand-rolled in a dozen components; this
+// export is where they should converge. AlignScreen's copy is retired (#351),
+// and ReviewQueue + tnQuickRequest are retired here (#388); the rest
+// (ScriptureScreen, TranslateAlignScreen, VerseScreen, WordsScreen) are still
+// local, so a change here does NOT yet reach every call site.
+export function verseObjectsOf(dto: VerseDto | null | undefined): unknown[] | null {
   const vo = (dto?.content as { verseObjects?: unknown[] } | null)?.verseObjects;
   return Array.isArray(vo) ? vo : null;
 }
 
+// Marker between two verses inside a lane that renders several verses as one
+// run of text. Without it a discontinuous ref like "13:26,28" reads as one
+// continuous sentence with verse 27 silently elided, and a wide range
+// concatenates with nothing to say where each verse begins (#351). Subtle on
+// purpose — a broken bar plus the number of the verse that follows, which is
+// what a printed Bible interleaves. `verse` is the first verse of the text
+// that follows the marker.
+export function verseBoundaryText(verse: number): string {
+  return ` ¦${verse} `;
+}
+
 // One verse's slice of a scripture lane, paired with the original-language
-// verse the highlighter should anchor against.
+// verse the highlighter should anchor against. `verse` is the leading verse of
+// the lane row this slice renders (the row's own start, so a USFM bridge row
+// reports the verse its text actually begins at).
 export interface CoveredLaneSlice {
+  verse: number;
   verseObjects: unknown[] | null;
   plainText: string | null;
   sourceVerseObjects: unknown[] | null;
@@ -204,7 +250,7 @@ export interface CoveredLaneSlice {
 // ("2,4") covers only its listed verses.
 export function coveredLaneSlices(
   laneIndex: Record<number, VerseDto>,
-  sourceIndex: Record<number, VerseDto>,
+  sourceIndex: Record<number, VerseDto> | undefined,
   coveredVerses: number[],
 ): { slices: CoveredLaneSlice[]; plainText: string | null } {
   const sliceOf = new Map<VerseDto, CoveredLaneSlice>();
@@ -216,16 +262,25 @@ export function coveredLaneSlices(
     let slice = sliceOf.get(laneDto);
     if (!slice) {
       const vo = verseObjectsOf(laneDto);
+      const verseObjects = vo && vo.length > 0 ? vo : null;
+      // `plainText` must cover exactly the verses the tree renders. A row whose
+      // `plain_text` column is empty but whose tree carries tokens used to
+      // contribute to the rendered slice yet vanish from the joined string —
+      // silently partial for any lane that renders the string (tq) or falls
+      // back to it (#351). Extract from the tree instead, the same walk
+      // flowHighlight mirrors, so both paths show the same verses.
+      const stored = typeof laneDto.plain_text === "string" ? laneDto.plain_text : "";
+      const plain = stored || (verseObjects ? extractPlainText(verseObjects) : "");
       slice = {
-        verseObjects: vo && vo.length > 0 ? vo : null,
-        plainText:
-          typeof laneDto.plain_text === "string" && laneDto.plain_text ? laneDto.plain_text : null,
+        verse: laneDto.verse,
+        verseObjects,
+        plainText: plain ? plain : null,
         sourceVerseObjects: null,
       };
       sliceOf.set(laneDto, slice);
       slices.push(slice);
     }
-    const sourceDto = sourceIndex[v];
+    const sourceDto = sourceIndex?.[v];
     if (!sourceDto || seenSource.has(sourceDto)) continue;
     seenSource.add(sourceDto);
     const sourceVo = verseObjectsOf(sourceDto);
@@ -242,10 +297,21 @@ export function coveredLaneSlices(
       slice.sourceVerseObjects = sourceVo;
     }
   }
-  const texts = slices
-    .map((s) => s.plainText)
-    .filter((tx): tx is string => typeof tx === "string" && tx.length > 0);
-  return { slices, plainText: texts.length > 0 ? texts.join(" ") : null };
+  // Join with a verse marker rather than a bare space so a multi-verse lane
+  // says where each verse starts (#351). A single slice gets no marker, so a
+  // singleton note's lane text is its `plain_text` verbatim — except where that
+  // column is empty and the tree is not, which is the one case the derivation
+  // above deliberately changes on the singleton path too (empty box before,
+  // the verse's text now).
+  let plainText: string | null = null;
+  for (const slice of slices) {
+    if (!slice.plainText) continue;
+    plainText =
+      plainText === null
+        ? slice.plainText
+        : plainText + verseBoundaryText(slice.verse) + slice.plainText;
+  }
+  return { slices, plainText };
 }
 
 // The reference label for a note/question row: `ref_raw` when it names exactly
@@ -257,6 +323,13 @@ export function coveredLaneSlices(
 // on screen (house rule, VerseScreen.tsx). When the covered list collapsed to
 // the single leading verse but ref_raw still carries range/comma syntax, fall
 // back to `${chapter}:${verse}`.
+//
+// The same rule applies to the CHAPTER part. `ref_raw` is free-typed (the tq
+// Reference field, QuestionsTable.tsx) and the API rewrites `verse` only when
+// the retyped chapter matches the row's own (rows.ts), so "2:3" can sit on a
+// chapter-1 row. `noteCoveredVerses` ignores the chapter part entirely, so the
+// lanes still render chapter 1 — printing "2:3" over them names a chapter that
+// is not on screen (#351 review).
 export function noteRefLabel(row: {
   chapter: number;
   verse: number;
@@ -265,7 +338,12 @@ export function noteRefLabel(row: {
   const plain = `${row.chapter}:${row.verse}`;
   const ref = row.ref_raw;
   if (!ref) return plain;
-  const versePart = ref.slice(ref.indexOf(":") + 1);
+  const colon = ref.indexOf(":");
+  if (colon >= 0) {
+    const refChapter = parseInt(ref.slice(0, colon), 10);
+    if (Number.isFinite(refChapter) && refChapter !== row.chapter) return plain;
+  }
+  const versePart = ref.slice(colon + 1);
   if (/[-,]/.test(versePart) && noteCoveredVerses(row).length === 1) return plain;
   return ref;
 }

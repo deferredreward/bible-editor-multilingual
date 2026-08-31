@@ -352,6 +352,25 @@ export interface ClaimResult {
   alreadyClaimed: boolean;
 }
 
+// A claim couldn't proceed because a row that is NOT a resolvable claimed slot
+// already holds this org: a `retired`/`failed`/`provisioning` row, or a
+// `claimed` row whose binding is no longer a live D1 on this deployment (so
+// findClaimedByOrg couldn't parse it). The `UNIQUE(org) COLLATE NOCASE` index
+// (migration 0068) spans EVERY status, so claiming a spare slot for the org
+// would trip it — the pre-fix behaviour was a 500 and a permanently unclaimable
+// org (issue #382). Distinct from pool exhaustion (null); the route maps this to
+// a 409 rather than silently reusing the held row.
+export interface ClaimBlocked {
+  blocked: "org_held";
+  // status of the row already holding the org (retired/failed/provisioning, or
+  // claimed-but-unresolvable-here), for a clearer operator-facing error.
+  status: string;
+}
+
+export function isClaimBlocked(r: ClaimResult | ClaimBlocked | null): r is ClaimBlocked {
+  return r !== null && "blocked" in r;
+}
+
 // Claims one `available` pool slot for `org`, flipping it to `claimed` and
 // stamping org/label/export_owner. Returns null ONLY when the pool is exhausted
 // (no `available` row whose binding is a live, deployed D1). Idempotent: if
@@ -366,7 +385,7 @@ export interface ClaimResult {
 export async function claimWorkspace(
   env: Env,
   opts: { org: string; label: string; exportOwner?: string },
-): Promise<ClaimResult | null> {
+): Promise<ClaimResult | ClaimBlocked | null> {
   const db = sharedDb(env);
   // Callers pass an already-canonicalized org: the sole production caller (the
   // POST /api/workspaces/pool/claim route) resolves DCS canonical casing before
@@ -388,6 +407,20 @@ export async function claimWorkspace(
     await invalidateAndReprime(env);
     return { workspace: existing, alreadyClaimed: true };
   }
+
+  // findClaimedByOrg only sees RESOLVABLE claimed rows. But the UNIQUE(org)
+  // index (0068, and the BINARY UNIQUE from 0058 before it) spans every status,
+  // so a row holding this org in ANY other state — retired/failed/provisioning,
+  // or a claimed row whose binding isn't a live D1 here (parseEntry returned
+  // null above) — would make the `UPDATE ... SET org = ?1` below trip
+  // UNIQUE(org). The pre-fix path then re-ran findClaimedByOrg (still null) and
+  // rethrew: a 500 and a permanently unclaimable org (issue #382). Refuse
+  // cleanly instead, and never silently reuse a retired slot.
+  const held = await db
+    .prepare(`SELECT status FROM workspaces WHERE org = ?1 COLLATE NOCASE LIMIT 1`)
+    .bind(org)
+    .first<{ status: string }>();
+  if (held) return { blocked: "org_held", status: held.status };
 
   const candidates = await db
     .prepare(`SELECT id, slug, binding FROM workspaces WHERE status = 'available' ORDER BY id`)

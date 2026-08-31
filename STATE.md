@@ -53,6 +53,17 @@ For the full corpus, see the memory index at
 `C:\Users\benja\.claude\projects\C--Users-benja-Documents-GitHub-bible-editor\memory\MEMORY.md`.
 Highlights that bite repeatedly:
 
+- **Marker chips are TEXT, and `smartEditVerse` rebuilds the verse's whole marker layout from the captured text
+  alone — so a capture that loses the chips silently deletes every `\q` in the verse.** `reconcileMarkers`
+  (`web/src/lib/replace.ts`) unconditionally drops every inert in-flow marker and re-inserts only the ones it
+  finds in `newPlain`. When the chips are missing, every word still round-trips, so alignment survives intact and
+  `preservedAlignment` stays **true** — neither the collateral-loss guard nor the unaligned-words toast fires —
+  and the nightly export carries the loss to master. Upstream #606: HOS ULT 11:9/11/12 lost all 11 of their `\q`
+  markers this way and it sat live on Door43 for a fortnight. The engine now guards it
+  (`markerCaptureLooksDropped`, ported from upstream `37f40985`), but the guard only covers an edit where **no
+  word changed** and only DOM captures (`capturedFromDom`). **Lesson for any future marker-loss report: check
+  whether the captured text still had its chips before suspecting the diff tiers.**
+
 - **`user_roles` is prod's live access gate, and migrations can't skip prod.** `callbackDcsAuth`
   checks `user_roles` *before* upserting into `users`, so deleting a row revokes that account's
   ability to mint a JWT and write. Production does **not** yet have the Door43 org-roles

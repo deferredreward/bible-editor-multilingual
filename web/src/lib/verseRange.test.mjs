@@ -12,7 +12,11 @@ import {
   noteCoveredVerses,
   noteOverlapsRange,
   coveredLaneSlices,
+  clampCoveredForRender,
+  LANE_RENDER_CAP,
   noteRefLabel,
+  verseBoundaryText,
+  verseObjectsOf,
 } from "./verseRange.ts";
 
 let failed = 0;
@@ -142,6 +146,41 @@ function mkVerse(verse, verseEnd, voCount = 1) {
   assert(noteCoveredVerses({ verse: 1, ref_raw: "1:1-1000000000" }).length <= 402, "huge range is bounded");
 }
 
+// --- clampCoveredForRender (issue #385: a free-text ref typo must not flood a
+// card's lanes with the whole chapter; NOTE_SPAN_CAP bounds the hang, this
+// bounds the render) ---
+{
+  // A legitimate short bridge renders every verse — unclamped, referentially
+  // identical so the lane useMemos don't churn.
+  const short = noteCoveredVerses({ verse: 2, ref_raw: "1:2-3" });
+  const shortOut = clampCoveredForRender(short);
+  assert(!shortOut.clamped, "legitimate 1:2-3 is not clamped");
+  assert(JSON.stringify(shortOut.verses) === "[2,3]", "1:2-3 still renders both verses");
+  assert(shortOut.total === 2, "1:2-3 total is 2");
+  assert(shortOut.verses === short, "unclamped list is returned by reference");
+
+  // The success-check scenario: "1:1-200" retyped into the reference expands to
+  // 200 covered verses but paints at most LANE_RENDER_CAP into the lanes.
+  const flood = noteCoveredVerses({ verse: 1, ref_raw: "1:1-200" });
+  assert(flood.length === 200, `1:1-200 covers 200 verses (got ${flood.length})`);
+  const floodOut = clampCoveredForRender(flood);
+  assert(floodOut.clamped, "1:1-200 is clamped for render");
+  assert(floodOut.verses.length === LANE_RENDER_CAP, "clamps to LANE_RENDER_CAP verses");
+  assert(floodOut.total === 200, "clamp reports the full covered total (200)");
+  assert(floodOut.verses[0] === 1, "clamp keeps the leading verse first");
+
+  // Exactly at the cap → not clamped (boundary).
+  const exact = Array.from({ length: LANE_RENDER_CAP }, (_, i) => i + 1);
+  assert(!clampCoveredForRender(exact).clamped, "a list of exactly the cap is not clamped");
+  // One over → clamped.
+  assert(clampCoveredForRender([...exact, 99]).clamped, "cap+1 is clamped");
+  // Custom cap honored.
+  assert(
+    JSON.stringify(clampCoveredForRender([1, 2, 3, 4], 2).verses) === "[1,2]",
+    "explicit cap slices the head",
+  );
+}
+
 // --- noteOverlapsRange ---
 {
   const bridge = { verse: 2, ref_raw: "1:2-3" };
@@ -186,6 +225,7 @@ function mkVerse(verse, verseEnd, voCount = 1) {
     );
     assert(out.slices.length === 1, "singleton note → one lane slice");
     assert(out.plainText === "the Son", "singleton lane plain_text unchanged");
+    assert(out.slices[0].verse === 26, "slice carries the verse its text begins at");
     assert(
       Array.isArray(out.slices[0].verseObjects) && out.slices[0].verseObjects.length === 2,
       "singleton lane keeps its 2 tokens",
@@ -208,9 +248,31 @@ function mkVerse(verse, verseEnd, voCount = 1) {
     assert(out.slices[0].verseObjects.length === 2, "first slice keeps verse 26's tokens only");
     assert(out.slices[1].verseObjects.length === 4, "second slice keeps verse 27's tokens only");
     assert(
-      out.plainText === "in clouds the Son of Man",
-      "bridge lane joins both verses' plain_text",
+      out.plainText === `in clouds${verseBoundaryText(27)}the Son of Man`,
+      "bridge lane joins both verses' plain_text with a verse-boundary marker",
     );
+  }
+
+  // #351 item 2: a discontinuous ref must not read as one continuous sentence —
+  // the marker names the verse the reader jumps to, so the elided verse 27 is
+  // visible rather than silent.
+  {
+    const index = buildVerseIndex({
+      26: dto(26, "in clouds", [w("in"), w("clouds")]),
+      27: dto(27, "skipped", [w("skipped")]),
+      28: dto(28, "he will send", [w("he"), w("will"), w("send")]),
+    });
+    const out = coveredLaneSlices(
+      index,
+      noSource,
+      noteCoveredVerses({ verse: 26, ref_raw: "13:26,28" }),
+    );
+    assert(out.slices.length === 2, "discontinuous ref → slices for 26 and 28 only");
+    assert(
+      out.plainText === `in clouds ¦28 he will send`,
+      `discontinuous lane marks the jump to verse 28 (got ${JSON.stringify(out.plainText)})`,
+    );
+    assert(!out.plainText.includes("skipped"), "the elided verse's text is not rendered");
   }
 
   // A scripture row that is itself a USFM bridge (verse_end) is mapped under
@@ -249,6 +311,48 @@ function mkVerse(verse, verseEnd, voCount = 1) {
       out.slices[1].sourceVerseObjects[0].text === "αὐτός",
       "slice 27 carries verse 27's source",
     );
+  }
+
+  // #351 item 3: `plain_text` and the verse tree must cover the SAME verses. A
+  // row whose plain_text column is empty but whose tree carries tokens rendered
+  // in the highlighted lane yet vanished from the joined string — so tq (which
+  // renders only the string) and tn's unhighlighted fallback silently dropped it.
+  {
+    const sp = { type: "text", text: " " };
+    const index = buildVerseIndex({
+      26: dto(26, "in clouds", [w("in"), sp, w("clouds")]),
+      27: dto(27, null, [w("the"), sp, w("Son")]),
+    });
+    const out = coveredLaneSlices(
+      index,
+      noSource,
+      noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }),
+    );
+    assert(out.slices.length === 2, "plain_text-less verse still yields a slice");
+    assert(
+      out.slices[1].plainText === "the Son",
+      `verse 27's text is derived from its tree (got ${JSON.stringify(out.slices[1].plainText)})`,
+    );
+    assert(
+      out.plainText === `in clouds${verseBoundaryText(27)}the Son`,
+      "the joined lane string covers every verse the tree renders",
+    );
+  }
+  // The other side of the same rule: a row with neither text nor tokens
+  // contributes to neither, instead of a phantom separator in the string.
+  {
+    const index = buildVerseIndex({
+      26: dto(26, "in clouds", [w("in"), w("clouds")]),
+      27: dto(27, null, []),
+    });
+    const out = coveredLaneSlices(
+      index,
+      noSource,
+      noteCoveredVerses({ verse: 26, ref_raw: "13:26-27" }),
+    );
+    assert(out.slices[1].plainText === null, "empty verse contributes no text");
+    assert(out.slices[1].verseObjects === null, "empty verse contributes no tree");
+    assert(out.plainText === "in clouds", "empty verse adds no boundary marker");
   }
 
   // Missing verse in the range is skipped without blanking the lane.
@@ -294,6 +398,39 @@ function mkVerse(verse, verseEnd, voCount = 1) {
     noteRefLabel({ chapter: 13, verse: 26, ref_raw: null }) === "13:26",
     "absent ref_raw falls back to chapter:verse",
   );
+  // tq questions carry the same free-typed ref_raw and get the same label
+  // (#351 item 1) — the tq card printed `chapter:verse` and hid the range.
+  assert(
+    noteRefLabel({ chapter: 1, verse: 2, ref_raw: "1:2-3" }) === "1:2-3",
+    "tq bridged question shows its range",
+  );
+  assert(
+    noteRefLabel({ chapter: 1, verse: 2, ref_raw: "1:2,4" }) === "1:2,4",
+    "tq discontinuous question shows both verses",
+  );
+  // #351 review: a free-typed ref naming ANOTHER chapter must not be printed
+  // over lanes that render this chapter — noteCoveredVerses ignores the chapter
+  // part, so "2:3" on a chapter-1 row still shows chapter 1's verses.
+  assert(
+    noteRefLabel({ chapter: 1, verse: 5, ref_raw: "2:3" }) === "1:5",
+    "cross-chapter ref falls back to this row's chapter:verse",
+  );
+  assert(
+    noteRefLabel({ chapter: 2, verse: 5, ref_raw: "1:5-7" }) === "2:5",
+    "cross-chapter range falls back rather than advertising another chapter",
+  );
+  // A ref with no chapter part at all keeps its previous verbatim treatment.
+  assert(noteRefLabel({ chapter: 1, verse: 5, ref_raw: "5" }) === "5", "colon-less ref verbatim");
+}
+
+// --- verseObjectsOf (#351 item 4: one exported copy of the content cast) ---
+{
+  const tokens = [{ type: "word", tag: "w", text: "a" }];
+  assert(verseObjectsOf({ content: { verseObjects: tokens } }) === tokens, "returns the tree");
+  assert(verseObjectsOf({ content: {} }) === null, "no verseObjects → null");
+  assert(verseObjectsOf({ content: null }) === null, "null content → null");
+  assert(verseObjectsOf(null) === null, "null dto → null");
+  assert(verseObjectsOf(undefined) === null, "undefined dto → null");
 }
 
 if (failed) {

@@ -31,7 +31,7 @@ import {
 } from "./highlight.ts";
 import { GREEK, HEBREW } from "./scriptDetect.ts";
 import { shortSupport } from "./supportReference.ts";
-import { buildVerseIndex } from "./verseRange.ts";
+import { buildVerseIndex, noteCoveredVerses, verseObjectsOf } from "./verseRange.ts";
 
 const CONTEXT_WINDOW = 5;
 const HEBREW_GAP = /[&…]+|\.{3}/g;
@@ -83,10 +83,23 @@ function plainOf(v: VerseDto | undefined): string {
   return Array.isArray(vo) ? extractPlainText(vo) : "";
 }
 
-function verseObjectsOf(v: VerseDto | undefined): unknown[] | null {
-  if (!v) return null;
-  const vo = (v.content as { verseObjects?: unknown[] } | null)?.verseObjects;
-  return Array.isArray(vo) ? vo : null;
+// Join the scripture text of every verse a note covers into one running string.
+// A bridged note (ref_raw e.g. "13:26-27") must feed the AI the same scripture
+// the translator sees, not just its leading verse (issue #388). Verses join with
+// a plain space rather than a `\v` boundary marker: the marker is USFM plumbing
+// that would only add noise to a natural-language prompt — the model reasons over
+// running text. Reduces to the single leading verse for the common singleton, so
+// non-bridged rows are unchanged.
+function joinCoveredText(
+  laneIndex: Record<number, VerseDto>,
+  coveredVerses: number[],
+): string {
+  const parts: string[] = [];
+  for (const v of coveredVerses) {
+    const text = plainOf(laneIndex[v]);
+    if (text) parts.push(text);
+  }
+  return parts.join(" ");
 }
 
 function gatherContext(
@@ -150,11 +163,20 @@ export function buildTnQuickRequest(
   const ustByVerse = data.verses.UST;
   // Resolve through the expanded index — verses[bv] is keyed by verse_start,
   // so a direct [row.verse] lookup misses bridged ranges (\v 8-9).
-  const ultVerse = buildVerseIndex(ultByVerse)[row.verse];
-  const ustVerse = buildVerseIndex(ustByVerse)[row.verse];
+  const ultIndex = buildVerseIndex(ultByVerse);
+  const ustIndex = buildVerseIndex(ustByVerse);
+  const ultVerse = ultIndex[row.verse];
+  const ustVerse = ustIndex[row.verse];
 
-  const ultText = plainOf(ultVerse);
-  const ustText = plainOf(ustVerse);
+  // The scripture the AI reasons over spans every verse the note covers (issue
+  // #388); selection/hebrewGuess resolution below still anchors on the leading
+  // verse's alignment (the quote's occurrence is counted per verse), so only the
+  // `verse` context text widens. `noteCoveredVerses` returns `[row.verse]` for a
+  // singleton, so ultText/ustText are byte-identical to the old leading-verse
+  // `plainOf(ultVerse)` for non-bridged rows.
+  const coveredVerses = noteCoveredVerses(row);
+  const ultText = joinCoveredText(ultIndex, coveredVerses);
+  const ustText = joinCoveredText(ustIndex, coveredVerses);
   if (!ultText) return { ok: false, error: { reason: "missing_ult_verse" } };
   if (!ustText) return { ok: false, error: { reason: "missing_ust_verse" } };
 

@@ -250,6 +250,71 @@ test("buildTnQuickRequest fails with hebrew_not_found for an English phrase that
   }
 });
 
+// A note whose ref_raw bridges verses (e.g. "13:26-27") must feed the AI the
+// scripture of EVERY covered verse, not just its leading verse — otherwise a
+// redraft sees less context than the translator does (issue #388). The leading
+// verse (26) carries the alignment the quote resolves against; the trailing
+// verse (27) contributes only its scripture text to `ult.verse`/`ust.verse`.
+function makeBridgedGreekPayload() {
+  const at = (chapter, verse) => ({ book: "MRK", chapter, verse });
+  return {
+    book: "MRK",
+    chapter: 13,
+    verses: {
+      ULT: {
+        26: verseVO([gms("ἐρχόμενον", ["coming", "in", "clouds"])], "coming in clouds", at(13, 26)),
+        27: verse("and he will gather his chosen ones", at(13, 27)),
+      },
+      UST: {
+        26: verse("They will see me arriving", at(13, 26)),
+        27: verse("I will send angels to gather my people", at(13, 27)),
+      },
+      UGNT: {
+        26: verseVO([gw("ἐρχόμενον"), gt(" ")], "ἐρχόμενον", at(13, 26)),
+        27: verse("καὶ ἐπισυνάξει", at(13, 27)),
+      },
+    },
+    tn: [],
+    tq: [],
+    twl: [],
+    verseStatuses: [],
+    verseLaneChecks: [],
+  };
+}
+
+test("buildTnQuickRequest spans a bridged note's scripture across every covered verse (#388)", () => {
+  const row = makeRow({ verse: 26, ref_raw: "13:26-27", quote: "ἐρχόμενον" });
+  const result = buildTnQuickRequest(row, makeBridgedGreekPayload());
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    // ult.verse / ust.verse carry BOTH verses (space-joined, no \v marker), so
+    // the AI reasons over the same scripture the translator sees. Before #388
+    // these were the leading verse alone ("coming in clouds" / "They will see
+    // me arriving") — this assertion is the red-before/green-after pin.
+    assert.equal(result.request.ult.verse, "coming in clouds and he will gather his chosen ones");
+    assert.equal(
+      result.request.ust.verse,
+      "They will see me arriving I will send angels to gather my people",
+    );
+    // The quote still resolves against the LEADING verse's alignment — spanning
+    // widens the context text only, it does not change quote/selection anchoring.
+    assert.equal(result.request.ult.selection, "coming in clouds");
+    assert.equal(result.request.hebrewGuess, "ἐρχόμενον");
+  }
+});
+
+test("buildTnQuickRequest leaves a single-verse note's scripture unchanged (#388 regression floor)", () => {
+  // The covered-verse path must reduce to the leading verse exactly for the
+  // common singleton — noteCoveredVerses returns [verse], so ult.verse is the
+  // one verse's text, byte-identical to the old leading-verse lookup.
+  const row = makeRow({ quote: "βλέπεις" });
+  const result = buildTnQuickRequest(row, makeAlignedGreekPayload());
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.request.ult.verse, "Do you see buildings");
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Copy contract (#346). A unit test can't render the components, but the defect
 // this fixes was purely "a call site forgot that the OL path needs its own
@@ -319,6 +384,9 @@ test("the OL-failure strings name both scripts and give no English-only advice (
   const keys = [
     ["appShell", "shell", "aiSourceQuoteNotFound"],
     ["flowReview", "queue", "sourceQuoteNotAligned"],
+    // #360: the flows notes screen (the demo surface) split its combined
+    // unalignable-quote branch and owes the same OL-path contract.
+    ["flowTranslate", "sourceQuoteNotAligned"],
   ];
   const at = (obj, keyPath) => keyPath.reduce((o, k) => (o == null ? o : o[k]), obj);
 

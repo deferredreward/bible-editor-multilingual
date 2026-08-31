@@ -26,6 +26,7 @@
 
 import { findTargetHighlights, type HighlightKey } from "./highlight.ts";
 import { isCharacterWrapper, isInFlowMarker } from "./usfm.ts";
+import { verseBoundaryText } from "./verseRange.ts";
 
 export interface FlowSegment {
   text: string;
@@ -150,8 +151,10 @@ export function flowLaneSegments(
 
 // One verse's slice of a lane: its tree, its stored plain text, and the OL verse
 // to anchor against. Structurally what `coveredLaneSlices` (lib/verseRange)
-// returns.
+// returns. `verse` is the verse this slice's text begins at — it labels the
+// boundary marker between slices.
 export interface FlowLaneSlice {
+  verse: number;
   verseObjects: unknown[] | null | undefined;
   plainText: string | null | undefined;
   sourceVerseObjects?: unknown[] | null;
@@ -159,7 +162,9 @@ export interface FlowLaneSlice {
 
 // Segments for a lane that spans several verses — a note whose `ref_raw` bridges
 // verses (issue #341). Each verse is highlighted SEPARATELY and the segments are
-// joined with an unmarked single space.
+// joined by an unmarked verse-boundary marker (`verseBoundaryText`): a bare
+// space let a discontinuous ref like "13:26,28" read as one sentence with verse
+// 27 silently elided (#351).
 //
 // Highlighting one concatenated tree instead is wrong: a highlight key is
 // `${text}|${occurrence}` and occurrence numbers are counted per verse, so two
@@ -199,7 +204,7 @@ export function flowLaneSegmentsAcross(
       slice.sourceVerseObjects,
     );
     if (segments.length === 0) continue;
-    if (out.length > 0) out.push({ text: " ", marked: false });
+    if (out.length > 0) out.push({ text: verseBoundaryText(slice.verse), marked: false });
     out.push(...segments);
   }
   return out;

@@ -113,12 +113,13 @@ import { useUnsavedGuard } from "../../hooks/useUnsavedGuard";
 import { resolveSourceRef } from "../../lib/sourceRef";
 import {
   buildVerseIndex,
+  clampCoveredForRender,
   coveredLaneSlices,
   noteCoveredVerses,
   noteRefLabel,
 } from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
-import { tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
+import { introRedoTimeoutMs, tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
 import { resolveFlowChipStatus, flowChipKind, type FlowChipStatus } from "../../lib/flowStatusChip";
 import { flowLaneSegmentsAcross, type FlowSegment } from "../../lib/flowHighlight";
 import { isHebrewBook } from "../../lib/sourceSearch";
@@ -159,10 +160,6 @@ type CardStatus = "approved" | "skipped";
 // Content width. The mockup is a 430px phone shell; 480 keeps the same one-column
 // reading measure while giving desktop a little more room for long notes.
 const COLUMN_PX = 480;
-
-// Escape hatch for intro Redo: single-row translate rarely needs this long, but
-// the spinner must not stick forever if onComplete never fires.
-const INTRO_REDO_TIMEOUT_MS = 15 * 60 * 1000;
 
 // tA article type, derived from the row's support reference:
 // "rc://*/ta/man/translate/figs-metaphor" → slug "figs-metaphor". The display
@@ -726,13 +723,18 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   // #341). `noteCoveredVerses` returns `[row.verse]` for the common singleton
   // (and for intro rows), so those lanes are unchanged.
   const coveredVerses = useMemo(() => (row ? noteCoveredVerses(row) : []), [row]);
+  // A free-text `ref_raw` typo like "1:1-200" would paint the whole chapter into
+  // BOTH lanes of one card (issue #385). Clamp what a single card renders to a
+  // sane number of verses — real bridged notes span a handful — without touching
+  // NOTE_SPAN_CAP or the lock/checkoff paths that key off the full covered list.
+  const renderCovered = useMemo(() => clampCoveredForRender(coveredVerses), [coveredVerses]);
   const ultLane = useMemo(
-    () => coveredLaneSlices(ultIndex, sourceIndex, coveredVerses),
-    [ultIndex, sourceIndex, coveredVerses],
+    () => coveredLaneSlices(ultIndex, sourceIndex, renderCovered.verses),
+    [ultIndex, sourceIndex, renderCovered.verses],
   );
   const ustLane = useMemo(
-    () => coveredLaneSlices(ustIndex, sourceIndex, coveredVerses),
-    [ustIndex, sourceIndex, coveredVerses],
+    () => coveredLaneSlices(ustIndex, sourceIndex, renderCovered.verses),
+    [ustIndex, sourceIndex, renderCovered.verses],
   );
   const ultText = ultLane.plainText;
   const ustText = ustLane.plainText;
@@ -1122,12 +1124,18 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
         setEditing(false);
         keepSpinningForPipeline = true;
         clearIntroRedoTimer();
+        // Scale the stuck-spinner budget to what start() actually returned. An
+        // `already_running` answer means we latched onto a broader in-flight
+        // job (chapter-wide, ~1h) instead of a fresh single-row run; the old
+        // fixed 15-minute timer misreported that healthy job as a `timeout`
+        // failure (#376). A cancel/dismiss still settles early via the store
+        // subscriptions; this timer is only the last-resort backstop.
         introRedoTimerRef.current = window.setTimeout(() => {
           settleIntroRedo(
             { job_id: started.jobId, state: "failed", error_message: "timeout" },
             { timedOut: true },
           );
-        }, INTRO_REDO_TIMEOUT_MS);
+        }, introRedoTimeoutMs(started.status));
         // Race: completion may have fired before the ref was set. If the
         // store already shows a terminal row, settle now instead of spinning.
         const existing = pipelineStore.get(started.jobId);
@@ -1150,14 +1158,19 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
             ? t("flowTranslate.noLaneTextForAi", { label: litLabel })
             : built.error.reason === "missing_ust_verse"
               ? t("flowTranslate.noLaneTextForAi", { label: simLabel })
-              : // Both unalignable-quote reasons land here: this copy is
-                // already script-neutral ("this note's quote"), so it reads
-                // correctly for an English phrase and for a Hebrew/Greek
-                // quote alike (#346).
-                built.error.reason === "hebrew_not_found" ||
-                  built.error.reason === "source_quote_not_found"
-                ? t("flowTranslate.quoteMatchFailed", { label: litLabel })
-                : t("flowTranslate.redoMissingData"),
+              : // The two unalignable-quote reasons need DIFFERENT copy: the
+                // English-path advice ("copy the support phrase") is meaningless
+                // for a Hebrew/Greek quote, and the original-language advice is
+                // meaningless for an English phrase. This screen used to collapse
+                // both onto one diagnostic-only string, leaving the demo surface
+                // the only place with no remediation (#360); Shell/ReviewQueue
+                // already split them (#346). Both interpolate {{label}} rather
+                // than hardcoding "ULT" (#7 — BSOJ/Arabic).
+                built.error.reason === "source_quote_not_found"
+                ? t("flowTranslate.sourceQuoteNotAligned", { label: litLabel })
+                : built.error.reason === "hebrew_not_found"
+                  ? t("flowTranslate.quoteNotAligned", { label: litLabel })
+                  : t("flowTranslate.redoMissingData"),
         );
         return;
       }
@@ -1580,6 +1593,17 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
                 labelFontFamily={theme.typography.fontFamily}
                 mark={mark}
               />
+              {renderCovered.clamped && (
+                <Typography
+                  variant="caption"
+                  sx={{ display: "block", mt: 0.5, color: "text.secondary", fontStyle: "italic" }}
+                >
+                  {t("flowTranslate.laneClampHint", {
+                    shown: renderCovered.verses.length,
+                    total: renderCovered.total,
+                  })}
+                </Typography>
+              )}
             </Box>
 
             {(() => {

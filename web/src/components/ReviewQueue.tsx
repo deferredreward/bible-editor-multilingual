@@ -70,8 +70,14 @@ import { useProjectConfig } from "../hooks/useProjectConfig";
 import { useUnsavedGuard } from "../hooks/useUnsavedGuard";
 import { outbox, onOutboxResult, type OutboxOp } from "../sync/outbox";
 import { drafts, rowKey, type DraftRecord } from "../sync/drafts";
-import { buildVerseIndex } from "../lib/verseRange";
+import {
+  buildVerseIndex,
+  coveredLaneSlices,
+  noteCoveredVerses,
+  verseObjectsOf,
+} from "../lib/verseRange";
 import { buildTnQuickRequest } from "../lib/tnQuickRequest";
+import { isApprovableRow } from "../lib/reviewApproval";
 import { buildQuoteFromSelection, selectionFromQuote } from "../lib/quoteBuilder";
 import { shortSupport } from "../lib/supportReference";
 import type { HighlightKey } from "../lib/highlight";
@@ -83,7 +89,6 @@ import {
   type ChapterLockedBody,
   type TnRow,
   type TqRow,
-  type VerseDto,
 } from "../sync/api";
 
 type RowKindTQ = "tn" | "tq";
@@ -153,12 +158,6 @@ function stateLabel(
   state: TnRow["translation_state"] | TqRow["translation_state"],
 ): "draft" | "edited" | "validated" {
   return state === "validated" || state === "edited" ? state : "draft";
-}
-
-function verseObjectsOf(v: VerseDto | undefined): unknown[] | null {
-  if (!v) return null;
-  const vo = (v.content as { verseObjects?: unknown[] } | null)?.verseObjects;
-  return Array.isArray(vo) ? vo : null;
 }
 
 // Single-use midpoint placement for "insert note after this one". Shell.tsx
@@ -753,13 +752,13 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
   async function handleApproveAll(kind: RowKindTQ) {
     if (!data || approveAllProgress) return;
     const source: QueueRow[] = kind === "tn" ? data.tn : data.tq;
-    // Trashed notes are excluded on purpose: validating one would promote a row
-    // the editor has already thrown away into the nightly context-repo export's
-    // few-shot set (api/src/rows.ts:943). tq has no trashed_at, so the guard is
-    // a no-op there.
-    const list = source.filter(
-      (r) => r.translation_state !== "validated" && (r as TnRow).trashed_at == null,
-    );
+    // Only rows that actually have a draft to validate are approvable (see
+    // isApprovableRow): the server refuses to validate a never-drafted row
+    // (translation_state IS NULL) or a trashed note, so including those made
+    // Approve-all 404 and halt on the first pristine row, and put a number on the
+    // button the click could never reach (#238). tq has no trashed_at, so the
+    // trashed guard is a no-op there.
+    const list = source.filter(isApprovableRow);
     setApproveAllError(null);
     if (list.length === 0) return;
     setApproveAllProgress({ done: 0, total: list.length });
@@ -1188,18 +1187,22 @@ export function ReviewQueue({ book, chapter, onNavigate }: ReviewQueueProps) {
     );
   }
 
-  // Same filter handleApproveAll uses — trashed notes are skipped there, so
-  // counting them here would put a number on the button that the click can
-  // never reach ("Approve all notes (1)" doing nothing). tq has no trashed_at,
-  // so the questions count needs no equivalent guard.
-  const unapprovedNotes = data.tn.filter(
-    (r) => r.translation_state !== "validated" && r.trashed_at == null,
-  ).length;
-  const unapprovedQuestions = data.tq.filter((r) => r.translation_state !== "validated").length;
+  // Same filter handleApproveAll uses (isApprovableRow): counting rows the click
+  // can never reach — trashed notes, or pristine rows the server won't validate —
+  // would put a number on the button that Approve-all can never work down (#238).
+  const unapprovedNotes = data.tn.filter(isApprovableRow).length;
+  const unapprovedQuestions = data.tq.filter(isApprovableRow).length;
   const rowState = selectedRow ? stateLabel(selectedRow.translation_state) : "draft";
   const chipKind = isTrashed ? "trashed" : rowState === "validated" ? "approved" : rowState;
-  const ultText = selectedRow ? (ultIndex[selectedRow.verse]?.plain_text ?? null) : null;
-  const ustText = selectedRow ? (ustIndex[selectedRow.verse]?.plain_text ?? null) : null;
+  // A bridged note/question (ref_raw e.g. "13:26-27") must show every covered
+  // verse's scripture, not just its leading verse — the old leading-verse
+  // `ultIndex[selectedRow.verse]?.plain_text` lookup silently dropped the rest
+  // (issue #388). `coveredLaneSlices` joins the covered verses' plainText and
+  // reduces to the single leading verse for the common singleton (and intro
+  // rows), so non-bridged rows are unchanged. Mirrors TranslateNotesScreen.
+  const coveredVerses = selectedRow ? noteCoveredVerses(selectedRow) : [];
+  const ultText = coveredLaneSlices(ultIndex, sourceIndex, coveredVerses).plainText;
+  const ustText = coveredLaneSlices(ustIndex, sourceIndex, coveredVerses).plainText;
   const verseTwl = selectedRow ? data.twl.filter((w) => w.verse === selectedRow.verse) : [];
   const sourceText =
     selectedRow && activeKind === "tq"
