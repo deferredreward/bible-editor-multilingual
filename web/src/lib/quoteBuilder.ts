@@ -12,7 +12,7 @@
 
 import type { HighlightKey } from "./highlight";
 import { matchNorm, matchSourceTokens } from "./highlight.ts";
-import { isCharacterWrapper, isSourceWordContainer } from "./usfm.ts";
+import { isCharacterWrapper, isSourceWordContainer, isSuperscription } from "./usfm.ts";
 
 // Build a HighlightKey from a Hebrew/Greek string + 1-based occurrence.
 // All callers (picker + buildQuoteFromSelection + collectTargetTokens)
@@ -252,11 +252,11 @@ export function collectTargetTokens(
           ? [...stack, { content, occurrence, key: tokenKey(content, occurrence) }]
           : stack;
         walk(children, nextStack);
-      } else if (o["type"] === "section" && o["tag"] === "d") {
-        // \d (Psalm superscription) is type:"section" but its content IS
-        // alignable verse body — descend, carrying the current ancestor
-        // stack unchanged (it contributes no source of its own). Mirrors
-        // collectMilestoneRuns / collectUhbWords.
+      } else if (isSuperscription(o)) {
+        // \d (Psalm superscription) content IS alignable verse body —
+        // descend, carrying the current ancestor stack unchanged (it
+        // contributes no source of its own). Mirrors collectMilestoneRuns /
+        // collectUhbWords.
         walk((o["children"] as unknown[] | undefined) ?? [], stack);
       } else if (isCharacterWrapper(o)) {
         // \qs (Selah) and other character wrappers hold \zaln / \w content

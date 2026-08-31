@@ -184,6 +184,24 @@ export function isZalnMilestone(node: unknown): node is Record<string, unknown> 
   return !!o && o["type"] === "milestone" && o["tag"] === "zaln";
 }
 
+// True iff `node` is a `\d` Psalm/canticle superscription. usfm-js 3.5.0
+// parses a real `\d` as `{tag:"d", text}` with NO `type` — only \s/\s1…\s5
+// get `type:"section"` (see SECTION_HEADER_TAGS above, which deliberately
+// excludes "d"). Several call sites — highlight.ts's nodeIsPsalmTitle,
+// alignment.ts's isPsalmTitleWrapper, quoteBuilder.ts's collectTargetTokens,
+// scripts/scan-align-order.mjs — used to duplicate an inline
+// `type:"section" && tag:"d"` check instead, a shape the real parser never
+// emits, so those walks never matched a real superscription (#384/#410).
+// `tag === "d"` alone is a strict superset of that old defensive shape (any
+// node satisfying it also satisfies this), so centralizing on it here is
+// behavior-safe: it can only make a walk find MORE `\d` nodes, never fewer.
+// `isSourceWordContainer` below delegates its own `\d` arm to this so the
+// two predicates can't drift apart again.
+export function isSuperscription(node: unknown): node is Record<string, unknown> {
+  const o = node as Record<string, unknown> | null;
+  return !!o && o["tag"] === "d";
+}
+
 // The ONE descent rule for source-word walks: a node whose CHILDREN are source
 // verse body and must therefore be walked through, rather than a token of its
 // own (issue #370 item 2). Three kinds qualify:
@@ -191,8 +209,8 @@ export function isZalnMilestone(node: unknown): node is Record<string, unknown> 
 //     keyterm milestone's `\w` is not verse-body source, see that predicate),
 //   - `\qs`-style character wrappers (isCharacterWrapper — a Selah aligned as
 //     `zaln → qs → w`, or `qs → zaln → w`; issue #331/#354),
-//   - `\d` Psalm superscriptions, which usfm-js types as `section` but whose
-//     content IS alignable Hebrew verse body.
+//   - `\d` Psalm superscriptions (isSuperscription) — content IS alignable
+//     Hebrew verse body.
 // `collectSourceWordNodes` (quoteBuilder.ts) is built on this, and the walks
 // that cannot project off it — because they render as they go, or interleave
 // text nodes — gate their descent on this predicate instead, so every
@@ -204,7 +222,7 @@ export function isZalnMilestone(node: unknown): node is Record<string, unknown> 
 export function isSourceWordContainer(node: unknown): boolean {
   const o = node as Record<string, unknown> | null;
   if (!o) return false;
-  return isZalnMilestone(o) || isCharacterWrapper(o) || (o["type"] === "section" && o["tag"] === "d");
+  return isZalnMilestone(o) || isCharacterWrapper(o) || isSuperscription(o);
 }
 
 // A character wrapper holds verse content that belongs to THIS verse and must

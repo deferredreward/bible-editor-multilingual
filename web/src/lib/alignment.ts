@@ -26,7 +26,7 @@
 // alignment), unchanged for callers / UI.
 
 import { nfc } from "./hebrew.ts";
-import { extractPlainText, isSourceWordContainer } from "./usfm.ts";
+import { extractPlainText, isSourceWordContainer, isSuperscription } from "./usfm.ts";
 import { tokenizeEditableText } from "./replace.ts";
 
 export interface SourceWord {
@@ -154,15 +154,14 @@ function isAlignmentWrapper(n: ParsedNode | undefined): boolean {
   const children = n["children"];
   return Array.isArray(children) && children.length > 0;
 }
-// \d (Psalm superscription) is `type:"section"` — not `type:"quote"`, so
-// isAlignmentWrapper can't cover it — but its content IS alignable verse
-// body (see highlight.ts's renderer special case). When it arrives with
-// children, descend like a \qs wrapper so the inner zaln / word nodes
-// enter the alignment stream; a childless \d (bare marker or text-only)
-// stays opaque and rides along verbatim.
+// \d (Psalm superscription, `isSuperscription` — usfm.ts) is not
+// `type:"quote"`, so isAlignmentWrapper can't cover it — but its content IS
+// alignable verse body (see highlight.ts's renderer special case). When it
+// arrives with children, descend like a \qs wrapper so the inner zaln / word
+// nodes enter the alignment stream; a childless \d (bare marker or
+// text-only) stays opaque and rides along verbatim.
 function isPsalmTitleWrapper(n: ParsedNode | undefined): boolean {
-  if (!n || typeof n !== "object") return false;
-  if (n["type"] !== "section" || n["tag"] !== "d") return false;
+  if (!isSuperscription(n)) return false;
   const children = n["children"];
   return Array.isArray(children) && children.length > 0;
 }
