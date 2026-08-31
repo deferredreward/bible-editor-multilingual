@@ -169,6 +169,12 @@ import { SCRIPTURE_FONT_STACK } from "../../theme";
 export interface TranslateScriptureScreenProps extends FlowScreenContext {
   book: string;
   chapter: number;
+  // Optional deep-link verse (e.g. the SyncStatusBar "N unsaved" jump, a
+  // manual URL edit, or browser Back/Forward). Seeds the queue cursor to the
+  // first queue entry at or after this verse on mount/chapter change, and
+  // re-seeks it again on any later change to this prop within the same
+  // chapter — mirrors TranslateNotesScreen's `verse` prop (#389).
+  verse?: number;
 }
 
 // A verse is statused in exactly two ways. "approved" is the server's done
@@ -221,6 +227,7 @@ export default function TranslateScriptureScreen({
   role,
   book,
   chapter,
+  verse,
 }: TranslateScriptureScreenProps) {
   const { t } = useTranslation();
   const theme = useTheme();
@@ -300,15 +307,62 @@ export default function TranslateScriptureScreen({
     const firstOpen = verseNums.findIndex((v) => !seed[v]);
     setQueue({ key: chapterKey, verses: verseNums });
     setStatuses(seed);
-    setCursor(firstOpen < 0 ? 0 : firstOpen);
-    setView(verseNums.length > 0 && firstOpen < 0 ? "done" : "verses");
+    if (verse != null) {
+      // A verse past the last queue entry has no >= match (-1); clamp to the
+      // last verse instead of falling back to index 0, which would jump to
+      // the top of the chapter instead of near where the deep link pointed.
+      const seekIdx = verseNums.findIndex((v) => v >= verse);
+      setCursor(seekIdx < 0 ? (verseNums.length > 0 ? verseNums.length - 1 : 0) : seekIdx);
+    } else {
+      setCursor(firstOpen < 0 ? 0 : firstOpen);
+    }
+    // A deep-linked verse always lands on the verse view, even if every verse
+    // in the chapter is already approved — "done" would otherwise discard the
+    // requested target.
+    setView(verse != null ? "verses" : verseNums.length > 0 && firstOpen < 0 ? "done" : "verses");
     setReviewing(false);
+    // `verse` deliberately not a dep beyond this — this effect only builds the
+    // queue and seeds its cursor once per mount/chapter change (the
+    // `queue?.key === chapterKey` guard above). Re-seeking on a later,
+    // same-chapter change to `verse` is handled by the dedicated effect below,
+    // which does not rebuild the queue or reset statuses.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, book, chapter, queue, chapterKey, verseNums]);
 
   const queueVerses = queue?.key === chapterKey ? queue.verses : null;
   const total = queueVerses?.length ?? 0;
   const verseNum = queueVerses && cursor < queueVerses.length ? queueVerses[cursor] : null;
   const statusedCount = queueVerses ? queueVerses.filter((v) => statuses[v]).length : 0;
+
+  // Re-seek the cursor when `verse` changes while the queue is already built
+  // for the current chapter — e.g. editing the URL from #/scripture/JON/2 to
+  // #/scripture/JON/2/7, or Back/Forward between two verses of the same
+  // chapter. Cross-chapter deep links are handled above, by the queue rebuild
+  // itself. Guarded on an actual change of `verse` (via the ref, not just its
+  // presence in the dep array) so this never fires on plain cursor navigation
+  // (Prev/Next), a status change, or unrelated re-renders — only a real prop
+  // change moves the cursor here. Mirrors TranslateNotesScreen's verse re-seek
+  // effect (#389).
+  const prevVerseRef = useRef(verse);
+  useEffect(() => {
+    if (prevVerseRef.current === verse) return;
+    prevVerseRef.current = verse;
+    if (!queueVerses || queueVerses.length === 0) return;
+    if (verse == null) {
+      // The verse segment was dropped (e.g. #/scripture/JON/2/7 → #/scripture/
+      // JON/2 via Back/Forward or a manual URL edit). Restore the same
+      // no-verse init the mount/queue-build path uses: first still-open
+      // verse, or the done view when every verse in the chapter is already
+      // statused.
+      const firstOpen = queueVerses.findIndex((v) => !statuses[v]);
+      setCursor(firstOpen < 0 ? 0 : firstOpen);
+      setView(firstOpen < 0 ? "done" : "verses");
+      return;
+    }
+    const seekIdx = queueVerses.findIndex((v) => v >= verse);
+    setCursor(seekIdx < 0 ? queueVerses.length - 1 : seekIdx);
+    setView("verses");
+  }, [verse, queueVerses, statuses]);
 
   // ── per-lane rows + baselines ────────────────────────────────────────────
   const bases = useMemo<Record<TargetLane, VerseDto | null>>(

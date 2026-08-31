@@ -431,10 +431,10 @@ export function SyncStatusBar({ onNavigate, hideInlineChip, hideFloating, flowRo
       // book/chapter/verse this variant does not carry.
       location.hash = `#/templates/${encodeURIComponent(m.templateId)}`;
     } else if (m.kind === "verse") {
-      // Deliberately use 3-segment #/scripture/B/C/V for chrome: App.tsx's
-      // 1–2 segment #/scripture form opens translateScripture (no verse), while
-      // the verse-level form still lands on the scripture chrome that can seek
-      // to the draft's verse (#229).
+      // 3-segment #/scripture/B/C/V: App.tsx's `ts` route accepts the optional
+      // verse segment and TranslateScriptureScreen seeds its cursor from it on
+      // mount, so this lands the translator on the exact drafted verse, not
+      // just the top of the chapter (#229, #389).
       if (flowRouting) location.hash = `#/scripture/${m.book}/${m.chapter}/${m.verse}`;
       else onNavigate?.(m.book, m.chapter, m.verse);
     } else {
