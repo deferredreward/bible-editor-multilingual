@@ -70,7 +70,12 @@ import { buildQuoteFromSelection, collectTargetTokens, selectionFromQuote } from
 import type { HighlightKey } from "../../lib/highlight";
 import { nfc } from "../../lib/hebrew";
 import { isHebrewBook } from "../../lib/sourceSearch";
-import { buildVerseIndex, formatVerseLabel, isRangeRow } from "../../lib/verseRange";
+import {
+  buildVerseIndex,
+  formatVerseLabel,
+  isRangeRow,
+  verseObjectsOf,
+} from "../../lib/verseRange";
 import { versionLabel } from "../../lib/versionLabels";
 import { SCRIPTURE_FONT_STACK } from "../../theme";
 import { QuoteBuilderPopper } from "../QuoteBuilderPopper";
@@ -122,12 +127,6 @@ const EMPTY_FORM: LinkForm = { quote: "", occurrence: "1", article: "" };
 // has no content for it (a lane pending replacement is omitted from the
 // payload). Callers pass a row resolved through `buildVerseIndex`, never a raw
 // `verses[bv][n]` lookup — see the `verseIndexes` memo below.
-function verseObjectsOf(dto: VerseDto | undefined | null): unknown[] | null {
-  const content = dto?.content as { verseObjects?: unknown[] } | null | undefined;
-  const vo = content?.verseObjects;
-  return Array.isArray(vo) ? vo : null;
-}
-
 // `me` / `onNavigate` come with the shared flow-screen contract but this screen
 // needs neither: identity is not shown here, and verse navigation moves the
 // hash (#/words/…) so the user stays on this screen rather than jumping to the
