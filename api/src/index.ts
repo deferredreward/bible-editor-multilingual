@@ -29,7 +29,7 @@ import { syncTemplates } from "./templateSync";
 import { attachAuth, requireAuth, requireCsrf, mintDevToken, startDcsAuth, callbackDcsAuth, authMe, authLogout, refreshToken, updateLastLocation, currentUserId } from "./auth";
 import { workspaceRoutes } from "./workspaceRoutes";
 import { blockViewerWrites } from "./viewerGuard";
-import { listWorkspaces, resolveWorkspace, workspaceEnv, parseWorkspaceCookie, requireWorkspaceMatch, primeWorkspaces } from "./workspaces";
+import { listWorkspaces, resolveWorkspaceFresh, workspaceEnv, parseWorkspaceCookie, requireWorkspaceMatch, primeWorkspaces } from "./workspaces";
 
 export interface Env {
   DB: D1Database;
@@ -484,10 +484,17 @@ export default {
     //
     // primeWorkspaces() loads the roster from the shared-DB registry table once
     // per isolate (fails soft to the WORKSPACES env var, then the implicit
-    // default) so the synchronous resolveWorkspace below reads it. It's a no-op
-    // after the first request in this isolate.
+    // default) so the resolve below reads it. It's a no-op after the first
+    // request in this isolate.
+    //
+    // resolveWorkspaceFresh (not the plain resolveWorkspace) is used here to
+    // close the warm-stale cross-tenant hole (issue #418): when the be_ws
+    // cookie names a slug this warm isolate's cache lacks, it re-reads the
+    // registry ONCE per rate-limit window before falling back — so a workspace
+    // claimed on a sibling isolate isn't silently served as list[0] (a
+    // different tenant's D1). A genuinely-dead slug still lands on list[0].
     await primeWorkspaces(env);
-    const ws = resolveWorkspace(env, parseWorkspaceCookie(request));
+    const ws = await resolveWorkspaceFresh(env, parseWorkspaceCookie(request));
     return app.fetch(request, workspaceEnv(env, ws), ctx);
   },
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
