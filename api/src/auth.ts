@@ -32,6 +32,7 @@ import {
 import {
   sharedDb,
   listWorkspaces,
+  refreshWorkspaceRegistry,
   resolveLoginWorkspace,
   serializeWorkspaceCookie,
   workspaceEnv,
@@ -686,6 +687,18 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
     dcsUsername: dcsUser.login,
   });
   if (autoClaim.outcome === "claimed" || autoClaim.outcome === "already_claimed") {
+    // claimWorkspace already reprimed this isolate's registry cache; just re-read.
+    workspaces = listWorkspaces(c.env);
+  } else if (autoClaim.examinedUnregisteredCandidate) {
+    // This isolate believed the user's org unregistered and did NOT itself claim
+    // it, but another isolate may have (issue #81). A warm isolate's registry
+    // cache never expires on its own, so without this re-read a newly-onboarded
+    // org's members keep resolving to no_match — the denied page — here until the
+    // isolate recycles. Re-read the shared registry once, then resolve against
+    // it. Cost: one registry read on the login of any user with a not-yet-
+    // onboarded org, and only while WORKSPACE_AUTOCLAIM is on (auto-claim returns
+    // "disabled" otherwise, which never sets this flag).
+    await refreshWorkspaceRegistry(c.env);
     workspaces = listWorkspaces(c.env);
   }
 

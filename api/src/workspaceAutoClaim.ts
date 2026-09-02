@@ -50,6 +50,18 @@ export interface AutoClaimResult {
   /** Slug of the claimed workspace, on "claimed" / "already_claimed". */
   slug?: string;
   /**
+   * True when this isolate examined an org it believed unregistered but did NOT
+   * itself claim a slot for it (`teams_unknown` / `not_admin` / `pool_exhausted`
+   * / `org_held`). The org may have been claimed on ANOTHER isolate, whose write
+   * this warm isolate's per-isolate registry cache can't see (it never expires
+   * on its own — only a claim on THIS isolate reprimes it). The caller uses this
+   * to re-read the shared registry before login-time resolution, so a
+   * newly-onboarded org's members stop landing on the denied page here (issue
+   * #81). Not set on `claimed` / `already_claimed`: `claimWorkspace` already
+   * reprimed this isolate on those paths.
+   */
+  examinedUnregisteredCandidate?: boolean;
+  /**
    * The DCS `/user/teams` listing, when one was fetched — so the caller's own
    * team-role sync can reuse it instead of paying a second paginated listing
    * on the login path. `undefined` = not fetched; `null` = DCS didn't answer
@@ -129,7 +141,7 @@ export async function autoClaimWorkspaceForAdmin(
     if (candidates.length === 0) return { outcome: "no_candidate_org" };
 
     const teams = await listUserTeams(env, opts.accessToken, opts.deps);
-    if (teams === null) return { outcome: "teams_unknown", teams: null };
+    if (teams === null) return { outcome: "teams_unknown", teams: null, examinedUnregisteredCandidate: true };
 
     const names = teamRoleNames(env);
     for (const orgLower of candidates) {
@@ -148,7 +160,7 @@ export async function autoClaimWorkspaceForAdmin(
         // existing roster, exactly as before this feature), and an operator
         // provisions another slot — see docs/workspace-pool.md.
         console.warn(`[autoClaim] pool exhausted; no slot available for org "${org}" (${opts.dcsUsername})`);
-        return { outcome: "pool_exhausted", org, teams };
+        return { outcome: "pool_exhausted", org, teams, examinedUnregisteredCandidate: true };
       }
       // A row that isn't a resolvable claimed slot already holds this org —
       // `retired`/`failed`/`provisioning`, or a claimed row whose binding is no
@@ -161,7 +173,7 @@ export async function autoClaimWorkspaceForAdmin(
         console.warn(
           `[autoClaim] org "${org}" is held by a ${result.status} row; not claiming a slot (${opts.dcsUsername})`,
         );
-        return { outcome: "org_held", org, teams };
+        return { outcome: "org_held", org, teams, examinedUnregisteredCandidate: true };
       }
       console.log(
         `[autoClaim] ${result.alreadyClaimed ? "org already had" : "claimed"} workspace ` +
@@ -174,7 +186,7 @@ export async function autoClaimWorkspaceForAdmin(
         teams,
       };
     }
-    return { outcome: "not_admin", teams };
+    return { outcome: "not_admin", teams, examinedUnregisteredCandidate: true };
   } catch (err) {
     // A throw here would 500 the OAuth callback and lock everyone out, which is
     // strictly worse than the feature silently not applying.

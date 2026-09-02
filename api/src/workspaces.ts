@@ -312,6 +312,20 @@ async function invalidateAndReprime(env: Env): Promise<void> {
   await primeWorkspaces(env);
 }
 
+// Force this isolate to re-read the shared workspace registry, dropping its
+// per-isolate cache. The registry loads once per isolate and never expires on
+// its own, so a workspace a DIFFERENT isolate claimed (auto-claim at another
+// admin's login, or a super admin's manual pool claim) is otherwise invisible
+// here until this isolate recycles. The login path calls this when auto-claim
+// examined an org it believed unregistered but did not itself claim (issue #81),
+// so a newly-onboarded org's members stop landing on the denied page. Fails
+// soft like any prime. This is the same operation `claimWorkspace` runs
+// internally after a successful claim; it is exported for the examined-but-
+// not-claimed case, where no claim happened on this isolate to trigger it.
+export async function refreshWorkspaceRegistry(env: Env): Promise<void> {
+  await invalidateAndReprime(env);
+}
+
 async function findClaimedByOrg(env: Env, db: D1Database, org: string): Promise<Workspace | null> {
   const row = await db
     .prepare(

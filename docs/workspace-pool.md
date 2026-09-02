@@ -127,6 +127,26 @@ act.
   `[autoClaim] org "X" is held by a <status> row`; the held row is never
   silently reused. An operator retires the stale row properly, or claims for the
   org through the endpoint below.
+- **Warm-isolate staleness at login is handled (login path).** The registry is
+  loaded once per isolate and never expires on its own, so an org claimed on one
+  isolate is invisible to an already-warm sibling isolate. Without a refresh, a
+  **non-admin member** of a just-onboarded org who happened to sign in through a
+  stale sibling would land on the denied page (auto-claim sees their org as a
+  candidate, returns `not_admin`, and the sibling never learned the org was
+  claimed elsewhere). To avoid it, auto-claim reports
+  `examinedUnregisteredCandidate` whenever it examined an org it believed
+  unregistered but did **not** itself claim (`not_admin` / `pool_exhausted` /
+  `teams_unknown` / `org_held`), and `callbackDcsAuth` re-reads the shared
+  registry (`refreshWorkspaceRegistry`) before login-time resolution. Cost: one
+  registry read on the login of any user with a not-yet-onboarded org, only
+  while the flag is on. Regression: the O2 case in
+  `workspaceAutoClaim.test.mjs`.
+- **Not covered here — the request path.** The same per-isolate staleness still
+  lets a request whose `be_ws` cookie names a workspace a stale isolate has never
+  heard of fall back to `list[0]` (a *different* tenant's D1), because the
+  top-level `resolveWorkspace` answers an unknown slug with the first workspace.
+  That predates auto-claim (it applies to manual pool claims too) and is tracked
+  separately in **#418**; it is not fixed by this login-path reprime.
 
 Code: `api/src/workspaceAutoClaim.ts`, called from `callbackDcsAuth` in
 `api/src/auth.ts`. Tests: `api/src/workspaceAutoClaim.test.mjs`.

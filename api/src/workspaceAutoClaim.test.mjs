@@ -615,4 +615,93 @@ for (const heldStatus of ["retired", "failed"]) {
   }
 }
 
+// ── 10. A warm-stale isolate reprimes when it examines an org it believed ────
+//        unregistered but did not itself claim (issue #81, the held P1 / O2).
+//
+// The registry is loaded ONCE per isolate and never expires on its own — only a
+// claim on THAT isolate reprimes it (invalidateAndReprime inside claimWorkspace).
+// So when org X is claimed on isolate A, an already-warm isolate B still holds a
+// roster without X. If a NON-ADMIN member of X then logs in through B, auto-claim
+// sees X as a candidate (B's cache is stale), returns not_admin (B doesn't win a
+// claim), and — before O2 — B never refreshed, so resolveLoginWorkspace found no
+// workspace for X and the member landed on the denied page for the whole isolate
+// lifetime. O2: auto-claim now reports examinedUnregisteredCandidate, and the
+// callback reprimes on it, so B re-reads the roster A already wrote and the
+// member lands in X.
+//
+// Two isolates are modeled the way index.ts's per-isolate registry cache keys
+// them: the SAME underlying node:sqlite data (one sharedSql) wrapped in two
+// distinct makeD1 objects (two makeEnv calls), which are two distinct
+// registryState WeakMap keys — exactly two warm isolates over one shared DB.
+console.log("[autoClaim] a warm-stale isolate reprimes for a non-admin member of an org claimed elsewhere (O2)");
+{
+  const realFetch = globalThis.fetch;
+  try {
+    const sharedSql = sharedDbSqlite();
+    const pool1Sql = poolDbSqlite();
+    registerPoolRows(sharedSql, "pool1");
+
+    // Isolate A and isolate B, two independent registry caches over one DB.
+    const envA = makeEnv(sharedSql, { DB_POOL1: pool1Sql });
+    const envB = makeEnv(sharedSql, { DB_POOL1: pool1Sql });
+
+    // Warm isolate B BEFORE any claim, so its cache holds only the default 'uw'
+    // and will be stale the moment A claims. primeWorkspaces early-returns while
+    // the key is present, so B stays stale through the later signIn's own prime.
+    await primeWorkspaces(envB);
+    assert(
+      !listWorkspaces(envB).some((w) => w.org.toLowerCase() === "neworg"),
+      "isolate B starts warm and stale — its roster does not yet contain NewOrg",
+    );
+
+    // alice, an admin of NewOrg, signs in on isolate A and claims the slot.
+    globalThis.fetch = stubDcs({
+      id: 20,
+      login: "alice",
+      orgs: [{ username: "NewOrg" }],
+      teams: [team("NewOrg", "BE-Admins")],
+    });
+    const aliceRes = await signIn(envA, "state-o2-alice");
+    assert(
+      aliceRes.setCookies.some((h) => /^be_ws=pool1/.test(h)),
+      "alice claimed and landed in the new workspace on isolate A",
+    );
+    assert(
+      rows(sharedSql, "SELECT slug FROM workspaces WHERE status = 'claimed' AND org = 'NewOrg'").length === 1,
+      "NewOrg is now a claimed row in the shared registry",
+    );
+
+    // bob, a NON-ADMIN member (BE-Editor) of NewOrg, now signs in on the still-
+    // stale isolate B. Without O2 this is the denied page; with O2 B reprimes on
+    // the not_admin-with-a-candidate outcome and bob lands in NewOrg.
+    globalThis.fetch = stubDcs({
+      id: 21,
+      login: "bob",
+      orgs: [{ username: "NewOrg" }],
+      teams: [team("NewOrg", "BE-Editors")],
+    });
+    const { res, location, setCookies } = await signIn(envB, "state-o2-bob");
+
+    assert(res.status === 302, `bob's login completes (302), got ${res.status}`);
+    assert(
+      !location.includes("_auth_denied"),
+      "bob is NOT denied — the stale isolate reprimed and found NewOrg (fails without O2)",
+    );
+    assert(
+      setCookies.some((h) => /^be_ws=pool1/.test(h)),
+      "bob lands in the workspace claimed on the other isolate (fails without O2)",
+    );
+    assert(
+      listWorkspaces(envB).some((w) => w.org.toLowerCase() === "neworg"),
+      "isolate B's registry cache now includes NewOrg — it was reprimed, not left stale",
+    );
+    assert(
+      rows(sharedSql, "SELECT slug FROM workspaces WHERE status = 'claimed' AND slug != 'uw'").length === 1,
+      "bob consumed no slot — the reprime is a read, not a second claim",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 console.log("workspaceAutoClaim: all assertions passed");
