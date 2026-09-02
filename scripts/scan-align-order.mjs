@@ -28,6 +28,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseAlignment, serializeAlignment } from "../web/src/lib/alignment.ts";
 import { nfc } from "../web/src/lib/hebrew.ts";
+import { isSuperscription } from "../web/src/lib/usfm.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
@@ -71,7 +72,7 @@ function buildSourceWords(verseObjects) {
         const tOcc = (textCounts.get(textKey) ?? 0) + 1;
         textCounts.set(textKey, tOcc);
         out.push({ position: pos++, strong: String(n.strong ?? ""), textKey, textOccurrence: tOcc });
-      } else if (n.type === "milestone" || (n.type === "section" && n.tag === "d")) {
+      } else if (n.type === "milestone" || isSuperscription(n)) {
         walk(n.children ?? []);
       }
     }

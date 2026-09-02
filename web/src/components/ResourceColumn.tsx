@@ -10,6 +10,7 @@ import { AlignmentPanel, type AlignmentPanelHandle } from "./AlignmentPanel";
 import { noteOverlapsRange } from "../lib/verseRange";
 import { resolveSourceRef } from "../lib/sourceRef";
 import { canonicalTwlOrder } from "../lib/twlCanonicalOrder";
+import { liveRowCount, reviewStats } from "../lib/reviewApproval";
 import { NotesPanelBody } from "./NotesPanel";
 import { useProjectConfig, isTranslationProject } from "../hooks/useProjectConfig";
 import { useSourceNotes } from "../hooks/useSourceNotes";
@@ -142,12 +143,18 @@ interface Props {
   // draft (validate value 1/0) and single-note Translate. Absent in the English
   // root project.
   onNoteApprove?: (id: string, value: boolean) => void;
+  // Sequential batch approve for every approvable tN row in the chapter (see
+  // isApprovableRow), with end-of-batch failure reporting — see
+  // Shell.tsx's handleApproveAllNotes.
+  onApproveAllNotes?: () => Promise<void> | void;
   onNoteTranslate?: (id: string) => void;
   // Rows with an in-flight single-note / chapter translate run (spinner).
   translatingNoteIds?: Set<string>;
   // ── Translation mode, tQ analogues ── Approve/un-approve + single-question
   // Translate for translationQuestions. Absent in the English root project.
   onQuestionApprove?: (id: string, value: boolean) => void;
+  // tQ analogue of onApproveAllNotes.
+  onApproveAllQuestions?: () => Promise<void> | void;
   onQuestionTranslate?: (id: string) => void;
   translatingQuestionIds?: Set<string>;
   // Translate English in a note's quote field to source-language text using
@@ -289,9 +296,11 @@ export function ResourceColumn({
   onSetNotePreserve,
   onSetNoteHint,
   onNoteApprove,
+  onApproveAllNotes,
   onNoteTranslate,
   translatingNoteIds,
   onQuestionApprove,
+  onApproveAllQuestions,
   onQuestionTranslate,
   translatingQuestionIds,
   onNoteTranslateQuote,
@@ -341,20 +350,13 @@ export function ResourceColumn({
   // Chapter-scoped translation progress. `examples` (validated count) doubles
   // as the language-memory chip's example count — the honest, in-view figure
   // until the context-repo feedback loop lands a global tally. Terms are not
-  // tracked yet (stub 0). Draft ids feed "Approve all".
-  const tnStats = useMemo(() => {
-    if (!translationMode) return { total: 0, validated: 0, draftIds: [] as string[] };
-    let total = 0;
-    let validated = 0;
-    const draftIds: string[] = [];
-    for (const r of tn) {
-      if (r.trashed_at != null) continue;
-      total++;
-      if (r.translation_state === "validated") validated++;
-      else if (r.translation_state === "ai_draft" || r.translation_state === "edited") draftIds.push(r.id);
-    }
-    return { total, validated, draftIds };
-  }, [tn, translationMode]);
+  // tracked yet (stub 0). Draft ids feed "Approve all". The counting rule lives
+  // once in reviewStats (web/src/lib/reviewApproval.ts) — see #238; this file
+  // and StackedResourcePanel used to carry byte-identical copies of it.
+  const tnStats = useMemo(
+    () => reviewStats(translationMode ? tn : []),
+    [tn, translationMode],
+  );
   // Live terminology count for the language-memory chip (was hard-coded 0).
   // Cheap COUNT endpoint; best-effort — a failure leaves it at 0. The route is
   // editor-only server-side, so skip it for viewers — they'd only get a 403.
@@ -380,18 +382,11 @@ export function ResourceColumn({
     [projectConfig],
   );
   const sourceQuestions = useSourceQuestions(translationMode ? book : null, sourceQuestionProjection);
-  const tqStats = useMemo(() => {
-    if (!translationMode) return { total: 0, validated: 0, draftIds: [] as string[] };
-    let total = 0;
-    let validated = 0;
-    const draftIds: string[] = [];
-    for (const r of tq) {
-      total++;
-      if (r.translation_state === "validated") validated++;
-      else if (r.translation_state === "ai_draft" || r.translation_state === "edited") draftIds.push(r.id);
-    }
-    return { total, validated, draftIds };
-  }, [tq, translationMode]);
+  // Same helper: tQ has no trashed_at column, so its trashed arm is inert here.
+  const tqStats = useMemo(
+    () => reviewStats(translationMode ? tq : []),
+    [tq, translationMode],
+  );
   const [pinned, setPinned] = useState<Pinned>(() => loadPinned());
   const togglePinned = (k: PinKey) => {
     const next = { ...pinned, [k]: !pinned[k] };
@@ -492,9 +487,22 @@ export function ResourceColumn({
     [pinned.words, twl, ultVerseObjectsFor],
   );
 
-  const totalTn = pinned.notes ? tn.length : tnForVerse.length;
+  // Badge denominators. These count LIVE rows only — a trashed note is still
+  // rendered (grayed out, at the bottom of its verse, with Restore), but it no
+  // longer inflates the number beside the tab, which is what made classic read
+  // "Notes 153" next to a "4 / 152" meter and a 152 package hub (#238). The
+  // trashed tail is surfaced as a "· N trashed" label instead of vanishing.
+  const tnCount = useMemo(
+    () => liveRowCount(pinned.notes ? tn : tnForVerse),
+    [pinned.notes, tn, tnForVerse],
+  );
+  const tqCount = useMemo(
+    () => liveRowCount(pinned.questions ? tq : tqForVerse),
+    [pinned.questions, tq, tqForVerse],
+  );
+  const totalTn = tnCount.live;
   const totalTwl = pinned.words ? twl.length : twlForVerse.length;
-  const totalTq = pinned.questions ? tq.length : tqForVerse.length;
+  const totalTq = tqCount.live;
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<
@@ -829,6 +837,7 @@ export function ResourceColumn({
             tnForVerse={tnForVerse}
             tnGroups={tnGroups}
             totalTn={totalTn}
+            trashedTn={tnCount.trashed}
             pinned={pinned.notes}
             onTogglePin={() => togglePinned("notes")}
             onNoteCreate={onNoteCreate}
@@ -838,6 +847,7 @@ export function ResourceColumn({
             tnStats={tnStats}
             termsCount={termsCount}
             onNoteApprove={onNoteApprove}
+            onApproveAllNotes={onApproveAllNotes}
             renderNoteCard={renderNoteCard}
           />
         )}
@@ -892,6 +902,7 @@ export function ResourceColumn({
             onQuestionSave={onQuestionSave}
             onQuestionDelete={onQuestionDelete}
             onQuestionApprove={onQuestionApprove}
+            onApproveAllQuestions={onApproveAllQuestions}
             onQuestionTranslate={onQuestionTranslate}
             translatingQuestionIds={translatingQuestionIds}
           />

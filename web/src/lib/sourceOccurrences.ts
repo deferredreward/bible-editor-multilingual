@@ -30,6 +30,7 @@
 //     already-correct ones, are never touched, so clean data doesn't churn.
 
 import { nfc } from "./hebrew.ts";
+import { isSourceWordContainer } from "./usfm.ts";
 
 type Node = Record<string, unknown>;
 
@@ -49,12 +50,18 @@ function sourceTextTotals(sourceVerseObjects: unknown[]): Map<string, number> {
       if (o["type"] === "word" && o["tag"] === "w") {
         const key = nfc(String(o["text"] ?? ""));
         totals.set(key, (totals.get(key) ?? 0) + 1);
-      } else if (
-        o["type"] === "milestone" ||
-        // \d (Psalm superscription) carries alignable verse body — descend like
-        // collectSourceWords / buildSourceIndexMap do.
-        (o["type"] === "section" && o["tag"] === "d")
-      ) {
+      } else if (isSourceWordContainer(o)) {
+        // The ONE source-word descent rule (usfm.ts) — `\zaln` milestones, `\qs`
+        // character wrappers, `\d` superscriptions — the same predicate
+        // collectSourceWords / collectSourceWordNodes descend by. This function
+        // decides whether a token "appears exactly once" in the source, and that
+        // verdict REWRITES stored content_json, so under-counting is the
+        // dangerous direction: before #413 the walk descended any milestone and
+        // no wrapper, so a `\qs`-wrapped source word counted 0 and every
+        // milestone naming it was left alone as "content not found in source"
+        // (conservative, but the correction it needed never happened). A word
+        // present twice — once bare, once wrapped — counted 1 and would have been
+        // clamped to 1/1 on a token that really does appear twice.
         walk((o["children"] as unknown[] | undefined) ?? []);
       }
     }

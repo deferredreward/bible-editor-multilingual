@@ -26,7 +26,7 @@
 // alignment), unchanged for callers / UI.
 
 import { nfc } from "./hebrew.ts";
-import { extractPlainText } from "./usfm.ts";
+import { extractPlainText, isSourceWordContainer, isSuperscription } from "./usfm.ts";
 import { tokenizeEditableText } from "./replace.ts";
 
 export interface SourceWord {
@@ -154,15 +154,14 @@ function isAlignmentWrapper(n: ParsedNode | undefined): boolean {
   const children = n["children"];
   return Array.isArray(children) && children.length > 0;
 }
-// \d (Psalm superscription) is `type:"section"` — not `type:"quote"`, so
-// isAlignmentWrapper can't cover it — but its content IS alignable verse
-// body (see highlight.ts's renderer special case). When it arrives with
-// children, descend like a \qs wrapper so the inner zaln / word nodes
-// enter the alignment stream; a childless \d (bare marker or text-only)
-// stays opaque and rides along verbatim.
+// \d (Psalm superscription, `isSuperscription` — usfm.ts) is not
+// `type:"quote"`, so isAlignmentWrapper can't cover it — but its content IS
+// alignable verse body (see highlight.ts's renderer special case). When it
+// arrives with children, descend like a \qs wrapper so the inner zaln / word
+// nodes enter the alignment stream; a childless \d (bare marker or
+// text-only) stays opaque and rides along verbatim.
 function isPsalmTitleWrapper(n: ParsedNode | undefined): boolean {
-  if (!n || typeof n !== "object") return false;
-  if (n["type"] !== "section" || n["tag"] !== "d") return false;
+  if (!isSuperscription(n)) return false;
   const children = n["children"];
   return Array.isArray(children) && children.length > 0;
 }
@@ -601,13 +600,19 @@ function collectSourceWords(verseObjects: unknown[]): CollectedSourceWord[] {
           textKey,
           textOccurrence: tOcc,
         });
-      } else if (
-        o["type"] === "milestone" ||
-        // \d (Psalm superscription) is type:"section" but its content IS
-        // alignable verse body — descend like a milestone so its \w tokens
-        // are covered. Mirrors collectMilestoneRuns in highlight.ts.
-        (o["type"] === "section" && o["tag"] === "d")
-      ) {
+      } else if (isSourceWordContainer(o)) {
+        // The ONE source-word descent rule (usfm.ts): `\zaln` milestones, `\qs`
+        // character wrappers and `\d` superscriptions all hold alignable verse
+        // body. This is the same predicate `collectSourceWordNodes` is built on,
+        // and the word test above is the same one, so this walk enumerates
+        // exactly the words every UI walk does — it just keeps its own
+        // accumulator (position + per-surface textOccurrence) rather than
+        // projecting off the collector, so nothing in the alignment core gains a
+        // new cross-module dependency. Before #413 it descended ANY milestone and
+        // no wrapper: a `\qs`-wrapped source word was missing from `sourceWords`
+        // entirely, so reformGluedMilestones could not resolve a run through it
+        // and detectDoubledSourceMilestones read every later word one position
+        // early — a genuinely non-contiguous compound looked contiguous.
         walkSrc((o["children"] as unknown[] | undefined) ?? []);
       }
     }

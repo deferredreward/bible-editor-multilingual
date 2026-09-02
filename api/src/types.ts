@@ -63,6 +63,16 @@ export interface TnRow {
    */
   pre_draft_json: string | null;
   /**
+   * Provenance stamp for BULK review-state writes (migration 0071, issue #296).
+   * NULL = this row's translation_state was never set by a bulk sweep. Non-NULL
+   * = it was, and the value is the state the row held before the FIRST sweep
+   * ('none' when it had never been drafted). Written by the admin bulk
+   * review-state route and by the Aquifer importer's bulk approve (#393); read
+   * by the few-shot selectors (a swept row is not human-approved gold) and by
+   * the reimport's pristine test (#394).
+   */
+  admin_bulk_state: string | null;
+  /**
    * Source label from the row's most recent edit_log entry. 'ai_pipeline'
    * when the last write came from the AI auto-apply step (which means the
    * chip should show); NULL after any subsequent human edit/keep wipes it.
@@ -101,6 +111,8 @@ export interface TqRow {
   draft_meta_json: string | null;
   /** Last published {question, response}, snapshotted at draft apply — see TnRow.pre_draft_json. */
   pre_draft_json: string | null;
+  /** See TnRow.admin_bulk_state (migration 0071). */
+  admin_bulk_state: string | null;
   /** See TnRow.latest_source. */
   latest_source?: string | null;
 }

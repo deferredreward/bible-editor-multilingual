@@ -43,3 +43,6 @@ scratch/
 # docs/samples/) are already tracked and stay that way; gitignore only
 # affects untracked files.
 *.usfm
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

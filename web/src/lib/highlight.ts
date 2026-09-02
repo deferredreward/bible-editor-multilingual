@@ -25,7 +25,7 @@
 // matches raw with no further work.
 
 import { nfc } from "./hebrew.ts";
-import { isCharacterWrapper, isInFlowMarker, isTsMilestone, isZalnMilestone, liftMarkerText, SECTION_HEADER_TAGS } from "./usfm.ts";
+import { isCharacterWrapper, isInFlowMarker, isSuperscription, isTsMilestone, isZalnMilestone, liftMarkerText, SECTION_HEADER_TAGS } from "./usfm.ts";
 
 // U+2060 WORD JOINER glues UHB clitic morphemes to their host word
 // (הָ⁠אֶ֧בֶן); U+200D ZERO WIDTH JOINER plays the same role in some corpora.
@@ -165,13 +165,13 @@ function nodeIsWord(n: unknown): n is Record<string, unknown> {
   return !!o && o["type"] === "word" && o["tag"] === "w";
 }
 
-// \d (Psalm superscription) is `type:"section"` but its content IS
-// alignable Hebrew verse body — the renderer already descends into it
-// (see segmentByParagraphs); the matchers must too or a quote on a
-// superscription word never highlights.
+// \d (Psalm superscription) content IS alignable Hebrew verse body — the
+// renderer already descends into it (see segmentByParagraphs); the matchers
+// must too or a quote on a superscription word never highlights. Delegates
+// to the shared `isSuperscription` predicate (usfm.ts) so this walk can't
+// drift from the other `\d` sites again (#410).
 function nodeIsPsalmTitle(n: unknown): n is Record<string, unknown> {
-  const o = n as Record<string, unknown> | null;
-  return !!o && o["type"] === "section" && o["tag"] === "d";
+  return isSuperscription(n);
 }
 
 // Collect every `\w` token in a subtree (descending through nested milestones,
@@ -825,21 +825,35 @@ function segmentByParagraphs(
       }
       // \d (Psalm superscription) — its text IS alignable Hebrew. Render
       // inline with `.be-d` styling so children (\zaln-s milestones, \w words)
-      // still walk and align. Gate on the TAG alone, not `type:"section"`:
-      // usfm-js 3.5.0 parses a real `\d` as `{tag:"d", text}` with NO type
-      // (only \s/\s1…\s5 get `type:"section"`), so the old `type:"section"`
-      // predicate matched nothing usfm.toJSON emits and the superscription was
-      // dropped from the render while extractEditableText kept it — the classic
-      // silent-content-drop-on-save signature (#345/#357/#384). Tag-only is a
-      // superset that still covers any legacy `{type:"section", tag:"d"}` rows.
-      if (o["tag"] === "d") {
+      // still walk and align. `isSuperscription` gates on the TAG alone, not
+      // `type:"section"`: usfm-js 3.5.0 parses a real `\d` as `{tag:"d", text}`
+      // with NO type (only \s/\s1…\s5 get `type:"section"`), so the old
+      // `type:"section"` predicate matched nothing usfm.toJSON emits and the
+      // superscription was dropped from the render while extractEditableText
+      // kept it — the classic silent-content-drop-on-save signature
+      // (#345/#357/#384). Tag-only is a superset that still covers any legacy
+      // `{type:"section", tag:"d"}` rows.
+      if (isSuperscription(o)) {
         openSpan("be-d");
         if (Array.isArray(o["children"]) && (o["children"] as unknown[]).length > 0) {
           walk(o["children"] as unknown[]);
+          closeSpan();
         } else if (typeof o["text"] === "string") {
           emit(escapeHtml(String(o["text"])));
+          closeSpan();
         }
-        closeSpan();
+        // else: an EMPTY `\d` (no children, no `text`) — when the
+        // superscription contains alignment markup, usfm-js emits it this way
+        // and puts the aligned content as a following SIBLING `\zaln`
+        // milestone rather than as this node's children. Leave `.be-d` OPEN
+        // (deliberately skip closeSpan here) so that sibling — walked next by
+        // this same loop, a few lines below via nodeIsMilestone — still gets
+        // wrapped in the superscription's italic/muted styling instead of
+        // falling back to ordinary verse-body styling (#398's Case 47f
+        // `shownA`; tracked as #410 item 2). The span closes naturally at the
+        // next segment switch (switchSegment — e.g. the `\q1` line that
+        // follows), which already closes every span still open, so no new
+        // boundary bookkeeping is needed.
         continue;
       }
       if (o["type"] === "text") {

@@ -41,7 +41,11 @@ export interface NotesPanelBodyProps {
   // (grouped by verse); null ⇒ active-verse-only view using `tnForVerse`.
   tnForVerse: TnRow[];
   tnGroups: Array<[number, TnRow[]]> | null;
+  // LIVE (non-trashed) note count — the one denominator (#238). Trashed notes
+  // are still listed, so `trashedTn` labels them rather than letting the badge
+  // silently disagree with the number of cards on screen.
   totalTn: number;
+  trashedTn?: number;
   pinned: boolean;
   onTogglePin: () => void;
   onNoteCreate: () => void;
@@ -52,6 +56,8 @@ export interface NotesPanelBodyProps {
   tnStats: { total: number; validated: number; draftIds: string[] };
   termsCount: number;
   onNoteApprove?: (id: string, value: boolean) => void;
+  // Sequential batch approve — see Shell.tsx's handleApproveAllNotes.
+  onApproveAllNotes?: () => Promise<void> | void;
   // The caller builds each note card (it owns the drag/reorder/flash state the
   // card closes over). `peers` is the row's sibling list for arrow-move bounds.
   renderNoteCard: (r: TnRow, peers: TnRow[]) => ReactNode;
@@ -62,6 +68,7 @@ export function NotesPanelBody({
   tnForVerse,
   tnGroups,
   totalTn,
+  trashedTn = 0,
   pinned,
   onTogglePin,
   onNoteCreate,
@@ -71,9 +78,13 @@ export function NotesPanelBody({
   tnStats,
   termsCount,
   onNoteApprove,
+  onApproveAllNotes,
   renderNoteCard,
 }: NotesPanelBodyProps) {
   const { t } = useTranslation();
+  // Guards against a double-click firing a second overlapping batch while
+  // the first is still sequentially awaiting each row (#412).
+  const [approvingAll, setApprovingAll] = useState(false);
 
   // The source→draft pair axis is a GLOBAL preference (see editorPrefs), so
   // this pane both hosts the control and publishes the result to its cards.
@@ -103,6 +114,7 @@ export function NotesPanelBody({
       <SectionHead
         title={t("shell.notes")}
         count={totalTn}
+        countNote={trashedTn ? t("shell.trashedCount", { count: trashedTn }) : undefined}
         pinned={pinned}
         onTogglePin={onTogglePin}
         onAdd={onNoteCreate}
@@ -188,9 +200,15 @@ export function NotesPanelBody({
               variant="outlined"
               color="success"
               startIcon={<CheckIcon sx={{ fontSize: "15px !important" }} />}
-              disabled={tnStats.draftIds.length === 0}
-              onClick={() => {
-                for (const id of tnStats.draftIds) onNoteApprove(id, true);
+              disabled={tnStats.draftIds.length === 0 || approvingAll}
+              onClick={async () => {
+                if (!onApproveAllNotes || approvingAll) return;
+                setApprovingAll(true);
+                try {
+                  await onApproveAllNotes();
+                } finally {
+                  setApprovingAll(false);
+                }
               }}
               sx={{ minWidth: 0, fontSize: 11 }}
             >

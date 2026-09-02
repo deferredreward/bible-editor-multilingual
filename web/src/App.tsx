@@ -45,7 +45,7 @@ type Location =
   | { view: "scripture"; book: string; chapter: number; verse: number }
   | { view: "align"; book: string; chapter: number; verse: number }
   | { view: "flowArticles" }
-  | { view: "words"; book: string; chapter: number; verse: number }
+  | { view: "words"; book: string; chapter: number; verse: number; rowId?: string | null }
   | { view: "ai" }
   | { view: "style" }
   | { view: "curate"; templateId: string | null }
@@ -58,7 +58,7 @@ type Location =
   | { view: "questions"; book: string; chapter: number; verse: number | null; rowId: string | null }
   | { view: "package"; book: string }
   | { view: "translateWords"; book: string }
-  | { view: "translateScripture"; book: string; chapter: number }
+  | { view: "translateScripture"; book: string; chapter: number; verse: number | null }
   | { view: "translateAlign"; book: string; chapter: number; verse: number; mode: "single" | "dual" }
   | { view: "admin"; section: "team" | "setup" | "workflow" | "progress" };
 
@@ -70,9 +70,10 @@ type Location =
 //
 // NOTE on view names (#200): the redesign routes the issue targets parse to the
 // `translate*` views, NOT the same-named old-flow views. `#/scripture/{BOOK}
-// [/{CH}]` → `translateScripture` (the `ts` regex claims the 1–2 segment arity
-// ahead of the old 3-segment `scripture`); `#/alignment/{BOOK}/{CH}[/{VS}]` →
-// `translateAlign`. `translateScripture` carries no verse, so it records verse 1.
+// [/{CH}[/{VS}]]` → `translateScripture` (the `ts` regex claims the 1–3
+// segment arity ahead of the old 3-segment `scripture`); `#/alignment/{BOOK}/
+// {CH}[/{VS}]` → `translateAlign`. `translateScripture` carries the verse when
+// the URL had one (#389); a chapter-only hash still records verse 1.
 function positionFromLoc(loc: Location): { book: string; chapter: number; verse: number } | null {
   switch (loc.view) {
     case "chapter":
@@ -80,9 +81,8 @@ function positionFromLoc(loc: Location): { book: string; chapter: number; verse:
       return { book: loc.book, chapter: loc.chapter, verse: loc.verse };
     case "notes":
     case "questions":
-      return { book: loc.book, chapter: loc.chapter, verse: loc.verse ?? 1 };
     case "translateScripture":
-      return { book: loc.book, chapter: loc.chapter, verse: 1 };
+      return { book: loc.book, chapter: loc.chapter, verse: loc.verse ?? 1 };
     default:
       return null;
   }
@@ -234,7 +234,10 @@ function parseHash(): Location {
   // Titus-redesign routes. These deliberately claim the short arities of
   // #/scripture and #/words ahead of the fv catch-all below: the 1–2 segment
   // forms open the new translate screens, while the 3-segment (verse-level)
-  // forms still open the old flows screens until those are retired.
+  // form for #/words still opens the old flows screen until it is retired.
+  // #/scripture now claims its 3-segment verse form too (#389): the new
+  // TranslateScriptureScreen seeks to the deep-linked verse on mount, so it no
+  // longer needs to give way to the old 3-segment ScriptureScreen route below.
   const pk = location.hash.match(/^#\/package\/([A-Za-z0-9]+)$/);
   if (pk) {
     return { view: "package", book: pk[1].toUpperCase() };
@@ -243,12 +246,30 @@ function parseHash(): Location {
   if (wb) {
     return { view: "translateWords", book: wb[1].toUpperCase() };
   }
-  const ts = location.hash.match(/^#\/scripture\/([A-Za-z0-9]+)(?:\/(\d+))?$/);
+  // #/words/{book}/{ch}[/{vs}][?row={id}]: the old flows twl (word-links)
+  // screen's own route contract, claimed ahead of the fv catch-all below so
+  // the optional ?row= tail (the SyncStatusBar "N unsaved" jump menu) reaches
+  // it — mirrors the #/notes and #/questions forms above (#335).
+  const wl = location.hash.match(/^#\/words\/([A-Za-z0-9]+)\/(\d+)(?:\/(\d+))?(?:\?row=([^&]+))?$/);
+  if (wl) {
+    return {
+      view: "words",
+      book: wl[1].toUpperCase(),
+      chapter: parseInt(wl[2], 10),
+      verse: wl[3] ? parseInt(wl[3], 10) : 1,
+      // Guarded decode (see the #/notes case above): a mangled percent
+      // sequence must not throw out of parseHash and blank the app; a wrong
+      // id just degrades to the verse's first row.
+      rowId: wl[4] ? safeDecode(wl[4]) : null,
+    };
+  }
+  const ts = location.hash.match(/^#\/scripture\/([A-Za-z0-9]+)(?:\/(\d+))?(?:\/(\d+))?$/);
   if (ts) {
     return {
       view: "translateScripture",
       book: ts[1].toUpperCase(),
       chapter: ts[2] ? parseInt(ts[2], 10) : 1,
+      verse: ts[3] ? parseInt(ts[3], 10) : null,
     };
   }
   // Redesigned admin desk (#/admin/{section}); AdminDesk renders the rail.
@@ -900,7 +921,7 @@ export function App() {
             ) : loc.view === "flowArticles" ? (
               <ArticlesScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "words" ? (
-              <WordsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} />
+              <WordsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} rowId={loc.rowId ?? undefined} />
             ) : loc.view === "ai" ? (
               <AiScreen role={auth.role} me={auth.me} onNavigate={navigate} />
             ) : loc.view === "style" ? (
@@ -935,7 +956,7 @@ export function App() {
             ) : loc.view === "translateWords" ? (
               <TranslateWordsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} />
             ) : loc.view === "translateScripture" ? (
-              <TranslateScriptureScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} />
+              <TranslateScriptureScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse ?? undefined} />
             ) : loc.view === "translateAlign" ? (
               <TranslateAlignScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse} mode={loc.mode} />
             ) : loc.view === "admin" ? (

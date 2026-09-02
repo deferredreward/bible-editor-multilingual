@@ -16,6 +16,7 @@ import { FlowNav } from "./FlowNav";
 import { LockBanner, ReadyBanner } from "./FlowBanners";
 import type { FlowScreenContext } from "./types";
 import { realChapters } from "../../lib/bookSummary";
+import { liveRows } from "../../lib/reviewApproval";
 import {
   api,
   ApiError,
@@ -302,8 +303,12 @@ export default function HomeScreen({ role, me, onNavigate }: HomeScreenProps) {
   const totalTq = chapters.reduce((s, c) => s + (c.tq || 0), 0);
   const versesInChapter = chapters.find((c) => c.chapter === chapter)?.verses ?? 0;
   const doneInChapter = (chapterData?.verseStatuses ?? []).filter((s) => s.verse > 0 && s.done).length;
-  const tnRows = chapterData?.tn ?? [];
-  const tqRows = chapterData?.tq ?? [];
+  // "N of M approved in chapter C". M is the same live-row denominator the
+  // meter, the package hub and the book-summary SQL use — the chapter payload
+  // deliberately still carries trashed notes for the trash UI, so counting the
+  // raw array here read one higher than every other surface (#238).
+  const tnRows = liveRows(chapterData?.tn);
+  const tqRows = liveRows(chapterData?.tq);
   const tnApproved = tnRows.filter((r) => r.translation_state === "validated").length;
   const tqApproved = tqRows.filter((r) => r.translation_state === "validated").length;
 

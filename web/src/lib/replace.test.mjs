@@ -15,9 +15,10 @@ import {
   __reanchorMarkersForTest as reanchorMarkers,
   __stripMarkerTokensForTest as stripMarkerTokens,
 } from "./replace.ts";
-import { extractEditableText, extractPlainText, normalizeEditable } from "./usfm.ts";
+import { extractEditableText, extractPlainText, isSuperscription, normalizeEditable } from "./usfm.ts";
 import { renderHighlightedHTML, renderEditableHTML } from "./highlight.ts";
 import { analyzeAlignmentDelta, guardBlocksSave } from "./alignmentDelta.ts";
+import { collectSourceWordNodes } from "./quoteBuilder.ts";
 
 let failed = 0;
 function assert(cond, msg) {
@@ -2624,6 +2625,104 @@ function countAligned(content) {
   assert(
     normalizeEditable(textContent(editableA)) === baselineA,
     `aligned displayed textContent matches baseline (displayed ${JSON.stringify(normalizeEditable(textContent(editableA)))} vs baseline ${JSON.stringify(baselineA)})`,
+  );
+}
+
+// ─── Case 47g: centralized \d predicate + aligned-\d stays inside .be-d (#410) ──
+// Follow-ups from #398/#384 (and #370 item 2 / #413, which meanwhile
+// consolidated the SOURCE-word descent sites — Shell/UhbStrip/AlignmentPanel/
+// AlignSourceModel/AlignScreen/TranslateAlignScreen/alignment.ts's walkSrc/
+// sourceOccurrences.ts/quoteBuilder's collectSourceWordNodes — onto usfm.ts's
+// `isSourceWordContainer`, whose own `\d` arm now delegates to
+// `isSuperscription` too):
+//   (a) The old inline `type:"section" && tag:"d"` predicate — still hand-rolled
+//       in highlight.ts's nodeIsPsalmTitle, alignment.ts's isPsalmTitleWrapper,
+//       quoteBuilder.ts's collectTargetTokens (a TARGET-side walk, not a
+//       source-word one, so it's outside isSourceWordContainer's scope), and
+//       scripts/scan-align-order.mjs — matches NO real usfm-js `\d` node (it
+//       parses as `{tag:"d"}` with no `type` — see Case 47f). Centralize on
+//       `isSuperscription` (usfm.ts, `tag === "d"`) so every site recognizes
+//       the real shape a real usfm-js parse produces. Because `\d` has no
+//       `endTag` in usfm-js's marker table, a real `\d` node NEVER carries a
+//       non-empty `children` array — its content always arrives as SIBLING
+//       nodes, not as children — so this fix is a consistency/behavior-safety
+//       change for today's corpora (the walks that only acted on `\d`'s
+//       children were already unreachable dead code on real data either way)
+//       rather than a second content-drop fix; it also guards any legacy
+//       stored `content_json` still carrying the old `{type:"section",
+//       tag:"d"}` shape with real children, which stays matched (strict
+//       superset).
+//   (b) Aligned `\d` (empty `{tag:"d"}` with its `\zaln` as a following sibling
+//       — Case 47f's `alignedD`) rendered the title with ordinary verse-body
+//       styling because segmentByParagraphs closed `.be-d` before walking that
+//       sibling. Fixed by leaving the span open across the empty-\d case so the
+//       next segment switch (the following in-flow marker) closes it instead.
+{
+  console.log("\n[Case 47g] Centralized \\d predicate + aligned superscription stays in .be-d (#410)");
+
+  // (a) Real parsed node vs. the stale inline shape the old predicate required.
+  const textD = String.raw`\id PSA
+\c 3
+\p
+\v 1 \d A psalm of David
+\q1 next line here
+`;
+  const tvo = usfm.toJSON(textD).chapters["3"]["1"].verseObjects;
+  const dNode = tvo.find((n) => n && n.tag === "d");
+  assert(!!dNode, "parsed tree contains a {tag:\"d\"} node");
+  assert(
+    !(dNode.type === "section" && dNode.tag === "d"),
+    "the OLD type:\"section\" && tag:\"d\" predicate does NOT match a real usfm-js \\d node (documents the bug #410 fixes)",
+  );
+  assert(
+    isSuperscription(dNode),
+    "the centralized isSuperscription predicate DOES match the real \\d node",
+  );
+  // Superset check: the old defensive shape some legacy stored content_json may
+  // still carry keeps matching too — isSuperscription must never regress it.
+  assert(
+    isSuperscription({ type: "section", tag: "d", text: "legacy shape" }),
+    "isSuperscription still matches the legacy {type:\"section\", tag:\"d\"} shape (behavior-safe superset)",
+  );
+  assert(!isSuperscription({ type: "section", tag: "s1" }), "isSuperscription does not match an \\s1 section header");
+  assert(!isSuperscription(null) && !isSuperscription(undefined), "isSuperscription is null-safe");
+
+  // A downstream site now routed through the shared predicate (quoteBuilder's
+  // collectSourceWordNodes, used by the picker + TN-quote builder, and — since
+  // #413 — every position-bearing SOURCE-word consumer via
+  // isSourceWordContainer) still finds every source \w correctly when a real
+  // \d node sits among the walked nodes, whether at the top level (the
+  // plain-text superscription above: `\d` node present, no source \w of its
+  // own) or as a genuine sibling to an aligned `\zaln` (below) — mirroring
+  // Case 47f's `alignedD`.
+  const alignedD = String.raw`\id PSA
+\c 3
+\p
+\v 1 \d \zaln-s |x-strong="H4210" x-content="מִזְמֹור"\*\w A psalm of David|x-occurrence="1" x-occurrences="1"\w*\zaln-e\*
+\q1 \w next|x-occurrence="1" x-occurrences="1"\w*
+`;
+  const avo = usfm.toJSON(alignedD).chapters["3"]["1"].verseObjects;
+  const sourceNodes = collectSourceWordNodes(avo);
+  assert(
+    sourceNodes.some((n) => n.node.text === "A psalm of David"),
+    `collectSourceWordNodes finds the aligned superscription's target word past the real \\d node (got ${JSON.stringify(sourceNodes.map((n) => n.node.text))})`,
+  );
+
+  // (b) Aligned \d: the title's aligned word must render inside .be-d, not
+  // fall back to ordinary verse-body styling once the empty {tag:"d"} node
+  // closes.
+  const shownA = renderHighlightedHTML(avo, new Set());
+  const dSpanMatch = shownA.match(/<span class="be-d">([\s\S]*?)<\/span>/);
+  assert(!!dSpanMatch, `a .be-d span is present in the render (got ${JSON.stringify(shownA)})`);
+  assert(
+    !!dSpanMatch && dSpanMatch[1].includes("A psalm of David"),
+    `the aligned superscription word renders INSIDE the .be-d span, not after it closes (got ${JSON.stringify(dSpanMatch && dSpanMatch[1])})`,
+  );
+  // The following \q1 line is a different segment (a fresh <div>), so its word
+  // must NOT be swept into the same .be-d span.
+  assert(
+    !dSpanMatch[1].includes("next"),
+    ".be-d closes at the next segment switch — the following \\q1 line is not pulled into the superscription's styling",
   );
 }
 

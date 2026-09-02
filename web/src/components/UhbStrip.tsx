@@ -8,6 +8,7 @@ import type { TwlRow, VerseDto } from "../sync/api";
 import type { LexiconEntry } from "../hooks/useLexicon";
 import { type HighlightCtx, hoverShadow } from "../lib/highlightTypes";
 import { nfc } from "../lib/hebrew";
+import { isSourceWordContainer } from "../lib/usfm";
 import { SourceTooltipBody } from "./SourceTooltipBody";
 import { PinnedLexBox } from "./PinnedLexBox";
 import { useProjectConfig } from "../hooks/useProjectConfig";
@@ -132,9 +133,10 @@ function SourceVerseTokens({
   const out: ReactNode[] = [];
   // Word-token walk index — the hover identity (see highlightTypes.ts). Must
   // count exactly the nodes buildSourceIndexMap counts (word tags, descending
-  // through milestones) so strip positions line up with the panel's resolved
-  // group positions. In the side-by-side shared strip this verse is the union
-  // span, so the index is union-relative natively.
+  // through the shared source-word containers — isSourceWordContainer) so strip
+  // positions line up with the panel's resolved group positions. In the
+  // side-by-side shared strip this verse is the union span, so the index is
+  // union-relative natively.
   let wordPos = 0;
   const walk = (nodes: unknown[]) => {
     for (const n of nodes ?? []) {
@@ -167,14 +169,16 @@ function SourceVerseTokens({
           />,
         );
         wordPos++;
-      } else if (
-        o["type"] === "milestone" ||
-        // \d (Psalm superscription) is type:"section" but its content IS
-        // alignable verse body — descend so its \w tokens render and count
-        // toward wordPos exactly as buildSourceIndexMap counts them. Mirrors
-        // collectMilestoneRuns in highlight.ts.
-        (o["type"] === "section" && o["tag"] === "d")
-      ) {
+      } else if (isSourceWordContainer(o)) {
+        // The ONE source-word descent rule (usfm.ts): `\zaln` milestones, `\qs`
+        // character wrappers and `\d` superscriptions all hold alignable verse
+        // body, so their `\w` tokens render and count toward wordPos exactly as
+        // collectSourceWordNodes / buildSourceIndexMap enumerate them. This walk
+        // renders as it goes (it interleaves text nodes), so it gates on the
+        // shared predicate rather than projecting off the shared walk. Before
+        // #370 it descended ANY milestone and no wrapper, so a `\qs`-wrapped
+        // word shifted every strip position after it out of step with the
+        // panel's index map — and hover/highlight lit the wrong word.
         walk((o["children"] as unknown[] | undefined) ?? []);
       }
     }
