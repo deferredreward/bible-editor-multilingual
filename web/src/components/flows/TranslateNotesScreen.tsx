@@ -119,7 +119,12 @@ import {
   noteRefLabel,
 } from "../../lib/verseRange";
 import { buildTnQuickRequest } from "../../lib/tnQuickRequest";
-import { introRedoTimeoutMs, tnRedoBlockedReason, tnRedoUsesPipeline } from "../../lib/tnRedo";
+import {
+  introRedoTimeoutMs,
+  redoErrorIsAiUnconfigured,
+  tnRedoBlockedReason,
+  tnRedoUsesPipeline,
+} from "../../lib/tnRedo";
 import { resolveFlowChipStatus, flowChipKind, type FlowChipStatus } from "../../lib/flowStatusChip";
 import { flowLaneSegmentsAcross, type FlowSegment } from "../../lib/flowHighlight";
 import { isHebrewBook } from "../../lib/sourceSearch";
@@ -1187,16 +1192,18 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
         err instanceof ApiError && err.body && typeof err.body === "object" && "error" in err.body
           ? String((err.body as { error?: unknown }).error)
           : "";
-      if (
-        code === "tn_quick_disabled" ||
-        code === "anthropic_api_key_missing" ||
-        code === "pipeline_api_disabled" ||
-        (err instanceof ApiError && err.status === 503)
-      ) {
-        // Calm and specific: this workspace simply has no AI drafting yet.
-        // Nothing else on the screen is affected.
+      if (redoErrorIsAiUnconfigured(code)) {
+        // Calm and specific: this workspace simply has no AI drafting yet. This
+        // is the ONE case that greys Redo permanently — it's genuinely not set
+        // up and won't be mid-session. Nothing else on the screen is affected.
         setAiUnavailable(t("flowTranslate.aiUnavailable"));
       } else {
+        // Everything else — including a bare 503/502 from an overloaded bot or a
+        // relayed Anthropic overload — is TRANSIENT. Surface a retryable notice
+        // and leave Redo enabled. Latching aiUnavailable on a bare 503 here used
+        // to disable Redo for the whole session on a single upstream hiccup,
+        // with only a faint caption to explain it (the "greyed out and nothing
+        // happened" report).
         say(
           t("flowTranslate.redoFailed", {
             status: err instanceof ApiError ? err.status : t("flowTranslate.genericError"),
