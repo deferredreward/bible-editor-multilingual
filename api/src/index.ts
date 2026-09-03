@@ -115,6 +115,13 @@ export interface Env {
   // Comma-separated DCS usernames (case-insensitive) who may switch to any
   // workspace regardless of DCS org membership.
   SUPER_ADMINS?: string;
+  // "true" enables auto-claiming a spare pool slot for an un-onboarded org at
+  // its first admin login (workspaceAutoClaim.ts). OFF by default and on
+  // purpose: Door43 is a public Gitea, so anyone can create an org, create a
+  // BE-Admins team, and sign in — with this on, that self-serves a real
+  // workspace out of the operator-provisioned pool. Turn it on only where that
+  // is the intent and the pool is expendable.
+  WORKSPACE_AUTOCLAIM?: string;
   // Placeholder for an additional org's D1 binding — declared here AND in
   // wrangler.toml when a new workspace is provisioned (see the WORKSPACES
   // comment in wrangler.toml for the full add-an-org steps). The workspace

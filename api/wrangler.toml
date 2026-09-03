@@ -130,6 +130,16 @@ crons = []
 #   5. wrangler d1 migrations apply <name> --remote
 #   6. onboard the org via the Setup wizard
 #
+# WORKSPACE_AUTOCLAIM: "true" lets an admin of a Door43 org that has NO
+# workspace claim a spare pool slot for it at sign-in (docs/workspace-pool.md).
+# Unset/anything else = off, which is the default and the right one for a
+# single-org deployment: git.door43.org is a public Gitea, so anyone can create
+# an org, create a BE-Admins team, and self-serve a workspace out of the pool.
+# Turn it on only where self-service onboarding is the intent and the pool is
+# expendable. It also requires an EXPLICIT roster (registry rows, or WORKSPACES
+# below) — with neither, auto-claim refuses, because the first row written to an
+# empty registry would replace the implicit default rather than join it.
+#
 # SUPER_ADMINS: comma-separated DCS usernames (case-insensitive) who may
 # switch to any workspace regardless of DCS org membership, and are treated
 # as admin in every workspace regardless of that workspace's user_roles table

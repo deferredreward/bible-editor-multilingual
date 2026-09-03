@@ -236,6 +236,44 @@ export async function primeWorkspaces(env: Env): Promise<void> {
   registryState.set(db as object, { workspaces });
 }
 
+// The EXPLICITLY configured roster: registry rows when the registry has been
+// primed and holds any, else the WORKSPACES env entries — and an empty array
+// when neither exists, i.e. when listWorkspaces is serving the synthetic
+// implicit default.
+//
+// That distinction is load-bearing for anything that WRITES a workspace row.
+// The implicit default is not a registry row: it materializes only while the
+// registry yields nothing, so the first row ever written to an empty registry
+// REPLACES it as the whole roster — the deployment's live database silently
+// stops being a workspace. Callers that could create a row must refuse while
+// this is empty (see workspaceAutoClaim.ts); an operator seeds WORKSPACES with
+// the existing workspace first, which primeWorkspaces persists as a claimed row.
+export function explicitWorkspaces(env: Env): Workspace[] {
+  const db = sharedDb(env);
+  const state = db ? registryState.get(db as object) : undefined;
+  if (state?.workspaces && state.workspaces.length > 0) return state.workspaces;
+  return parseEnvEntries(env);
+}
+
+// The org of the workspace this env is scoped to, but ONLY when the roster is
+// EXPLICITLY configured — registry rows, or a non-empty WORKSPACES var. Returns
+// null for the synthetic implicit default, whose org is VIEWER_ORG: in a
+// single-org deployment that is a separate viewer-access setting and need not
+// equal the project's own org, so callers must fall back to project_config
+// there rather than trusting it (see orgForTeamSync in dcsTeams.ts).
+//
+// Exists because the WORKSPACES env var stopped being the roster's source of
+// truth when it moved into the registry table (PR-1 of #81): a workspace
+// claimed from the spare pool exists only as a registry row, so a caller gated
+// on the env var sees no org for it — production runs WORKSPACES = "".
+export function activeWorkspaceOrg(env: Env): string | null {
+  const explicit = explicitWorkspaces(env);
+  if (explicit.length === 0) return null;
+  const slug = env.WORKSPACE_SLUG;
+  const active = slug ? explicit.find((w) => w.slug === slug) : undefined;
+  return active?.org ?? null;
+}
+
 export function listWorkspaces(env: Env): Workspace[] {
   const db = sharedDb(env);
   const state = db ? registryState.get(db as object) : undefined;
@@ -272,6 +310,20 @@ async function invalidateAndReprime(env: Env): Promise<void> {
   const db = sharedDb(env);
   if (db) registryState.delete(db as object);
   await primeWorkspaces(env);
+}
+
+// Force this isolate to re-read the shared workspace registry, dropping its
+// per-isolate cache. The registry loads once per isolate and never expires on
+// its own, so a workspace a DIFFERENT isolate claimed (auto-claim at another
+// admin's login, or a super admin's manual pool claim) is otherwise invisible
+// here until this isolate recycles. The login path calls this when auto-claim
+// examined an org it believed unregistered but did not itself claim (issue #81),
+// so a newly-onboarded org's members stop landing on the denied page. Fails
+// soft like any prime. This is the same operation `claimWorkspace` runs
+// internally after a successful claim; it is exported for the examined-but-
+// not-claimed case, where no claim happened on this isolate to trigger it.
+export async function refreshWorkspaceRegistry(env: Env): Promise<void> {
+  await invalidateAndReprime(env);
 }
 
 async function findClaimedByOrg(env: Env, db: D1Database, org: string): Promise<Workspace | null> {

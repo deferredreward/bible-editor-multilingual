@@ -58,7 +58,102 @@ claimable versus declared-but-not-yet-deployed.
 
 ## Claiming a slot for an org
 
-Currently manual (PR-2), super-admin only:
+Two ways in, both landing on the same `claimWorkspace` mechanism.
+
+### Automatic: first admin login (PR-3)
+
+When someone signs in who is an **admin of a Door43 org that has no workspace in
+the registry**, the OAuth callback claims a slot for that org and lands them in
+it — no operator, no redeploy. "Admin" means membership of the org's configured
+admin team (`BE-Admins`, or `DCS_TEAM_ADMIN`): being an org **Owner** in Door43
+is not enough, and editors never claim — onboarding an org is an administrative
+act.
+
+**Three preconditions, all deliberate:**
+
+1. `WORKSPACE_AUTOCLAIM = "true"` on the deployment. **Off by default.**
+   git.door43.org is a public Gitea: anyone can create an org, create a team
+   named `BE-Admins`, add themselves, and sign in. With this on, that self-serves
+   a real workspace out of your pool — one slot per login, with no cap on
+   logins. Enable it only where self-service onboarding is the point and the
+   pool is expendable, and watch `[autoClaim] pool exhausted` in `wrangler tail`.
+2. An **explicit roster** — at least one registry row, or a non-empty
+   `WORKSPACES`. A single-org deployment has neither: its live workspace is the
+   *synthetic implicit default*, which exists only while the registry is empty,
+   so the first claimed row written there would become the whole roster and
+   evict the deployment's own database (every `be_ws=default` cookie would then
+   resolve to the newly claimed, empty one). Auto-claim refuses and logs
+   `refusing to claim: this deployment has no explicit workspace roster`. Make
+   the existing workspace explicit first — set `WORKSPACES` to a single entry
+   describing it and deploy; `primeWorkspaces` persists it as a `claimed` row on
+   first boot — and then adding a row is an addition, not a replacement.
+3. **#381 must be resolved first. Do not enable `WORKSPACE_AUTOCLAIM` until it
+   is.** An auto-claimed row carries no `export_owner`, and an org with no
+   preset falls through `presetForOrg` → `DEFAULT_PRESET` (`en-unfoldingword`)
+   → `exportOwnerFor` → the deployment's own `DCS_EXPORT_OWNER`. The nightly
+   export would then render that org's D1 into the **deployment's own** DCS
+   repos under the English root's repo names, using `DCS_SERVICE_TOKEN` — the
+   same class of data loss as the closed #237, reached with no operator in the
+   loop. Turning the flag on is what makes it reachable without one, so the
+   destination question has to be settled before the switch flips, not after.
+   #381 holds the options and is the owner's call; this doc is not the place
+   that decides it.
+
+- At most **one** slot per login. An admin of two un-onboarded orgs onboards the
+  second on their next sign-in.
+- The org is stored with DCS's own casing (read off the teams payload we already
+  hold), matching the `COLLATE NOCASE` tenancy index from `0068`. The label
+  defaults to the org name; an operator can relabel the row afterwards.
+- Repeat logins claim nothing: the org is in the roster by then, so it isn't a
+  candidate and no teams call is made for it.
+- **Fails soft, always.** An exhausted pool, a DCS outage, or a D1 error is
+  logged and sign-in continues against the pre-existing roster — it can never
+  500 the callback. `[autoClaim] pool exhausted` in `wrangler tail` is the
+  signal to add capacity (above).
+- Super admins skip it: their org set is synthesized from the existing roster,
+  so it never contains an unregistered org. They use the endpoint below.
+- A claim can happen for an org the user does not land in this login (a `be_ws`
+  cookie for another workspace still wins resolution). The org is onboarded and
+  they can switch to it; the slot is spent either way.
+- The claimed row gets no `export_owner`, so the workspace inherits the
+  deployment's `DCS_EXPORT_OWNER` for the nightly export — see precondition 3
+  above, which is why this is a blocker for enabling the flag rather than a
+  footnote. Until #381 lands, an operator must set `export_owner` on every
+  claimed row by hand.
+- An org already held by a **non-claimed** row (`retired` / `failed` /
+  `provisioning`, or a `claimed` row whose binding is no longer a live D1 here)
+  is refused rather than given a spare slot: the `UNIQUE(org)` index from `0068`
+  spans every status, so claiming would collide (#382). Logged as
+  `[autoClaim] org "X" is held by a <status> row`; the held row is never
+  silently reused. An operator retires the stale row properly, or claims for the
+  org through the endpoint below.
+- **Warm-isolate staleness at login is handled (login path).** The registry is
+  loaded once per isolate and never expires on its own, so an org claimed on one
+  isolate is invisible to an already-warm sibling isolate. Without a refresh, a
+  **non-admin member** of a just-onboarded org who happened to sign in through a
+  stale sibling would land on the denied page (auto-claim sees their org as a
+  candidate, returns `not_admin`, and the sibling never learned the org was
+  claimed elsewhere). To avoid it, auto-claim reports
+  `examinedUnregisteredCandidate` whenever it examined an org it believed
+  unregistered but did **not** itself claim (`not_admin` / `pool_exhausted` /
+  `teams_unknown` / `org_held`), and `callbackDcsAuth` re-reads the shared
+  registry (`refreshWorkspaceRegistry`) before login-time resolution. Cost: one
+  registry read on the login of any user with a not-yet-onboarded org, only
+  while the flag is on. Regression: the O2 case in
+  `workspaceAutoClaim.test.mjs`.
+- **Not covered here — the request path.** The same per-isolate staleness still
+  lets a request whose `be_ws` cookie names a workspace a stale isolate has never
+  heard of fall back to `list[0]` (a *different* tenant's D1), because the
+  top-level `resolveWorkspace` answers an unknown slug with the first workspace.
+  That predates auto-claim (it applies to manual pool claims too) and is tracked
+  separately in **#418**; it is not fixed by this login-path reprime.
+
+Code: `api/src/workspaceAutoClaim.ts`, called from `callbackDcsAuth` in
+`api/src/auth.ts`. Tests: `api/src/workspaceAutoClaim.test.mjs`.
+
+### Manual: the super-admin endpoint (PR-2)
+
+Still available, and the only route for an org whose admin can't sign in yet:
 
 ```sh
 curl -X POST https://<dev-worker>/api/workspaces/pool/claim \
@@ -73,12 +168,8 @@ curl -X POST https://<dev-worker>/api/workspaces/pool/claim \
   slot (HTTP 200, `alreadyClaimed: true`) and consumes nothing.
 - `503 pool_exhausted` when no live `available` slot remains — add capacity.
 
-**Auto-claiming at first admin login (the OAuth-callback wiring) is PR-3.** This
-endpoint is the seam it will reuse (`claimWorkspace` in `workspaces.ts`).
-
 ## Not yet built (later PRs of #81)
 
-- PR-3: auto-claim at first admin login (BE-Admins team member of an unclaimed org).
 - Dynamic DB creation via the D1 HTTP API + a runtime migration runner (to make
   step 1–2 above a super-admin/cron action instead of a manual wrangler run; the
   binding declaration + redeploy in step 3–4 remain inherent to native bindings).

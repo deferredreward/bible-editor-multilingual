@@ -32,11 +32,13 @@ import {
 import {
   sharedDb,
   listWorkspaces,
+  refreshWorkspaceRegistry,
   resolveLoginWorkspace,
   serializeWorkspaceCookie,
   workspaceEnv,
   WORKSPACE_COOKIE,
 } from "./workspaces.ts";
+import { autoClaimWorkspaceForAdmin } from "./workspaceAutoClaim.ts";
 import { presetForOrg, seedProjectConfigIfAbsent } from "./projectConfig.ts";
 
 // Isolate-level memoization for ensureWorkspaceUser (below), keyed
@@ -646,7 +648,7 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   // EVERYTHING downstream against the derived wsEnv. Shared-DB writes
   // (users, sessions) are workspace-agnostic — sharedDb() resolves the same
   // database from either env.
-  const workspaces = listWorkspaces(c.env);
+  let workspaces = listWorkspaces(c.env);
   const cookieSlug = getCookie(c, WORKSPACE_COOKIE) ?? null;
   let lastUsedSlug: string | null = null;
   try {
@@ -664,6 +666,42 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   const memberOrgs = isSuperAdmin(c.env, dcsUser.login)
     ? new Set(workspaces.map((w) => w.org.toLowerCase()))
     : await fetchMemberOrgs(c.env, accessToken);
+
+  // Auto-claim at first admin login (issue #81), OFF unless a deployment sets
+  // WORKSPACE_AUTOCLAIM=true and has an explicit roster. If this user administers a
+  // Door43 org (its BE-Admins team) that has NO workspace in the registry yet,
+  // flip one pre-provisioned `available` pool slot to `claimed` for that org —
+  // so a new org onboards itself instead of waiting on a super admin to call
+  // POST /api/workspaces/pool/claim. Must run BEFORE resolveLoginWorkspace so
+  // the freshly claimed workspace is a candidate for THIS login; a successful
+  // claim re-primes the isolate's registry cache, so re-reading the roster
+  // below is what makes it visible. Never throws (see workspaceAutoClaim.ts):
+  // an exhausted pool or a DCS hiccup leaves resolution exactly as it was.
+  //
+  // Super admins skip this by construction — their memberOrgs is synthesized
+  // from the existing roster, so it can never contain an unregistered org.
+  // They onboard orgs through the explicit pool routes.
+  const autoClaim = await autoClaimWorkspaceForAdmin(c.env, {
+    memberOrgs,
+    accessToken,
+    dcsUsername: dcsUser.login,
+  });
+  if (autoClaim.outcome === "claimed" || autoClaim.outcome === "already_claimed") {
+    // claimWorkspace already reprimed this isolate's registry cache; just re-read.
+    workspaces = listWorkspaces(c.env);
+  } else if (autoClaim.examinedUnregisteredCandidate) {
+    // This isolate believed the user's org unregistered and did NOT itself claim
+    // it, but another isolate may have (issue #81). A warm isolate's registry
+    // cache never expires on its own, so without this re-read a newly-onboarded
+    // org's members keep resolving to no_match — the denied page — here until the
+    // isolate recycles. Re-read the shared registry once, then resolve against
+    // it. Cost: one registry read on the login of any user with a not-yet-
+    // onboarded org, and only while WORKSPACE_AUTOCLAIM is on (auto-claim returns
+    // "disabled" otherwise, which never sets this flag).
+    await refreshWorkspaceRegistry(c.env);
+    workspaces = listWorkspaces(c.env);
+  }
+
   // A user_roles row grants access to its workspace even without Door43 org
   // membership — a manually allowlisted outsider must not be evicted from
   // their org at login just because the org check can't see them. Only the
@@ -730,7 +768,11 @@ export async function callbackDcsAuth(c: AppContext): Promise<Response> {
   // Door43 teams as role source (read-side). Membership of the resolved
   // workspace org's BE-Admins / BE-Editors teams grants admin / editor, and is
   // cached into user_roles so /api/auth/refresh needs no DCS round-trip.
-  await syncTeamRoleForUser(wsEnv, dcsUser.login, accessToken);
+  // `teams` is reused when auto-claim above already fetched the user's team
+  // listing — it is user-global, not org-scoped, so it is valid for whichever
+  // workspace we resolved to, and reusing it keeps the login path at one
+  // paginated /user/teams listing instead of two.
+  await syncTeamRoleForUser(wsEnv, dcsUser.login, accessToken, { teams: autoClaim.teams });
 
   // Allowlist gate. user_roles is the source of truth for edit access; an
   // account missing from it falls through to a DCS org-membership check so
