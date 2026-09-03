@@ -47,6 +47,34 @@ export function introRedoTimeoutMs(
     : INTRO_REDO_TIMEOUT_MS;
 }
 
+// Error codes returned by the tn-quick proxy / translate pipeline when AI
+// drafting is genuinely NOT CONFIGURED for this workspace (no BT_API_TOKEN, no
+// Anthropic key, pipeline route disabled). These are the ONLY errors that may
+// latch Redo off for the whole session — they never un-set themselves mid-run.
+//
+// A bare HTTP status is deliberately NOT on this list. The proxy forwards an
+// overloaded bot's 503 (or a relayed Anthropic 529) verbatim, so a transient
+// upstream hiccup arrives as `status === 503` too — indistinguishable by status
+// from the "no token" case, but temporary. Latching on the status flattened
+// both together, disabling Redo for the session on one hiccup with only a faint
+// caption to explain it (the "greyed out and nothing happened" report). Match on
+// the explicit code instead: the real "no token" case still carries
+// `tn_quick_disabled`, and everything else stays a retryable failure.
+export const AI_UNCONFIGURED_CODES: ReadonlySet<string> = new Set([
+  "tn_quick_disabled",
+  "anthropic_api_key_missing",
+  "pipeline_api_disabled",
+]);
+
+/**
+ * True when a Redo error means AI drafting is not configured (a permanent,
+ * session-sticky condition that greys the button), as opposed to a transient
+ * upstream failure that should stay retryable.
+ */
+export function redoErrorIsAiUnconfigured(code: string | null | undefined): boolean {
+  return code != null && AI_UNCONFIGURED_CODES.has(code);
+}
+
 export function tnRedoBlockedReason(
   row: TnRedoRow | null | undefined,
   opts: {

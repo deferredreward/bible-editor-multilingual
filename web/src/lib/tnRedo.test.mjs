@@ -5,6 +5,7 @@ import {
   INTRO_REDO_TIMEOUT_MS,
   introRedoTimeoutMs,
   isIntroTnRow,
+  redoErrorIsAiUnconfigured,
   tnRedoBlockedReason,
   tnRedoUsesPipeline,
 } from "./tnRedo.ts";
@@ -65,6 +66,23 @@ test("intro redo keeps the short budget for a fresh single-row run", () => {
   assert.equal(introRedoTimeoutMs("running"), INTRO_REDO_TIMEOUT_MS);
   assert.equal(introRedoTimeoutMs("queued"), INTRO_REDO_TIMEOUT_MS);
   assert.equal(INTRO_REDO_TIMEOUT_MS, 15 * 60 * 1000);
+});
+
+test("only the explicit not-configured codes latch Redo off; transient failures stay retryable", () => {
+  // These three mean AI drafting is genuinely not set up → permanent grey-out.
+  assert.equal(redoErrorIsAiUnconfigured("tn_quick_disabled"), true);
+  assert.equal(redoErrorIsAiUnconfigured("anthropic_api_key_missing"), true);
+  assert.equal(redoErrorIsAiUnconfigured("pipeline_api_disabled"), true);
+
+  // A bare/transient upstream failure must NOT latch. The proxy forwards an
+  // overloaded bot's 503 verbatim, so classifying by status once disabled Redo
+  // for the whole session on a single hiccup (the "greyed out and nothing
+  // happened" report). No error code → transient → button stays usable.
+  assert.equal(redoErrorIsAiUnconfigured(""), false);
+  assert.equal(redoErrorIsAiUnconfigured(null), false);
+  assert.equal(redoErrorIsAiUnconfigured(undefined), false);
+  assert.equal(redoErrorIsAiUnconfigured("model_call_failed"), false);
+  assert.equal(redoErrorIsAiUnconfigured("some_other_upstream_error"), false);
 });
 
 test("aiUnavailable and missing row still block every path", () => {
