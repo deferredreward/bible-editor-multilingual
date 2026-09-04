@@ -771,9 +771,36 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
   const mark = useCallback(
     (segments: FlowSegment[]): ReactNode => {
       if (segments.length === 0) return null;
-      // Plain strings need no key; only the <mark> elements are keyed.
-      return segments.map((seg, i) =>
-        seg.marked ? (
+      // Plain strings need no key; only the element nodes are keyed.
+      return segments.map((seg, i) => {
+        // A verse-boundary marker in a multi-verse lane (#387): render it as
+        // non-scripture chrome — a muted superscript verse number in the UI
+        // font — with `unicode-bidi: isolate` so its Latin digits don't disturb
+        // the surrounding RTL scripture, and `role="img"` + a translated
+        // aria-label so a screen reader announces "Verse N" once instead of
+        // reading the raw `¦N` as part of the verse.
+        if (seg.kind === "verseMarker") {
+          return (
+            <Box
+              key={i}
+              component="sup"
+              role="img"
+              aria-label={t("flowScripture.verseBoundary", { verse: seg.verse })}
+              sx={{
+                fontFamily: (theme) => theme.typography.fontFamily,
+                fontSize: "0.72em",
+                fontWeight: 700,
+                color: "text.secondary",
+                mx: "0.3em",
+                unicodeBidi: "isolate",
+                userSelect: "none",
+              }}
+            >
+              {seg.verse}
+            </Box>
+          );
+        }
+        return seg.marked ? (
           <Box
             key={i}
             component="mark"
@@ -783,10 +810,10 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
           </Box>
         ) : (
           seg.text
-        ),
-      );
+        );
+      });
     },
-    [HL],
+    [HL, t],
   );
 
   const englishNote = row ? (sourceNotes.get(row.id)?.note ?? null) : null;

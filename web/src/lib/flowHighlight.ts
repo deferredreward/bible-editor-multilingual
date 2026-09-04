@@ -28,7 +28,9 @@ import { findTargetHighlights, type HighlightKey } from "./highlight.ts";
 import { isCharacterWrapper, isInFlowMarker } from "./usfm.ts";
 import { verseBoundaryText } from "./verseRange.ts";
 
-export interface FlowSegment {
+// A run of lane text.
+export interface FlowTextSegment {
+  kind: "text";
   text: string;
   // True for the runs that belong to the active quote — the lane wraps these
   // in <mark>. Whitespace BETWEEN two marked words is marked too, so a
@@ -36,6 +38,23 @@ export interface FlowSegment {
   // separately-padded word chips.
   marked: boolean;
 }
+
+// The boundary between two verses in a multi-verse lane (#351/#387). It is
+// styled, non-content UI chrome — a superscript verse number — NOT scripture:
+// emitting it as a plain text run rendered the literal `¦<n>` in the Latin
+// scripture stack inside RTL text and a screen reader announced it as part of
+// the verse. `text` keeps the plain-text form (`verseBoundaryText`) so the
+// concatenated segment stream still reproduces the joined plain text (and so any
+// string-only fallback consumer degrades sensibly); the styled consumers switch
+// on `kind` and render chrome from `verse` instead.
+export interface FlowVerseMarkerSegment {
+  kind: "verseMarker";
+  verse: number;
+  text: string;
+  marked: false;
+}
+
+export type FlowSegment = FlowTextSegment | FlowVerseMarkerSegment;
 
 type Part = { text: string; marked: boolean };
 
@@ -111,11 +130,11 @@ function toSegments(parts: Part[]): FlowSegment[] {
     if (chars[i] === " " && flags[i - 1] && flags[i + 1]) flags[i] = true;
   }
 
-  const out: FlowSegment[] = [];
+  const out: FlowTextSegment[] = [];
   for (let i = start; i < end; i++) {
     const last = out[out.length - 1];
     if (last && last.marked === flags[i]) last.text += chars[i];
-    else out.push({ text: chars[i], marked: flags[i] });
+    else out.push({ kind: "text", text: chars[i], marked: flags[i] });
   }
   return out;
 }
@@ -133,7 +152,7 @@ export function flowLaneSegments(
   occurrence: number | null | undefined,
   sourceVerseObjects?: unknown[] | null,
 ): FlowSegment[] {
-  const fallback = plainText ? [{ text: plainText, marked: false }] : [];
+  const fallback: FlowSegment[] = plainText ? [{ kind: "text", text: plainText, marked: false }] : [];
   if (!quote || !Array.isArray(verseObjects) || verseObjects.length === 0) return fallback;
   const highlights = findTargetHighlights(
     verseObjects,
@@ -204,7 +223,13 @@ export function flowLaneSegmentsAcross(
       slice.sourceVerseObjects,
     );
     if (segments.length === 0) continue;
-    if (out.length > 0) out.push({ text: verseBoundaryText(slice.verse), marked: false });
+    if (out.length > 0)
+      out.push({
+        kind: "verseMarker",
+        verse: slice.verse,
+        text: verseBoundaryText(slice.verse),
+        marked: false,
+      });
     out.push(...segments);
   }
   return out;
