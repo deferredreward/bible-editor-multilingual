@@ -148,6 +148,7 @@ import {
   api,
   ApiError,
   type BookListEntry,
+  type ExportRunResource,
   type ExportSnapshot,
   type LanePublicState,
   type LaneReplacementJobResponse,
@@ -155,6 +156,7 @@ import {
 } from "../../sync/api";
 import { bookName } from "../../lib/bookNames";
 import { formatEpochSecondsDateTime } from "../../lib/formatDate";
+import { parseChapterRange } from "../../lib/refParser";
 
 export interface AdminWorkflowScreenProps extends FlowScreenContext {}
 
@@ -408,6 +410,105 @@ function snapshotTargetLabel(book: string, resource: string, contextLabel: strin
   return book === CONTEXT_SNAPSHOT_BOOK ? contextLabel : `${book} · ${resource}`;
 }
 
+// ── export scope (resource + chapter range) ──────────────────────────────────
+
+type ExportRunResourceOption = "all" | ExportRunResource;
+const EXPORT_RESOURCE_OPTIONS: ExportRunResourceOption[] = ["all", "tn", "tq", "twl", "ult", "ust"];
+// Chapter scoping is a server-side restriction (api/src/exports.ts) — only
+// these three resources are per-verse rows a chapter range can slice.
+const CHAPTER_SCOPABLE_RESOURCES = new Set<ExportRunResourceOption>(["tn", "tq", "twl"]);
+
+interface ChapterScope {
+  chapterStart?: number;
+  chapterEnd?: number;
+}
+
+// Empty input means "whole book" (ok, no scope). Non-empty input is parsed
+// with the same helper the AI pipeline's chapter-range field uses
+// (refParser.ts) — the returned book is ignored, since the book here comes
+// from the separate book select, not from this field.
+function parseChapterScope(input: string, book: string): { ok: true; scope: ChapterScope } | { ok: false; error: string } {
+  const trimmed = input.trim();
+  if (!trimmed) return { ok: true, scope: {} };
+  const parsed = parseChapterRange(trimmed, book);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  return { ok: true, scope: { chapterStart: parsed.range.startChapter, chapterEnd: parsed.range.endChapter } };
+}
+
+function ExportScopeFields({
+  book,
+  resource,
+  onResourceChange,
+  chapterInput,
+  onChapterInputChange,
+  disabled,
+}: {
+  book: string;
+  resource: ExportRunResourceOption;
+  onResourceChange: (r: ExportRunResourceOption) => void;
+  chapterInput: string;
+  onChapterInputChange: (v: string) => void;
+  disabled: boolean;
+}) {
+  const { t } = useTranslation();
+  const chapterAllowed = book !== "all" && CHAPTER_SCOPABLE_RESOURCES.has(resource);
+  const chapterProvided = chapterInput.trim() !== "";
+  const chapterScope = chapterAllowed ? parseChapterScope(chapterInput, book) : null;
+
+  let helperText: string;
+  let fieldError = false;
+  if (!chapterAllowed) {
+    helperText = t("adminPages.workflow.chapterScopeUnavailableHint");
+  } else if (!chapterProvided) {
+    helperText = t("adminPages.workflow.chapterScopeWholeBookHint");
+  } else if (chapterScope && !chapterScope.ok) {
+    fieldError = true;
+    helperText = chapterScope.error;
+  } else if (chapterScope && chapterScope.ok) {
+    const { chapterStart, chapterEnd } = chapterScope.scope;
+    helperText =
+      chapterStart === chapterEnd
+        ? t("adminPages.workflow.chapterScopeSingle", { chapter: chapterStart })
+        : t("adminPages.workflow.chapterScopeRange", { start: chapterStart, end: chapterEnd });
+  } else {
+    helperText = "";
+  }
+
+  return (
+    <>
+      <TextField
+        select
+        fullWidth
+        size="small"
+        label={t("adminPages.workflow.resourceScopeLabel")}
+        value={resource}
+        disabled={disabled}
+        onChange={(e) => onResourceChange(e.target.value as ExportRunResourceOption)}
+        sx={{ mt: 2 }}
+      >
+        {EXPORT_RESOURCE_OPTIONS.map((r) => (
+          <MenuItem key={r} value={r}>
+            {r === "all" ? t("adminPages.workflow.resourceAllOption") : r}
+          </MenuItem>
+        ))}
+      </TextField>
+      <TextField
+        fullWidth
+        size="small"
+        label={t("adminPages.workflow.chapterScopeLabel")}
+        placeholder={t("adminPages.workflow.chapterScopePlaceholder")}
+        value={chapterInput}
+        disabled={disabled || !chapterAllowed}
+        onChange={(e) => onChapterInputChange(e.target.value.replace(/[^\d-]/g, ""))}
+        error={fieldError}
+        helperText={helperText}
+        inputProps={{ inputMode: "numeric", pattern: "[0-9-]*" }}
+        sx={{ mt: 2 }}
+      />
+    </>
+  );
+}
+
 // ── screen ───────────────────────────────────────────────────────────────────
 
 type LaneKey = "lit" | "sim";
@@ -456,6 +557,8 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   const [confirmRun, setConfirmRun] = useState(false);
   const [exportBook, setExportBook] = useState<string>("all");
   const [exportBooks, setExportBooks] = useState<BookListEntry[] | null>(null);
+  const [exportResource, setExportResource] = useState<ExportRunResourceOption>("all");
+  const [exportChapterInput, setExportChapterInput] = useState("");
 
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -624,6 +727,8 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
 
   const handleOpenRunConfirm = () => {
     setExportBook("all");
+    setExportResource("all");
+    setExportChapterInput("");
     setConfirmRun(true);
     // Refetch on every open: a failed or stale list would otherwise stick
     // until remount (imports elsewhere add books while this screen is up).
@@ -633,10 +738,30 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
       .catch(() => setExportBooks((cur) => cur ?? []));
   };
 
+  // Chapter scoping is only meaningful for a specific book + tn/tq/twl (server
+  // requires both — api/src/exports.ts). Recomputed from the same state
+  // ExportScopeFields renders from, so the Run button's disabled state and the
+  // submitted payload never disagree.
+  const chapterScopeAllowed = exportBook !== "all" && CHAPTER_SCOPABLE_RESOURCES.has(exportResource);
+  const exportChapterProvided = exportChapterInput.trim() !== "";
+  const exportChapterScope = chapterScopeAllowed ? parseChapterScope(exportChapterInput, exportBook) : null;
+  // Blocked = a chapter range was typed but the current book/resource combo
+  // can't use it (e.g. resource switched to "all" or "ult" after typing one),
+  // or the range itself doesn't parse.
+  const chapterScopeBlocked =
+    exportChapterProvided && (!chapterScopeAllowed || (exportChapterScope != null && !exportChapterScope.ok));
+
   const handleRunConfirmed = async () => {
     setRunBusy(true);
     try {
-      const res = await api.exportsRun(exportBook !== "all" ? { book: exportBook } : undefined);
+      const opts: { book?: string; resource?: ExportRunResource; chapterStart?: number; chapterEnd?: number } = {};
+      if (exportBook !== "all") opts.book = exportBook;
+      if (exportResource !== "all") opts.resource = exportResource;
+      if (chapterScopeAllowed && exportChapterProvided && exportChapterScope?.ok) {
+        opts.chapterStart = exportChapterScope.scope.chapterStart;
+        opts.chapterEnd = exportChapterScope.scope.chapterEnd;
+      }
+      const res = await api.exportsRun(Object.keys(opts).length > 0 ? opts : undefined);
       setRunInfo(res);
       setInstanceStatus(null);
       setMsg(t("adminPages.workflow.msgExportQueued", { id: res.id }));
@@ -645,9 +770,15 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
       setMsg(
         body?.error === "workflow_create_failed"
           ? t("adminPages.workflow.msgExportRunExists")
-          : e instanceof ApiError
-            ? t("adminPages.workflow.msgExportStartFailedHttp", { status: e.status })
-            : t("adminPages.workflow.msgExportStartFailed"),
+          : body?.error === "chapter_scope_requires_book_and_resource"
+            ? t("adminPages.workflow.msgChapterScopeRequiresBookAndResource")
+            : body?.error === "chapter_scope_unsupported_resource"
+              ? t("adminPages.workflow.msgChapterScopeUnsupportedResource")
+              : body?.error === "invalid_chapter_range"
+                ? t("adminPages.workflow.msgInvalidChapterRange")
+                : e instanceof ApiError
+                  ? t("adminPages.workflow.msgExportStartFailedHttp", { status: e.status })
+                  : t("adminPages.workflow.msgExportStartFailed"),
       );
     } finally {
       setRunBusy(false);
@@ -1132,7 +1263,9 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
                             <span>{t("adminPages.workflow.contextSnapshotLabel")}</span>
                           </Tooltip>
                         ) : (
-                          `${s.book} · ${s.resource}`
+                          `${s.book} · ${s.resource}${
+                            s.chapters ? ` · ${t("adminPages.workflow.chaptersSuffix", { chapters: s.chapters })}` : ""
+                          }`
                         )}
                       </TableCell>
                       <TableCell sx={tdSx}>
@@ -1276,10 +1409,18 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
             {t("adminPages.workflow.scopeHint")}
           </Typography>
+          <ExportScopeFields
+            book={exportBook}
+            resource={exportResource}
+            onResourceChange={setExportResource}
+            chapterInput={exportChapterInput}
+            onChapterInputChange={setExportChapterInput}
+            disabled={runBusy}
+          />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmRun(false)}>{t("adminPages.workflow.notNow")}</Button>
-          <Button variant="contained" disabled={runBusy} onClick={() => void handleRunConfirmed()}>
+          <Button variant="contained" disabled={runBusy || chapterScopeBlocked} onClick={() => void handleRunConfirmed()}>
             {t("adminPages.workflow.runExportButton")}
           </Button>
         </DialogActions>

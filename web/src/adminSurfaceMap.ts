@@ -118,6 +118,18 @@ export const ADMIN_SURFACES: AdminSurfaceEntry[] = [
     desk: { page: "workflow", file: "src/components/flows/AdminWorkflowScreen.tsx", anchor: "function AdminWorkflowScreen" },
   },
   {
+    id: "export-chapter-scope",
+    label: "Precise Door43 export (resource + chapter range scoping)",
+    classic: null,
+    desk: {
+      page: "workflow",
+      file: "src/components/flows/AdminWorkflowScreen.tsx",
+      anchor: "<ExportScopeFields",
+    },
+    notes:
+      "\"Run export now\" confirm dialog: scope a manual export to one resource (tn/tq/twl/ult/ust) and, for tn/tq/twl on a specific book, a chapter range — e.g. \"Mark 13-14 translation notes\" instead of the whole book.",
+  },
+  {
     id: "aiPipelines",
     label: "AI studio (run AI pipelines)",
     classic: null,
