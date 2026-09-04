@@ -441,6 +441,8 @@ function ExportScopeFields({
   onResourceChange,
   chapterInput,
   onChapterInputChange,
+  shrinkOverride,
+  onShrinkOverrideChange,
   disabled,
 }: {
   book: string;
@@ -448,6 +450,8 @@ function ExportScopeFields({
   onResourceChange: (r: ExportRunResourceOption) => void;
   chapterInput: string;
   onChapterInputChange: (v: string) => void;
+  shrinkOverride: boolean;
+  onShrinkOverrideChange: (v: boolean) => void;
   disabled: boolean;
 }) {
   const { t } = useTranslation();
@@ -505,6 +509,19 @@ function ExportScopeFields({
         inputProps={{ inputMode: "numeric", pattern: "[0-9-]*" }}
         sx={{ mt: 2 }}
       />
+      {chapterAllowed && chapterProvided && (
+        <FormControlLabel
+          sx={{ mt: 1 }}
+          control={
+            <Checkbox
+              checked={shrinkOverride}
+              disabled={disabled}
+              onChange={(e) => onShrinkOverrideChange(e.target.checked)}
+            />
+          }
+          label={<Typography variant="body2">{t("adminPages.workflow.chapterScopeShrinkOverrideLabel")}</Typography>}
+        />
+      )}
     </>
   );
 }
@@ -559,6 +576,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   const [exportBooks, setExportBooks] = useState<BookListEntry[] | null>(null);
   const [exportResource, setExportResource] = useState<ExportRunResourceOption>("all");
   const [exportChapterInput, setExportChapterInput] = useState("");
+  const [exportShrinkOverride, setExportShrinkOverride] = useState(false);
 
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -729,6 +747,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
     setExportBook("all");
     setExportResource("all");
     setExportChapterInput("");
+    setExportShrinkOverride(false);
     setConfirmRun(true);
     // Refetch on every open: a failed or stale list would otherwise stick
     // until remount (imports elsewhere add books while this screen is up).
@@ -745,21 +764,55 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   const chapterScopeAllowed = exportBook !== "all" && CHAPTER_SCOPABLE_RESOURCES.has(exportResource);
   const exportChapterProvided = exportChapterInput.trim() !== "";
   const exportChapterScope = chapterScopeAllowed ? parseChapterScope(exportChapterInput, exportBook) : null;
-  // Blocked = a chapter range was typed but the current book/resource combo
-  // can't use it (e.g. resource switched to "all" or "ult" after typing one),
-  // or the range itself doesn't parse.
+  // Blocked only when chapter scope is actually allowed and the typed range
+  // fails to parse. A stale chapter value left over from a book/resource combo
+  // that no longer supports chapter scope can never block Run — the change
+  // handlers below clear the field the moment it stops being allowed, and this
+  // check is belt-and-braces in case anything else leaves a stale value behind.
   const chapterScopeBlocked =
-    exportChapterProvided && (!chapterScopeAllowed || (exportChapterScope != null && !exportChapterScope.ok));
+    chapterScopeAllowed && exportChapterProvided && exportChapterScope != null && !exportChapterScope.ok;
+
+  // Clears the chapter range (and its shrink-override) the instant a book or
+  // resource change makes chapter scope unavailable, so the field can never be
+  // left holding a value the user has no way to edit or clear (it disables
+  // when scope isn't allowed) — see chapterScopeBlocked above.
+  const handleExportBookChange = (next: string) => {
+    setExportBook(next);
+    if (!(next !== "all" && CHAPTER_SCOPABLE_RESOURCES.has(exportResource))) {
+      setExportChapterInput("");
+      setExportShrinkOverride(false);
+    }
+  };
+
+  const handleExportResourceChange = (next: ExportRunResourceOption) => {
+    setExportResource(next);
+    if (!(exportBook !== "all" && CHAPTER_SCOPABLE_RESOURCES.has(next))) {
+      setExportChapterInput("");
+      setExportShrinkOverride(false);
+    }
+  };
+
+  const handleExportChapterInputChange = (v: string) => {
+    setExportChapterInput(v);
+    if (v.trim() === "") setExportShrinkOverride(false);
+  };
 
   const handleRunConfirmed = async () => {
     setRunBusy(true);
     try {
-      const opts: { book?: string; resource?: ExportRunResource; chapterStart?: number; chapterEnd?: number } = {};
+      const opts: {
+        book?: string;
+        resource?: ExportRunResource;
+        chapterStart?: number;
+        chapterEnd?: number;
+        shrinkOverride?: boolean;
+      } = {};
       if (exportBook !== "all") opts.book = exportBook;
       if (exportResource !== "all") opts.resource = exportResource;
       if (chapterScopeAllowed && exportChapterProvided && exportChapterScope?.ok) {
         opts.chapterStart = exportChapterScope.scope.chapterStart;
         opts.chapterEnd = exportChapterScope.scope.chapterEnd;
+        if (exportShrinkOverride) opts.shrinkOverride = true;
       }
       const res = await api.exportsRun(Object.keys(opts).length > 0 ? opts : undefined);
       setRunInfo(res);
@@ -1396,7 +1449,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             size="small"
             label={t("adminPages.workflow.exportScopeLabel")}
             value={exportBook}
-            onChange={(e) => setExportBook(e.target.value)}
+            onChange={(e) => handleExportBookChange(e.target.value)}
             sx={{ mt: 2 }}
           >
             <MenuItem value="all">{t("adminPages.workflow.allBooks")}</MenuItem>
@@ -1412,9 +1465,11 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
           <ExportScopeFields
             book={exportBook}
             resource={exportResource}
-            onResourceChange={setExportResource}
+            onResourceChange={handleExportResourceChange}
             chapterInput={exportChapterInput}
-            onChapterInputChange={setExportChapterInput}
+            onChapterInputChange={handleExportChapterInputChange}
+            shrinkOverride={exportShrinkOverride}
+            onShrinkOverrideChange={setExportShrinkOverride}
             disabled={runBusy}
           />
         </DialogContent>

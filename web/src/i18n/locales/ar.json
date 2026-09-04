@@ -2940,6 +2940,7 @@
       "chapterScopeUnavailableHint": "يتطلب تقييد النطاق بالإصحاحات اختيار سفر معيّن ومورد من tn أو tq أو twl.",
       "chapterScopeSingle": "يصدّر الإصحاح {{chapter}} فقط.",
       "chapterScopeRange": "يصدّر الإصحاحات {{start}}–{{end}}.",
+      "chapterScopeShrinkOverrideLabel": "السماح لهذا التصدير بحذف صفوف من هذه الإصحاحات (يتجاوز حارس الانكماش)",
       "chaptersSuffix": "إصحاح {{chapters}}",
       "runExportButton": "تشغيل التصدير",
       "statusLookupFailed": "فشل الاستعلام عن الحالة",

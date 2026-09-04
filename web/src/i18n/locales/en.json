@@ -2708,6 +2708,7 @@
       "chapterScopeUnavailableHint": "Chapter scope needs a specific book and a tn, tq, or twl resource.",
       "chapterScopeSingle": "Exports chapter {{chapter}} only.",
       "chapterScopeRange": "Exports chapters {{start}}–{{end}}.",
+      "chapterScopeShrinkOverrideLabel": "Allow this export to remove rows from these chapters (bypasses the shrink guard)",
       "chaptersSuffix": "ch {{chapters}}",
       "runExportButton": "Run export",
       "statusLookupFailed": "status lookup failed",
