@@ -123,8 +123,11 @@ import {
   DialogContent,
   DialogTitle,
   FormControlLabel,
+  FormLabel,
   Link,
   MenuItem,
+  Radio,
+  RadioGroup,
   Snackbar,
   Switch,
   Table,
@@ -148,6 +151,7 @@ import {
   api,
   ApiError,
   type BookListEntry,
+  type ExportRunResource,
   type ExportSnapshot,
   type LanePublicState,
   type LaneReplacementJobResponse,
@@ -155,6 +159,7 @@ import {
 } from "../../sync/api";
 import { bookName } from "../../lib/bookNames";
 import { formatEpochSecondsDateTime } from "../../lib/formatDate";
+import { parseChapterRange } from "../../lib/refParser";
 
 export interface AdminWorkflowScreenProps extends FlowScreenContext {}
 
@@ -408,6 +413,166 @@ function snapshotTargetLabel(book: string, resource: string, contextLabel: strin
   return book === CONTEXT_SNAPSHOT_BOOK ? contextLabel : `${book} · ${resource}`;
 }
 
+// ── export scope (resource + chapter range) ──────────────────────────────────
+
+type ExportRunResourceOption = "all" | ExportRunResource;
+type ExportRunMode = "merge" | "overwrite";
+const EXPORT_RESOURCE_OPTIONS: ExportRunResourceOption[] = ["all", "tn", "tq", "twl", "ult", "ust"];
+// Chapter scoping is a server-side restriction (api/src/exports.ts) — only
+// these three resources are per-verse rows a chapter range can slice.
+const CHAPTER_SCOPABLE_RESOURCES = new Set<ExportRunResourceOption>(["tn", "tq", "twl"]);
+
+interface ChapterScope {
+  chapterStart?: number;
+  chapterEnd?: number;
+}
+
+// Empty input means "whole book" (ok, no scope). Non-empty input is parsed
+// with the same helper the AI pipeline's chapter-range field uses
+// (refParser.ts) — the returned book is ignored, since the book here comes
+// from the separate book select, not from this field.
+function parseChapterScope(input: string, book: string): { ok: true; scope: ChapterScope } | { ok: false; error: string } {
+  const trimmed = input.trim();
+  if (!trimmed) return { ok: true, scope: {} };
+  const parsed = parseChapterRange(trimmed, book);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  return { ok: true, scope: { chapterStart: parsed.range.startChapter, chapterEnd: parsed.range.endChapter } };
+}
+
+function ExportScopeFields({
+  book,
+  resource,
+  onResourceChange,
+  chapterInput,
+  onChapterInputChange,
+  shrinkOverride,
+  onShrinkOverrideChange,
+  mode,
+  onModeChange,
+  disabled,
+}: {
+  book: string;
+  resource: ExportRunResourceOption;
+  onResourceChange: (r: ExportRunResourceOption) => void;
+  chapterInput: string;
+  onChapterInputChange: (v: string) => void;
+  shrinkOverride: boolean;
+  onShrinkOverrideChange: (v: boolean) => void;
+  mode: ExportRunMode;
+  onModeChange: (v: ExportRunMode) => void;
+  disabled: boolean;
+}) {
+  const { t } = useTranslation();
+  const chapterAllowed = book !== "all" && CHAPTER_SCOPABLE_RESOURCES.has(resource);
+  const chapterProvided = chapterInput.trim() !== "";
+  const chapterScope = chapterAllowed ? parseChapterScope(chapterInput, book) : null;
+
+  let helperText: string;
+  let fieldError = false;
+  if (!chapterAllowed) {
+    helperText = t("adminPages.workflow.chapterScopeUnavailableHint");
+  } else if (!chapterProvided) {
+    helperText = t("adminPages.workflow.chapterScopeWholeBookHint");
+  } else if (chapterScope && !chapterScope.ok) {
+    fieldError = true;
+    helperText = chapterScope.error;
+  } else if (chapterScope && chapterScope.ok) {
+    const { chapterStart, chapterEnd } = chapterScope.scope;
+    helperText =
+      chapterStart === chapterEnd
+        ? t("adminPages.workflow.chapterScopeSingle", { chapter: chapterStart })
+        : t("adminPages.workflow.chapterScopeRange", { start: chapterStart, end: chapterEnd });
+  } else {
+    helperText = "";
+  }
+
+  return (
+    <>
+      <TextField
+        select
+        fullWidth
+        size="small"
+        label={t("adminPages.workflow.resourceScopeLabel")}
+        value={resource}
+        disabled={disabled}
+        onChange={(e) => onResourceChange(e.target.value as ExportRunResourceOption)}
+        sx={{ mt: 2 }}
+      >
+        {EXPORT_RESOURCE_OPTIONS.map((r) => (
+          <MenuItem key={r} value={r}>
+            {r === "all" ? t("adminPages.workflow.resourceAllOption") : r}
+          </MenuItem>
+        ))}
+      </TextField>
+      <TextField
+        fullWidth
+        size="small"
+        label={t("adminPages.workflow.chapterScopeLabel")}
+        placeholder={t("adminPages.workflow.chapterScopePlaceholder")}
+        value={chapterInput}
+        disabled={disabled || !chapterAllowed}
+        onChange={(e) => onChapterInputChange(e.target.value.replace(/[^\d-]/g, ""))}
+        error={fieldError}
+        helperText={helperText}
+        inputProps={{ inputMode: "numeric", pattern: "[0-9-]*" }}
+        sx={{ mt: 2 }}
+      />
+      {chapterAllowed && chapterProvided && (
+        <>
+          <FormLabel component="legend" sx={{ mt: 1.5, fontSize: "0.8125rem" }}>
+            {t("adminPages.workflow.exportModeLabel")}
+          </FormLabel>
+          <RadioGroup
+            value={mode}
+            onChange={(e) => onModeChange(e.target.value as ExportRunMode)}
+            sx={{ mt: 0.25 }}
+          >
+            <FormControlLabel
+              value="merge"
+              disabled={disabled}
+              control={<Radio size="small" />}
+              label={
+                <Box>
+                  <Typography variant="body2">{t("adminPages.workflow.exportModeMergeLabel")}</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                    {t("adminPages.workflow.exportModeMergeHelp")}
+                  </Typography>
+                </Box>
+              }
+              sx={{ alignItems: "flex-start", mt: 0.5 }}
+            />
+            <FormControlLabel
+              value="overwrite"
+              disabled={disabled}
+              control={<Radio size="small" />}
+              label={
+                <Box>
+                  <Typography variant="body2">{t("adminPages.workflow.exportModeOverwriteLabel")}</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                    {t("adminPages.workflow.exportModeOverwriteHelp")}
+                  </Typography>
+                </Box>
+              }
+              sx={{ alignItems: "flex-start", mt: 0.5 }}
+            />
+          </RadioGroup>
+          <FormControlLabel
+            sx={{ mt: 1 }}
+            control={
+              <Checkbox
+                checked={shrinkOverride}
+                disabled={disabled}
+                onChange={(e) => onShrinkOverrideChange(e.target.checked)}
+              />
+            }
+            label={<Typography variant="body2">{t("adminPages.workflow.chapterScopeShrinkOverrideLabel")}</Typography>}
+          />
+        </>
+      )}
+    </>
+  );
+}
+
 // ── screen ───────────────────────────────────────────────────────────────────
 
 type LaneKey = "lit" | "sim";
@@ -456,6 +621,10 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   const [confirmRun, setConfirmRun] = useState(false);
   const [exportBook, setExportBook] = useState<string>("all");
   const [exportBooks, setExportBooks] = useState<BookListEntry[] | null>(null);
+  const [exportResource, setExportResource] = useState<ExportRunResourceOption>("all");
+  const [exportChapterInput, setExportChapterInput] = useState("");
+  const [exportShrinkOverride, setExportShrinkOverride] = useState(false);
+  const [exportMode, setExportMode] = useState<ExportRunMode>("merge");
 
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -624,6 +793,10 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
 
   const handleOpenRunConfirm = () => {
     setExportBook("all");
+    setExportResource("all");
+    setExportChapterInput("");
+    setExportShrinkOverride(false);
+    setExportMode("merge");
     setConfirmRun(true);
     // Refetch on every open: a failed or stale list would otherwise stick
     // until remount (imports elsewhere add books while this screen is up).
@@ -633,10 +806,71 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
       .catch(() => setExportBooks((cur) => cur ?? []));
   };
 
+  // Chapter scoping is only meaningful for a specific book + tn/tq/twl (server
+  // requires both — api/src/exports.ts). Recomputed from the same state
+  // ExportScopeFields renders from, so the Run button's disabled state and the
+  // submitted payload never disagree.
+  const chapterScopeAllowed = exportBook !== "all" && CHAPTER_SCOPABLE_RESOURCES.has(exportResource);
+  const exportChapterProvided = exportChapterInput.trim() !== "";
+  const exportChapterScope = chapterScopeAllowed ? parseChapterScope(exportChapterInput, exportBook) : null;
+  // Blocked only when chapter scope is actually allowed and the typed range
+  // fails to parse. A stale chapter value left over from a book/resource combo
+  // that no longer supports chapter scope can never block Run — the change
+  // handlers below clear the field the moment it stops being allowed, and this
+  // check is belt-and-braces in case anything else leaves a stale value behind.
+  const chapterScopeBlocked =
+    chapterScopeAllowed && exportChapterProvided && exportChapterScope != null && !exportChapterScope.ok;
+
+  // Clears the chapter range (and its shrink-override) the instant a book or
+  // resource change makes chapter scope unavailable, so the field can never be
+  // left holding a value the user has no way to edit or clear (it disables
+  // when scope isn't allowed) — see chapterScopeBlocked above.
+  const handleExportBookChange = (next: string) => {
+    setExportBook(next);
+    if (!(next !== "all" && CHAPTER_SCOPABLE_RESOURCES.has(exportResource))) {
+      setExportChapterInput("");
+      setExportShrinkOverride(false);
+      setExportMode("merge");
+    }
+  };
+
+  const handleExportResourceChange = (next: ExportRunResourceOption) => {
+    setExportResource(next);
+    if (!(exportBook !== "all" && CHAPTER_SCOPABLE_RESOURCES.has(next))) {
+      setExportChapterInput("");
+      setExportShrinkOverride(false);
+      setExportMode("merge");
+    }
+  };
+
+  const handleExportChapterInputChange = (v: string) => {
+    setExportChapterInput(v);
+    if (v.trim() === "") {
+      setExportShrinkOverride(false);
+      setExportMode("merge");
+    }
+  };
+
   const handleRunConfirmed = async () => {
     setRunBusy(true);
     try {
-      const res = await api.exportsRun(exportBook !== "all" ? { book: exportBook } : undefined);
+      const opts: {
+        book?: string;
+        resource?: ExportRunResource;
+        chapterStart?: number;
+        chapterEnd?: number;
+        shrinkOverride?: boolean;
+        mode?: ExportRunMode;
+      } = {};
+      if (exportBook !== "all") opts.book = exportBook;
+      if (exportResource !== "all") opts.resource = exportResource;
+      if (chapterScopeAllowed && exportChapterProvided && exportChapterScope?.ok) {
+        opts.chapterStart = exportChapterScope.scope.chapterStart;
+        opts.chapterEnd = exportChapterScope.scope.chapterEnd;
+        if (exportShrinkOverride) opts.shrinkOverride = true;
+        opts.mode = exportMode;
+      }
+      const res = await api.exportsRun(Object.keys(opts).length > 0 ? opts : undefined);
       setRunInfo(res);
       setInstanceStatus(null);
       setMsg(t("adminPages.workflow.msgExportQueued", { id: res.id }));
@@ -645,9 +879,17 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
       setMsg(
         body?.error === "workflow_create_failed"
           ? t("adminPages.workflow.msgExportRunExists")
-          : e instanceof ApiError
-            ? t("adminPages.workflow.msgExportStartFailedHttp", { status: e.status })
-            : t("adminPages.workflow.msgExportStartFailed"),
+          : body?.error === "chapter_scope_requires_book_and_resource"
+            ? t("adminPages.workflow.msgChapterScopeRequiresBookAndResource")
+            : body?.error === "chapter_scope_unsupported_resource"
+              ? t("adminPages.workflow.msgChapterScopeUnsupportedResource")
+              : body?.error === "invalid_chapter_range"
+                ? t("adminPages.workflow.msgInvalidChapterRange")
+                : body?.error === "overwrite_requires_chapter_scope"
+                  ? t("adminPages.workflow.msgOverwriteRequiresChapterScope")
+                  : e instanceof ApiError
+                    ? t("adminPages.workflow.msgExportStartFailedHttp", { status: e.status })
+                    : t("adminPages.workflow.msgExportStartFailed"),
       );
     } finally {
       setRunBusy(false);
@@ -1132,7 +1374,9 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
                             <span>{t("adminPages.workflow.contextSnapshotLabel")}</span>
                           </Tooltip>
                         ) : (
-                          `${s.book} · ${s.resource}`
+                          `${s.book} · ${s.resource}${
+                            s.chapters ? ` · ${t("adminPages.workflow.chaptersSuffix", { chapters: s.chapters })}` : ""
+                          }`
                         )}
                       </TableCell>
                       <TableCell sx={tdSx}>
@@ -1263,7 +1507,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             size="small"
             label={t("adminPages.workflow.exportScopeLabel")}
             value={exportBook}
-            onChange={(e) => setExportBook(e.target.value)}
+            onChange={(e) => handleExportBookChange(e.target.value)}
             sx={{ mt: 2 }}
           >
             <MenuItem value="all">{t("adminPages.workflow.allBooks")}</MenuItem>
@@ -1276,11 +1520,25 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
             {t("adminPages.workflow.scopeHint")}
           </Typography>
+          <ExportScopeFields
+            book={exportBook}
+            resource={exportResource}
+            onResourceChange={handleExportResourceChange}
+            chapterInput={exportChapterInput}
+            onChapterInputChange={handleExportChapterInputChange}
+            shrinkOverride={exportShrinkOverride}
+            onShrinkOverrideChange={setExportShrinkOverride}
+            mode={exportMode}
+            onModeChange={setExportMode}
+            disabled={runBusy}
+          />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmRun(false)}>{t("adminPages.workflow.notNow")}</Button>
-          <Button variant="contained" disabled={runBusy} onClick={() => void handleRunConfirmed()}>
-            {t("adminPages.workflow.runExportButton")}
+          <Button variant="contained" disabled={runBusy || chapterScopeBlocked} onClick={() => void handleRunConfirmed()}>
+            {chapterScopeAllowed && exportChapterProvided && exportMode === "overwrite"
+              ? t("adminPages.workflow.runExportButtonOverwrite")
+              : t("adminPages.workflow.runExportButton")}
           </Button>
         </DialogActions>
       </Dialog>

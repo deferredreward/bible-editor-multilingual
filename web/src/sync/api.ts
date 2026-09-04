@@ -1487,6 +1487,11 @@ export interface PipelineQueueSummary {
   queuedCount: number;
 }
 
+// Resource scope for POST /api/exports/run — an admin-chosen slice of the
+// nightly export, not tied to a particular book (chapter scoping additionally
+// requires book + one of tn/tq/twl; see AdminWorkflowScreen.tsx).
+export type ExportRunResource = "tn" | "tq" | "twl" | "ult" | "ust";
+
 // One row from GET /api/exports — a nightly (or manual) export snapshot.
 // Mirrors the SELECT in api/src/exports.ts's GET / handler field-for-field.
 export interface ExportSnapshot {
@@ -1500,6 +1505,10 @@ export interface ExportSnapshot {
   error: string | null;
   pr_number: number | null;
   pr_error: string | null;
+  // Chapter-scoped export descriptor ("13" or "13-14"); null for a whole-book
+  // (or whole-project) export. See api/src/exports.ts's chapterStart/chapterEnd
+  // handling on POST /api/exports/run.
+  chapters: string | null;
   // Server-derived Door43 web URL for pr_number (api/src/exportPrUrl.ts) —
   // resolved from the CURRENT export destination config, absent/null when the
   // destination can't be resolved or on an older API build. Fall back to
@@ -2232,10 +2241,31 @@ export const api = {
     return request<{ snapshots: ExportSnapshot[] }>(`/api/exports${suffix}`, { signal });
   },
 
-  exportsRun: (opts?: { shrinkOverride?: boolean; book?: string }, signal?: AbortSignal) => {
-    const body: { shrinkOverride?: boolean; book?: string } = {};
+  exportsRun: (
+    opts?: {
+      shrinkOverride?: boolean;
+      book?: string;
+      resource?: ExportRunResource;
+      chapterStart?: number;
+      chapterEnd?: number;
+      mode?: "merge" | "overwrite";
+    },
+    signal?: AbortSignal,
+  ) => {
+    const body: {
+      shrinkOverride?: boolean;
+      book?: string;
+      resource?: ExportRunResource;
+      chapterStart?: number;
+      chapterEnd?: number;
+      mode?: "merge" | "overwrite";
+    } = {};
     if (opts?.shrinkOverride !== undefined) body.shrinkOverride = opts.shrinkOverride;
     if (opts?.book) body.book = opts.book;
+    if (opts?.resource) body.resource = opts.resource;
+    if (opts?.chapterStart !== undefined) body.chapterStart = opts.chapterStart;
+    if (opts?.chapterEnd !== undefined) body.chapterEnd = opts.chapterEnd;
+    if (opts?.mode !== undefined) body.mode = opts.mode;
     return request<{ id: string; status: string }>(`/api/exports/run`, {
       method: "POST",
       body: JSON.stringify(body),

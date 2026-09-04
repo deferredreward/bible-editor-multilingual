@@ -23,6 +23,11 @@
 
 ## Escalated / blocked on a human (not a code change Claude can land alone)
 
+- **Apply migration `0072_export_snapshot_chapters.sql`** — local (`bible_editor_dev --local`);
+  prod picks it up via `npm run deploy` (which runs `db:migrate:remote` first) and the dev worker via
+  the deploy-dev workflow. Adds nullable `chapters` to `export_snapshots` for chapter-scoped Door43
+  exports. Until applied, `GET /api/exports` errors (it selects the column). (DEV fork only; never
+  `--env production` here.)
 - **Apply migration `0062_book_source_kind.sql`** — local (`bible_editor_dev --local`)
   and, when the Aquifer-per-range PR lands, prod. Adds `kind TEXT NOT NULL DEFAULT
   'dcs'` to `book_source_overrides` for the issue #103 follow-up (Aquifer as a

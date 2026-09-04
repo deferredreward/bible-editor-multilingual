@@ -56,11 +56,33 @@ export function usfmFilename(book: string): string {
 // Stand-in "username" for a machine-only export (no human contributors).
 export const MECHANICAL_CONTRIBUTOR = "mechanical";
 
-export function buildExportBranch(book: string, usernames: string[]): string {
+// Shared contributor-slug logic for both branch families below: sanitize each
+// username to the git ref-safe set and join with "-", falling back to
+// MECHANICAL_CONTRIBUTOR when nothing survives sanitization.
+function contributorSlug(usernames: string[]): string {
   const safe = usernames
     .map((u) => u.replace(/[^A-Za-z0-9._-]/g, ""))
     .filter((u) => u.length > 0);
-  return `${book}-be-${safe.length === 0 ? MECHANICAL_CONTRIBUTOR : safe.join("-")}`;
+  return safe.length === 0 ? MECHANICAL_CONTRIBUTOR : safe.join("-");
+}
+
+export function buildExportBranch(book: string, usernames: string[]): string {
+  return `${book}-be-${contributorSlug(usernames)}`;
+}
+
+// Chapter-scoped export branch: `{BOOK}-bec-{user1}-{user2}-...}` / `{BOOK}-bec-mechanical`
+// — same contributor formatting as buildExportBranch, but a DISTINCT `-bec-`
+// infix (never a substring match of `-be-` alone, since it's followed by `c`)
+// so a chapter export can never land on, reset, or be pruned as if it were the
+// nightly whole-book branch, and vice versa. This is deliberate, not
+// incidental: a chapter export is reviewed and merged by a HUMAN on Door43 —
+// it must never be picked up by the DCS-side validate-and-merge job (which
+// gates on `-be-` and auto-merges anything mergeable), and it must never be
+// reset onto master or pruned by the nightly whole-book export the way an
+// ordinary `-be-` branch is (see reuseChapterBranch / isChapterExportBranch in
+// exportWorkflow.ts).
+export function buildChapterExportBranch(book: string, usernames: string[]): string {
+  return `${book}-bec-${contributorSlug(usernames)}`;
 }
 
 // ── TSV builders ─────────────────────────────────────────────────────────────
@@ -622,6 +644,13 @@ export interface DcsCommitResult {
   // pairs must not mint junk `-be-` branches — the service token can't
   // delete them. Callers skip prune/PR work when this is false.
   branchTouched: boolean;
+  // true when opts.expectedSha was supplied (a caller that merged against a
+  // specific base file — the chapter-scoped export, exportChapterMerge.ts)
+  // and the branch file's sha no longer matches it: something else landed on
+  // the branch between the caller's read and this write, so nothing was
+  // written (no PUT/POST). Absent/false on every other result. The caller is
+  // expected to re-read the base, re-merge, and retry.
+  staleBase?: boolean;
 }
 
 // Encode a UTF-8 string as base64 (the Gitea contents API expects base64).
@@ -732,6 +761,24 @@ async function branchExists(
   throw new Error(`dcs_branch_get_failed: ${res.status} ${await res.text()}`);
 }
 
+// Exported wrapper around branchExists for callers outside this module (the
+// chapter-scoped export merge, exportWorkflow.ts, needs to know whether the
+// export branch already exists so it can read the MERGE BASE from the branch
+// itself — carrying forward rows an earlier chapter run already landed there
+// — instead of always from master, which would silently drop them; see
+// exportChapterMerge.ts F1).
+export async function dcsBranchExists(
+  config: { baseUrl: string; token: string; owner: string; repo: string },
+  branch: string,
+): Promise<boolean> {
+  const headers: Record<string, string> = {
+    Authorization: `token ${config.token}`,
+    Accept: "application/json",
+  };
+  const repoBase = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
+  return branchExists(repoBase, headers, branch);
+}
+
 // Ensure the branch is a valid, visible branch before the commit. Gitea can be
 // read-after-write inconsistent right after a create, so we poll. If it never
 // appears but a dangling ref exists (the ref is present yet GET /branches
@@ -839,7 +886,24 @@ async function getDcsFileBase64(
 //   a lingering open PR needs its diff collapsed even though master matches).
 // - When changed (or forced): reset the branch onto master, GET to discover
 //   the existing SHA on the branch (404 = new file), no-op if the branch file
-//   already matches, else PUT/POST.
+//   already matches, else PUT/POST. opts.preserveBranch skips the reset (see
+//   below) — everything else in this list still applies.
+// - opts.expectedSha is a CAS guard for callers that computed `content` by
+//   merging against a specific base-file read (the chapter-scoped export —
+//   exportChapterMerge.ts, issue: sequential chapter runs racing master).
+//   When supplied (an explicit `null` means "I merged against no file at
+//   all"), the branch file's sha must still match it after the reset/lookup
+//   above, or something else landed on the branch since that read and this
+//   write must NOT clobber it — see DcsCommitResult.staleBase.
+// - opts.preserveBranch (chapter-scoped export only): call
+//   ensureExportBranchExists instead of resetExportBranchToMaster — create
+//   the branch from master if it's missing, but NEVER move an existing one.
+//   A chapter-mode branch can already carry an earlier chapter run's rows
+//   (outside the range this call is merging); resetting it onto master would
+//   silently drop those rows before the CAS lookup below even runs, and the
+//   ensuing staleBase mismatch just re-commits the new range alone — the
+//   earlier chapter's rows are gone for good. Whole-book callers never pass
+//   this and are unaffected.
 // - Returns the new content SHA + the resulting commit SHA so the caller can
 //   record both for traceability.
 export async function commitToDcs(
@@ -847,7 +911,7 @@ export async function commitToDcs(
   path: string,
   content: string,
   message: string,
-  opts?: { forceBranch?: boolean },
+  opts?: { forceBranch?: boolean; expectedSha?: string | null; preserveBranch?: boolean },
 ): Promise<DcsCommitResult> {
   const headers: Record<string, string> = {
     Authorization: `token ${config.token}`,
@@ -857,7 +921,21 @@ export async function commitToDcs(
   const base = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/contents/${path.split("/").map(encodeURIComponent).join("/")}`;
 
   const contentBase64 = utf8ToBase64(content);
-  if (!opts?.forceBranch) {
+  // The master-equality short-circuit is skipped entirely when preserveBranch
+  // is set: a chapter-scoped branch can already carry an earlier chapter
+  // run's rows (outside this call's merged range), so its file can easily
+  // differ from master even though THIS render happens to equal master
+  // byte-for-byte (e.g. this range's rows landed back at their master
+  // values). Returning branchTouched:false here would be wrong twice over —
+  // it reports "nothing to export" for a branch that still holds a stale
+  // blob, and the caller (exportOne) reads branchTouched:false as license to
+  // close the branch's open PR as unchanged, discarding that earlier range's
+  // still-unmerged work. Falling through to the branch-file lookup below
+  // handles this correctly either way: identical to the branch → its own
+  // no-op (changed:false, branchTouched:true, so the PR stays open); not
+  // identical → the CAS/write path proceeds as normal. Whole-book callers
+  // never pass preserveBranch and keep the master short-circuit unchanged.
+  if (!opts?.forceBranch && !opts?.preserveBranch) {
     const baseRef = config.baseRef ?? "master";
     const masterFile = await getDcsFileBase64(base, headers, baseRef);
     if (masterFile?.base64 != null && masterFile.base64 === contentBase64) {
@@ -866,8 +944,15 @@ export async function commitToDcs(
   }
 
   // Re-base the export branch onto current master before reading/committing, so
-  // the resulting PR is a clean child of master, not a stale 3-way merge.
-  await resetExportBranchToMaster(config);
+  // the resulting PR is a clean child of master, not a stale 3-way merge —
+  // UNLESS the caller passed preserveBranch (chapter-scoped export reusing a
+  // branch that must not be moved; see the doc comment above), in which case
+  // only ensure the branch exists, creating it from master when it's missing.
+  if (opts?.preserveBranch) {
+    await ensureExportBranchExists(config);
+  } else {
+    await resetExportBranchToMaster(config);
+  }
 
   // Lookup existing SHA for this path on this branch.
   const branchFile = await getDcsFileBase64(base, headers, config.branch);
@@ -878,6 +963,14 @@ export async function commitToDcs(
   // still open). Saves a commit per nightly run.
   if (existingBase64 !== null && existingBase64 === contentBase64) {
     return { contentSha: existingSha ?? "", commitSha: "", changed: false, branchTouched: true };
+  }
+
+  // CAS check — must come after the identical-content no-op above (that's a
+  // legitimate "nothing to do" regardless of whether the base moved) and
+  // before the write. `existingSha` is what the branch ACTUALLY carries right
+  // now; `opts.expectedSha` is what the caller's merge was computed against.
+  if (opts && "expectedSha" in opts && existingSha !== (opts.expectedSha ?? null)) {
+    return { contentSha: existingSha ?? "", commitSha: "", changed: false, branchTouched: true, staleBase: true };
   }
 
   const body: Record<string, unknown> = {

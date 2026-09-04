@@ -5,7 +5,7 @@
 // instead of getting silently flattened to `\v 6`. Not a test framework;
 // failures exit non-zero.
 
-import { buildExportBranch, buildTnTsv, buildTwlTsv, buildUsfm, commitToDcs, ensureDcsPr, exportTsvShrinkRefused, findDcsOpenPr, masterFetchGate, recreateExportBranchFromMaster, updateDcsPrBranch, usfmAlignmentShrinkRefused } from "./export.ts";
+import { buildChapterExportBranch, buildExportBranch, buildTnTsv, buildTwlTsv, buildUsfm, commitToDcs, ensureDcsPr, exportTsvShrinkRefused, findDcsOpenPr, masterFetchGate, recreateExportBranchFromMaster, updateDcsPrBranch, usfmAlignmentShrinkRefused } from "./export.ts";
 import { CorruptContentJsonError } from "./contentJson.ts";
 import { extractVersesForRange } from "./importParsers.ts";
 
@@ -227,6 +227,17 @@ function utf8Base64(s) {
   assert(buildExportBranch("ISA", ["a", "b"]) === "ISA-be-a-b", `multiple contributors joined`);
   for (const b of [buildExportBranch("LAM", []), buildExportBranch("NUM", ["x"])]) {
     assert(b.includes("-be-"), `${b} contains "-be-" (DCS gate literal)`);
+  }
+}
+
+// --- chapter-scoped export branches use a distinct `-bec-` family ---
+{
+  assert(buildChapterExportBranch("LAM", []) === "LAM-bec-mechanical", `no contributors → {BOOK}-bec-mechanical`);
+  assert(buildChapterExportBranch("AMO", ["", "  "]) === "AMO-bec-mechanical", `sanitized-to-empty usernames → mechanical`);
+  assert(buildChapterExportBranch("NUM", ["stephenwunrow"]) === "NUM-bec-stephenwunrow", `single contributor unchanged`);
+  assert(buildChapterExportBranch("ISA", ["a", "b"]) === "ISA-bec-a-b", `multiple contributors joined`);
+  for (const b of [buildChapterExportBranch("LAM", []), buildChapterExportBranch("NUM", ["x"])]) {
+    assert(!b.includes("-be-"), `${b} must NOT contain "-be-" (must not match the nightly/DCS-gate branch family)`);
   }
 }
 
@@ -466,6 +477,259 @@ function utf8Base64(s) {
       const forced = await commitToDcs(cfg, "23-ISA.usfm", "data", "msg", { forceBranch: true });
       assert(forced.branchTouched === true && forced.changed === false, `forceBranch ensures the branch even on a content match`);
     }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+// --- commitToDcs opts.expectedSha: compare-and-swap guard for the
+// chapter-scoped export (exportChapterMerge.ts). A caller that merged its
+// content against a specific base-file read must not have that write land
+// blindly if the branch moved since — this is the "sequential chapter
+// exports racing master" fix (see exportWorkflow.ts commitChapterRange).
+{
+  const originalFetch = globalThis.fetch;
+  const cfg = { baseUrl: "https://dcs.example", token: "t", owner: "o", repo: "r", branch: "MRK-be-x" };
+  const okJson = (obj, status = 200) =>
+    new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
+  const masterRef = () => okJson({ ref: "refs/heads/master", object: { sha: "master-sha" } });
+  try {
+    // (a) expectedSha does NOT match the branch file's actual sha → staleBase,
+    //     and no write (PUT/POST) is ever issued.
+    {
+      let wrote = false;
+      globalThis.fetch = async (url, init = {}) => {
+        const u = String(url);
+        const m = init.method ?? "GET";
+        if (u.includes("/git/refs/heads/master") && m === "GET") return masterRef();
+        if (u.includes("/git/refs/heads/") && m === "PATCH") {
+          return okJson({ ref: "refs/heads/MRK-be-x", object: { sha: "master-sha" } });
+        }
+        if (u.includes("/branches/") && m === "GET") return okJson({ name: "MRK-be-x" });
+        if (u.includes("/contents/") && m === "GET") {
+          // Master pre-check (baseRef) vs. branch lookup (config.branch) —
+          // distinguish by the ref query param.
+          if (u.includes("ref=master")) {
+            return okJson({ sha: "master-blob", encoding: "base64", content: utf8Base64("old master content") });
+          }
+          return okJson({ sha: "branch-blob-sha", encoding: "base64", content: utf8Base64("branch content") });
+        }
+        if (u.includes("/contents/")) {
+          wrote = true;
+          return okJson({ content: { sha: "new-sha" }, commit: { sha: "commit-sha" } });
+        }
+        throw new Error(`unexpected ${m} ${u}`);
+      };
+      const r = await commitToDcs(cfg, "42-MRK.tsv", "new merged content", "msg", {
+        expectedSha: "sha-the-caller-merged-against",
+      });
+      assert(r.staleBase === true, "mismatched expectedSha reports staleBase");
+      assert(r.changed === false, "staleBase result reports changed:false");
+      assert(!wrote, "no PUT/POST is issued when expectedSha doesn't match the branch file's sha");
+    }
+
+    // (b) expectedSha matches the branch file's actual sha → the write
+    //     proceeds and the PUT body carries that sha (not staleBase).
+    {
+      let putBody = null;
+      globalThis.fetch = async (url, init = {}) => {
+        const u = String(url);
+        const m = init.method ?? "GET";
+        if (u.includes("/git/refs/heads/master") && m === "GET") return masterRef();
+        if (u.includes("/git/refs/heads/") && m === "PATCH") {
+          return okJson({ ref: "refs/heads/MRK-be-x", object: { sha: "master-sha" } });
+        }
+        if (u.includes("/branches/") && m === "GET") return okJson({ name: "MRK-be-x" });
+        if (u.includes("/contents/") && m === "GET") {
+          if (u.includes("ref=master")) {
+            return okJson({ sha: "master-blob", encoding: "base64", content: utf8Base64("old master content") });
+          }
+          return okJson({ sha: "branch-blob-sha", encoding: "base64", content: utf8Base64("branch content") });
+        }
+        if (u.includes("/contents/") && m === "PUT") {
+          putBody = JSON.parse(String(init.body));
+          return okJson({ content: { sha: "new-sha" }, commit: { sha: "commit-sha" } });
+        }
+        throw new Error(`unexpected ${m} ${u}`);
+      };
+      const r = await commitToDcs(cfg, "42-MRK.tsv", "new merged content", "msg", {
+        expectedSha: "branch-blob-sha",
+      });
+      assert(!r.staleBase, "matching expectedSha does not report staleBase");
+      assert(r.changed === true, "matching expectedSha proceeds with the commit");
+      assert(putBody !== null, "a matching expectedSha issues a PUT");
+      assert(putBody.sha === "branch-blob-sha", "PUT body carries the matching expectedSha as the file's sha");
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+// --- commitToDcs opts.preserveBranch: never reset a reused chapter-export
+// branch onto master (Finding 1 — resetting a branch that already carries an
+// earlier chapter run's rows dropped them before the CAS write landed the
+// new range). preserveBranch swaps resetExportBranchToMaster for
+// ensureExportBranchExists: an existing branch is left exactly where it is
+// (no PATCH git/refs/heads/...), and a missing branch is still created from
+// master so the first chapter commit has somewhere to land.
+{
+  const originalFetch = globalThis.fetch;
+  const cfg = { baseUrl: "https://dcs.example", token: "t", owner: "o", repo: "r", branch: "ZEC-be-x" };
+  const okJson = (obj, status = 200) =>
+    new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
+  try {
+    // (a) branch already exists and its file's blob sha differs from
+    //     master's — preserveBranch must not move it: no PATCH git/refs, and
+    //     the write proceeds as a PUT against the branch's own sha.
+    {
+      const calls = [];
+      let putBody = null;
+      globalThis.fetch = async (url, init = {}) => {
+        const u = String(url);
+        const m = init.method ?? "GET";
+        calls.push({ u, m });
+        if (u.includes("/git/refs/heads/") && m === "PATCH") {
+          throw new Error("preserveBranch must not PATCH git/refs to reset the branch onto master");
+        }
+        if (u.includes("/branches/") && m === "GET") return okJson({ name: "ZEC-be-x" });
+        if (u.includes("/contents/") && m === "GET") {
+          if (u.includes("ref=master")) {
+            return okJson({ sha: "master-blob", encoding: "base64", content: utf8Base64("master content") });
+          }
+          return okJson({ sha: "branch-blob-sha", encoding: "base64", content: utf8Base64("branch content (ch13)") });
+        }
+        if (u.includes("/contents/") && m === "PUT") {
+          putBody = JSON.parse(String(init.body));
+          return okJson({ content: { sha: "new-sha" }, commit: { sha: "commit-sha" } });
+        }
+        throw new Error(`unexpected ${m} ${u}`);
+      };
+      const r = await commitToDcs(cfg, "tn_ZEC.tsv", "branch content (ch13) + ch14 merged", "msg", {
+        preserveBranch: true,
+        expectedSha: "branch-blob-sha",
+      });
+      assert(
+        !calls.some((c) => c.u.includes("/git/refs/heads/") && c.m === "PATCH"),
+        "preserveBranch issues no PATCH git/refs/heads/... request",
+      );
+      assert(!r.staleBase, "matching expectedSha on the preserved branch does not report staleBase");
+      assert(putBody !== null, "preserveBranch still issues a PUT against the existing branch");
+      assert(putBody.sha === "branch-blob-sha", "PUT carries the preserved branch's own blob sha");
+    }
+
+    // (b) branch does not exist yet — preserveBranch still creates it from
+    //     master (via ensureExportBranchExists), but only through POST
+    //     /branches, never a PATCH git/refs reset.
+    {
+      const calls = [];
+      let createBody = null;
+      let postContentBody = null;
+      let branchPolls = 0;
+      globalThis.fetch = async (url, init = {}) => {
+        const u = String(url);
+        const m = init.method ?? "GET";
+        calls.push({ u, m });
+        if (u.includes("/git/refs/heads/") && m === "PATCH") {
+          throw new Error("preserveBranch must not PATCH git/refs to reset/create the branch");
+        }
+        if (u.endsWith("/branches") && m === "POST") {
+          createBody = JSON.parse(String(init.body));
+          return okJson({});
+        }
+        if (u.includes("/branches/") && m === "GET") {
+          branchPolls++;
+          // Missing before the create, visible after it.
+          return branchPolls === 1 ? okJson({}, 404) : okJson({ name: "ZEC-be-x" });
+        }
+        if (u.includes("/contents/") && m === "GET") {
+          // No file at master or on the freshly-created branch — first-ever
+          // chapter commit for this book.
+          return okJson({}, 404);
+        }
+        if (u.includes("/contents/") && m === "POST") {
+          postContentBody = JSON.parse(String(init.body));
+          return okJson({ content: { sha: "new-sha" }, commit: { sha: "commit-sha" } });
+        }
+        throw new Error(`unexpected ${m} ${u}`);
+      };
+      const r = await commitToDcs(cfg, "tn_ZEC.tsv", "ch14 content", "msg", {
+        preserveBranch: true,
+        expectedSha: null,
+      });
+      assert(
+        calls.some((c) => c.u.endsWith("/branches") && c.m === "POST"),
+        "a missing branch is created via POST /branches",
+      );
+      assert(
+        !calls.some((c) => c.u.includes("/git/refs/heads/") && c.m === "PATCH"),
+        "creating the missing branch issues no PATCH git/refs/heads/... request",
+      );
+      assert(createBody?.new_branch_name === "ZEC-be-x", "branch is created with the configured branch name");
+      assert(!r.staleBase, "expectedSha:null matches the new file's absence on the fresh branch");
+      assert(postContentBody !== null, "the commit itself is a POST (new file)");
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+// --- commitToDcs opts.preserveBranch skips the master-equality short-circuit
+// (Finding I). A reused chapter-export branch (reuseChapterBranch) can carry
+// a DIFFERENT blob than master even when THIS run's rendered content happens
+// to equal master byte-for-byte (e.g. a stale prior range never got its own
+// re-export). The plain master short-circuit above would report
+// branchTouched:false for that case, and exportOne reads branchTouched:false
+// as "nothing to export" — closing the branch's still-open PR as unchanged
+// while the wrong (stale) blob keeps sitting on the branch. With
+// preserveBranch, the master compare must be skipped entirely so the call
+// falls through to the branch-file lookup and PUTs the branch, exactly as
+// any other content mismatch would.
+{
+  const originalFetch = globalThis.fetch;
+  const cfg = { baseUrl: "https://dcs.example", token: "t", owner: "o", repo: "r", branch: "ZEC-bec-x" };
+  const okJson = (obj, status = 200) =>
+    new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
+  try {
+    let putBody = null;
+    const calls = [];
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const m = init.method ?? "GET";
+      calls.push({ u, m });
+      if (u.includes("/git/refs/heads/") && m === "PATCH") {
+        throw new Error("preserveBranch must not PATCH git/refs to reset the branch onto master");
+      }
+      if (u.includes("/branches/") && m === "GET") return okJson({ name: "ZEC-bec-x" });
+      if (u.includes("/contents/") && m === "GET") {
+        if (u.includes("ref=master")) {
+          // Only reachable if the (skipped) master short-circuit still ran.
+          return okJson({ sha: "master-blob", encoding: "base64", content: utf8Base64("shared content") });
+        }
+        return okJson({ sha: "branch-blob-sha", encoding: "base64", content: utf8Base64("stale branch content") });
+      }
+      if (u.includes("/contents/") && m === "PUT") {
+        putBody = JSON.parse(String(init.body));
+        return okJson({ content: { sha: "new-sha" }, commit: { sha: "commit-sha" } });
+      }
+      throw new Error(`unexpected ${m} ${u}`);
+    };
+    const r = await commitToDcs(cfg, "tn_ZEC.tsv", "shared content", "msg", {
+      preserveBranch: true,
+      expectedSha: "branch-blob-sha",
+    });
+    assert(
+      !calls.some((c) => c.u.includes("/contents/") && c.u.includes("ref=master") && c.m === "GET"),
+      "preserveBranch never fetches master's file for the equality short-circuit",
+    );
+    assert(
+      !calls.some((c) => c.u.includes("/git/refs/heads/") && c.m === "PATCH"),
+      "preserveBranch issues no PATCH git/refs/heads/... request",
+    );
+    assert(putBody !== null, "content equal to master but different from the branch file still issues a PUT to the branch");
+    assert(putBody.sha === "branch-blob-sha", "PUT carries the branch's own (stale) blob sha");
+    assert(!r.staleBase, "matching expectedSha does not report staleBase");
+    assert(r.branchTouched === true, "the branch is reported touched, not silently short-circuited as unchanged");
+    assert(r.changed === true, "the branch write is reported as a real change");
   } finally {
     globalThis.fetch = originalFetch;
   }
