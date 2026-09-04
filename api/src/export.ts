@@ -921,7 +921,21 @@ export async function commitToDcs(
   const base = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/contents/${path.split("/").map(encodeURIComponent).join("/")}`;
 
   const contentBase64 = utf8ToBase64(content);
-  if (!opts?.forceBranch) {
+  // The master-equality short-circuit is skipped entirely when preserveBranch
+  // is set: a chapter-scoped branch can already carry an earlier chapter
+  // run's rows (outside this call's merged range), so its file can easily
+  // differ from master even though THIS render happens to equal master
+  // byte-for-byte (e.g. this range's rows landed back at their master
+  // values). Returning branchTouched:false here would be wrong twice over —
+  // it reports "nothing to export" for a branch that still holds a stale
+  // blob, and the caller (exportOne) reads branchTouched:false as license to
+  // close the branch's open PR as unchanged, discarding that earlier range's
+  // still-unmerged work. Falling through to the branch-file lookup below
+  // handles this correctly either way: identical to the branch → its own
+  // no-op (changed:false, branchTouched:true, so the PR stays open); not
+  // identical → the CAS/write path proceeds as normal. Whole-book callers
+  // never pass preserveBranch and keep the master short-circuit unchanged.
+  if (!opts?.forceBranch && !opts?.preserveBranch) {
     const baseRef = config.baseRef ?? "master";
     const masterFile = await getDcsFileBase64(base, headers, baseRef);
     if (masterFile?.base64 != null && masterFile.base64 === contentBase64) {

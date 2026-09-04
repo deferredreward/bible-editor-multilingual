@@ -2711,7 +2711,7 @@
       "chapterScopeShrinkOverrideLabel": "Allow this export to remove rows from these chapters (bypasses the shrink guard)",
       "exportModeLabel": "Door43 write mode",
       "exportModeMergeLabel": "Merge with Door43",
-      "exportModeMergeHelp": "Pulls Door43's changes to untouched rows first (as the nightly export does), then publishes the editor's rows for these chapters. Edits made in the editor win row by row; hand edits on Door43 to rows nobody touched here are kept.",
+      "exportModeMergeHelp": "Pulls Door43's current state for the whole book (all resources) first, exactly as the nightly export does, before the editor's rows for these chapters are published. Edits made in the editor win row by row; hand edits on Door43 to untouched rows are kept.",
       "exportModeOverwriteLabel": "Overwrite Door43",
       "exportModeOverwriteHelp": "Skips that pull. The editor's rows for these chapters replace whatever is on Door43 for them, including changes made by hand on Door43 since the last sync. Rows outside these chapters are untouched.",
       "chaptersSuffix": "ch {{chapters}}",

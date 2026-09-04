@@ -110,6 +110,7 @@ import {
 import type { TermImport } from "./translationMemoryLib.ts";
 import { workspaceEnv, resolveWorkspace, primeWorkspaces } from "./workspaces.ts";
 import { chapterShrinkRefused, formatChapterRange, mergeTsvChapterRange, missingOutOfRangeIds, type ChapterRange } from "./exportChapterMerge.ts";
+import { activePipelineForChapter } from "./chapterLock";
 
 export interface ExportParams {
   // Workspace slug this run belongs to. Workflows don't inherit the
@@ -1047,6 +1048,37 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       scriptureGen = await this.activeGenerationFor("ULT");
     }
 
+    // AI-locked chapters: the pre-export sync (runChunkedReimport, in run()
+    // above) SKIPS any (book, chapter) currently locked by a non-terminal
+    // pipeline_jobs row, yet still advances that book's freshness watermark
+    // regardless. So a chapter export that includes a locked chapter would
+    // publish D1 content for that chapter that never received whatever
+    // Door43 holds for it as of this sync — the exact stale-content hazard
+    // the freshness gate exists to prevent, just reachable one step earlier
+    // because the gate only compares the whole book's master SHA against the
+    // watermark and has no per-chapter granularity. Check every chapter in
+    // the range and terminal-skip before any render/DCS work if any is
+    // locked; this is routine (a translator queued an AI run) rather than an
+    // error, so a console.log is enough — no admin alert.
+    if (chapters) {
+      const lockedChapters: number[] = [];
+      for (let ch = chapters.start; ch <= chapters.end; ch++) {
+        if (await activePipelineForChapter(this.env, book, ch)) lockedChapters.push(ch);
+      }
+      if (lockedChapters.length > 0) {
+        const reason = `chapter_locked:${lockedChapters.join(",")}`;
+        console.log("chapter export: skipped — AI pipeline lock covers chapter(s) in range", {
+          book, resource, chapters: chapterLabel, lockedChapters,
+        });
+        await this.recordSnapshot(book, resource, null, null, 0, reason, null, null, chapterLabel);
+        return {
+          book, resource, rowCount: 0, bytes: 0, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
+      }
+    }
+
     try {
     const built = await this.buildResource(book, resource, scriptureGen, chapters);
 
@@ -1070,10 +1102,47 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       await renewExportLease(this.env, leaseId);
     }
 
+    // Chapter mode: ANY held-for-review row inside the range — not only the
+    // all-held case whole-book handles below — must fail closed. A chapter
+    // export can only push a range as a single merged unit; it has no
+    // row-level partial-publish path the way buildResource's per-row gate
+    // does, so a range that mixes publishable rows with foreign-sourced,
+    // not-yet-validated ones can't be represented at all: either the whole
+    // range publishes (silently dropping the held rows from the merged
+    // file, which the base_missing_master_rows guard would then treat as an
+    // unexplained deletion) or nothing does. Terminal-skip BEFORE any
+    // render-adjacent DCS work (branch resolution, merge, commit) so the
+    // admin sees this before wasting a branch/PR on a range they need to
+    // narrow instead.
+    if (chapters && built.heldForReview > 0) {
+      const reason = `held_for_review:${built.heldForReview}`;
+      console.log("chapter export: skipped — range contains foreign-sourced chapter(s) the chapter export can't represent (holds are per-row, not partially mergeable); narrow the chapter range to exclude them", {
+        book, resource, chapters: chapterLabel, heldForReview: built.heldForReview,
+      });
+      await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+      return {
+        book,
+        resource,
+        rowCount: built.rowCount,
+        bytes: built.content.length,
+        r2Key: null,
+        branch: null,
+        dcsCommitSha: null,
+        dcsChanged: false,
+        dcsSkippedReason: reason,
+        prNumber: null,
+        prReason: null,
+        heldForReview: built.heldForReview,
+      };
+    }
+
     // Every row of this (book, resource) was omitted by the provenance-aware
     // publish gate — nothing is publishable yet. Skip the commit exactly like
     // the old pair-level held-out path, but record the omitted count so admins
     // can see why the resource is absent (#236's visibility ask, repurposed).
+    // (Chapter mode never reaches here with heldForReview > 0 — the check
+    // above already returned — so this stays the whole-book, all-held-only
+    // behaviour it always was.)
     if (built.rowCount === 0 && built.heldForReview > 0) {
       const reason = `held_for_review:${built.heldForReview}`;
       await this.recordSnapshot(book, resource, null, null, 0, reason, null, null, chapterLabel);
@@ -1163,11 +1232,20 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // down, so both PR-open attempts always agree on the same title/body.
     const buildExportPrTitle = (): string =>
       `bible-editor: ${book} ${resource}${chapterLabel ? ` ch${chapterLabel}` : ""}${overwrite ? " (overwrite)" : ""} → master`;
-    const buildExportPrBody = (forBranch: string): string =>
-      `Auto-opened by the bible-editor nightly export so the DCS validate-and-merge workflow can process \`${forBranch}\`. Holds the latest ${resource.toUpperCase()} edits for ${book}${chapterLabel ? ` (chapters ${chapterLabel})` : ""}.` +
-      (overwrite
+    // Chapter-scoped PRs are NOT part of the DCS validate-and-merge (`-be-`)
+    // auto-merge family (see buildChapterExportBranch's `-bec-` naming and the
+    // reuseChapterBranch/pruneSupersededBranches comments) — saying the
+    // validate-and-merge workflow will process them would be actively wrong,
+    // since nothing auto-merges a `-bec-` branch. Whole-book wording
+    // (chapterLabel null) is unchanged.
+    const buildExportPrBody = (forBranch: string): string => {
+      const base = chapterLabel
+        ? `Opened by a bible-editor chapter export of ${book} ${resource.toUpperCase()} chapters ${chapterLabel}. Holds the editor's rows for those chapters merged into the current book file. Intended for human review and merge on Door43, and deliberately outside the \`-be-\` auto-merge family.`
+        : `Auto-opened by the bible-editor nightly export so the DCS validate-and-merge workflow can process \`${forBranch}\`. Holds the latest ${resource.toUpperCase()} edits for ${book}.`;
+      return base + (overwrite
         ? ` This run used overwrite mode: any Door43 edits inside chapters ${chapterLabel} made since the last sync were intentionally replaced by the editor's rows.`
         : "");
+    };
 
     // Chapter mode, update-first (Finding 3): before reading the merge base,
     // if the branch already exists on DCS, ensure it has an open PR and merge
@@ -1182,18 +1260,37 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // from master, e.g. the same rows edited on Door43 by a human) is left
     // for a human exactly like the existing post-commit 409 handling — see
     // recordChapterConflictAlert's comment: chapter branches are never
-    // auto-rebuilt, only whole-book branches are.
+    // auto-rebuilt, only whole-book branches are. Any OTHER failure to
+    // confirm the merge (a thrown error, or a non-ok updateDcsPrBranch result
+    // that isn't the 409 above) fails CLOSED with reason
+    // chapter_merge:update_first_failed rather than proceeding — see the
+    // catch/status handling below for why "best-effort, fall through" is
+    // unsafe here.
     if (chapters && dcsAllowed) {
-      let branchLive = false;
+      let branchLive: boolean;
       try {
         branchLive = await dcsBranchExists(
           { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner: dcsOwner, repo: dcsRepo },
           branch,
         );
       } catch (e) {
-        console.error("chapter export: pre-merge branch-exists check failed; merging against best-effort base", {
+        // Same fail-closed reasoning as mergeChapterAgainstBase's check
+        // below: guessing "not live" here risks silently skipping the
+        // update-master-into-branch step for a branch that IS live and
+        // carrying earlier unmerged chapter work, which is exactly the drift
+        // this update-first step exists to catch before it's baked into a
+        // commit. Terminal-skip instead.
+        console.error("chapter export: pre-merge branch-exists check failed; refusing to guess whether it's live", {
           book, resource, branch, error: e instanceof Error ? e.message : String(e),
         });
+        const reason = "chapter_merge:branch_check_failed";
+        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+        await this.alertChapterMergeSkipIfNeeded(book, resource, chapterLabel, reason);
+        return {
+          book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
       }
       if (branchLive) {
         // Chapter mode is tn/tq/twl-only (enforced at the top of this
@@ -1217,14 +1314,37 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
               { baseUrl: dcsCfgEarly.baseUrl, token: dcsCfgEarly.token, owner: dcsOwner, repo: dcsRepo },
               pr.number,
             );
-            if (!upd.ok && upd.status === 409) {
-              // Merge conflict merging master INTO the branch — the same
-              // manual-resolution posture as the post-commit 409 handling
-              // below (chapter branches are never auto-rebuilt). Terminal
-              // skip: nothing was committed.
-              const reason = "chapter_merge:branch_conflict";
-              await this.recordChapterConflictAlert(book, resource, dcsRepo, branch, chapterLabel);
+            if (!upd.ok) {
+              if (upd.status === 409) {
+                // Merge conflict merging master INTO the branch — the same
+                // manual-resolution posture as the post-commit 409 handling
+                // below (chapter branches are never auto-rebuilt). Terminal
+                // skip: nothing was committed.
+                const reason = "chapter_merge:branch_conflict";
+                await this.recordChapterConflictAlert(book, resource, dcsRepo, branch, chapterLabel);
+                await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+                return {
+                  book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
+                  branch: null, dcsCommitSha: null, dcsChanged: false,
+                  dcsSkippedReason: reason, prNumber: null, prReason: null,
+                };
+              }
+              // Any OTHER non-ok status (rate limit, 5xx, auth hiccup, ...):
+              // fail closed rather than "proceed to merge-and-commit" as
+              // before. Without a confirmed merge of master INTO the branch,
+              // the branch may be behind master by more than just this
+              // range's rows, and the F2 out-of-range-ID check below reads
+              // its base FROM THIS BRANCH — it would compare against stale
+              // cell text and could pass even though the branch is missing a
+              // master row, silently letting a merge onto a stale base
+              // through. Terminal-skip instead of committing against an
+              // unproven base.
+              console.error("chapter export: update-first merge-master-into-branch failed (non-409); refusing to commit against an unproven base", {
+                book, resource, branch, status: upd.status, detail: upd.detail,
+              });
+              const reason = "chapter_merge:update_first_failed";
               await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+              await this.alertChapterMergeSkipIfNeeded(book, resource, chapterLabel, reason);
               return {
                 book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
                 branch: null, dcsCommitSha: null, dcsChanged: false,
@@ -1233,12 +1353,23 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
             }
           }
         } catch (e) {
-          // A transient DCS failure here must not fail the whole export step
-          // — the post-commit ensureDcsPr/updateDcsPrBranch calls run again
-          // after the commit regardless, so this step is best-effort.
-          console.error("chapter export: update-first ensure-PR/merge-master failed; proceeding to merge-and-commit", {
-            book, resource, branch, error: e instanceof Error ? e.message : String(e),
+          // A thrown error here (unlike a clean non-ok response, handled
+          // above) leaves us with no confirmation either way that master was
+          // merged into the branch — same "unproven base" hazard as the
+          // non-409 branch above, so fail closed the same way rather than
+          // silently falling through to merge-and-commit.
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error("chapter export: update-first ensure-PR/merge-master threw; refusing to commit against an unproven base", {
+            book, resource, branch, error: msg,
           });
+          const reason = "chapter_merge:update_first_failed";
+          await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+          await this.alertChapterMergeSkipIfNeeded(book, resource, chapterLabel, reason);
+          return {
+            book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
+            branch: null, dcsCommitSha: null, dcsChanged: false,
+            dcsSkippedReason: reason, prNumber: null, prReason: null,
+          };
         }
       }
     }
@@ -1269,6 +1400,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       );
       if (!merged.ok) {
         await this.recordSnapshot(book, resource, null, null, built.rowCount, merged.reason, null, null, chapterLabel);
+        await this.alertChapterMergeSkipIfNeeded(book, resource, chapterLabel, merged.reason);
         return {
           book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
           branch: null, dcsCommitSha: null, dcsChanged: false,
@@ -2379,9 +2511,17 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   // means a whole-book `-be-` branch can never be picked up here even if it
   // happens to be the most recent snapshot for this (book, resource) — chapter
   // and whole-book exports now live in disjoint branch families (`-bec-` vs
-  // `-be-`), and reuse must never cross that boundary. Falls back to
-  // `defaultBranch` on any lookup failure — a lookup failure must never block
-  // the export, it just means this run gets a fresh branch like before.
+  // `-be-`), and reuse must never cross that boundary. The `branch LIKE
+  // '%-bec-%'` clause is a belt-and-suspenders check on the branch NAME
+  // itself: an export_snapshots row from before the `-be-` → `-bec-` chapter
+  // rename can still have `chapters IS NOT NULL` (chapter-scoped) while its
+  // `branch` column holds a pre-rename `-be-`-family name, and adopting that
+  // legacy branch here would merge this run onto the SAME branch family the
+  // nightly whole-book export (and its pruneSupersededBranches/auto-merge)
+  // treats as its own — exactly the cross-family collision the rename was
+  // meant to prevent. Falls back to `defaultBranch` on any lookup failure —
+  // a lookup failure must never block the export, it just means this run
+  // gets a fresh branch like before.
   private async reuseChapterBranch(
     book: string,
     resource: Resource,
@@ -2394,6 +2534,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         `SELECT branch FROM export_snapshots
           WHERE book = ?1 AND resource = ?2 AND chapters IS NOT NULL
             AND branch IS NOT NULL AND commit_sha IS NOT NULL
+            AND branch LIKE '%-bec-%'
           ORDER BY committed_at DESC, id DESC LIMIT 1`,
       )
         .bind(book, resource)
@@ -2451,16 +2592,25 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       }
     | { ok: false; reason: string }
   > {
-    let branchIsLive = false;
+    let branchIsLive: boolean;
     try {
       branchIsLive = await dcsBranchExists(
         { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner: dcsOwner, repo: dcsRepo },
         branch,
       );
     } catch (e) {
-      console.error("chapter export: branch-exists check failed; merging against master instead", {
+      // Assuming "not live" on a failed check is unsafe: if the branch IS
+      // actually live and carrying an earlier chapter run's rows, merging
+      // against master instead would silently drop those rows from this
+      // run's push (the exact hazard the branch-reuse/merge-from-branch
+      // logic above exists to avoid) — and we'd never notice, because a
+      // wrongly-assumed bootstrap/master base looks perfectly clean to every
+      // guard below. Fail closed instead: terminal-skip so a human sees the
+      // transient failure rather than risking a silent data loss.
+      console.error("chapter export: branch-exists check failed; refusing to guess whether it's live", {
         book, resource, branch, error: e instanceof Error ? e.message : String(e),
       });
+      return { ok: false, reason: "chapter_merge:branch_check_failed" };
     }
     const primaryRef = branchIsLive ? branch : "master";
     const baseGate = await this.fetchResourceBaseWithSha(book, resource, dcsOwner, dcsRepo, primaryRef);
@@ -2646,6 +2796,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           book, resource, chapters: chapterLabel, attempts: maxAttempts,
         });
         await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+        await this.alertChapterMergeSkipIfNeeded(book, resource, chapterLabel, reason);
         return terminal(reason);
       }
       console.warn("chapter export: base moved (staleBase); re-reading and re-merging", {
@@ -2656,6 +2807,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       );
       if (!remerged.ok) {
         await this.recordSnapshot(book, resource, null, null, built.rowCount, remerged.reason, null, null, chapterLabel);
+        await this.alertChapterMergeSkipIfNeeded(book, resource, chapterLabel, remerged.reason);
         return terminal(remerged.reason);
       }
       content = remerged.content;
@@ -2953,6 +3105,50 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
+  // Gate for recordChapterMergeSkipAlert (G): fires for every chapter-mode
+  // terminal skip whose reason starts with "chapter_merge:", EXCEPT the two
+  // categories that already write their own, more specific banner —
+  // branch_conflict (recordChapterConflictAlert) and base_missing_master_rows
+  // (recordChapterBaseMissingRowsAlert) — so those aren't double-alerted.
+  // Called at every chapter_merge: terminal-skip site in exportOne /
+  // commitChapterRange; a no-op for any other reason (shrink_guard:,
+  // stale_master:, held_for_review:, etc. — those already have their own
+  // alert or none by design).
+  private async alertChapterMergeSkipIfNeeded(
+    book: string,
+    resource: Resource,
+    chapterLabel: string | null,
+    reason: string,
+  ): Promise<void> {
+    if (!reason.startsWith("chapter_merge:")) return;
+    if (reason.startsWith("chapter_merge:branch_conflict")) return;
+    if (reason.startsWith("chapter_merge:base_missing_master_rows")) return;
+    await this.recordChapterMergeSkipAlert(book, resource, chapterLabel, reason);
+  }
+
+  // Catch-all banner for a chapter-mode chapter_merge: skip that has no
+  // dedicated alert of its own (base_moved, header_mismatch/duplicate_id/
+  // rendered_row_out_of_range parse failures from mergeTsvChapterRange,
+  // branch_check_failed, no_master_path, and any future chapter_merge:
+  // reason) — without this, those categories failed with only a recordSnapshot
+  // row and a console.error, silent to anyone not actively watching the
+  // export history. branch_conflict and base_missing_master_rows are excluded
+  // by alertChapterMergeSkipIfNeeded (their own alerts are more specific).
+  private async recordChapterMergeSkipAlert(
+    book: string,
+    resource: Resource,
+    chapterLabel: string | null,
+    reason: string,
+  ): Promise<void> {
+    const range = chapterLabel ?? "?";
+    const source = `export_chapter_skip:${book}:${resource}:ch${range}`;
+    const message =
+      `Benjamin fix this — chapter export for ${book} ${resource.toUpperCase()} ch${range} was skipped: ` +
+      `${reason}. See the export history (GET /api/exports, or the admin exports page) for this ` +
+      `(book, resource, chapters) for detail, then re-export ch${range} once resolved.`;
+    await this.writeAlert(source, message, await exportOwnerUrl(this.env));
+  }
+
   // Banner alert when the pre-export sync for a book failed outright (e.g. the
   // Cloudflare subrequest cap). The export will skip any book left stale, so
   // this is the heads-up that a manual re-sync is needed.
@@ -3062,8 +3258,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       `Benjamin fix this — chapter export PR for ${book} ${resource.toUpperCase()} ch${range} ` +
       `(\`${branch}\` on ${repo}) is in merge conflict with master. The branch and its PR were left ` +
       `untouched (NOT auto-rebuilt) to preserve other pending chapters accumulated on the same branch. ` +
-      `A human must resolve the conflict by hand or merge/close the PR on Door43 before ch${range} can be ` +
-      `re-exported.`;
+      `Because chapter exports for ${book} ${resource.toUpperCase()} reuse this shared branch ` +
+      `(reuseChapterBranch), the conflict blocks EVERY further chapter export for ${book} ` +
+      `${resource.toUpperCase()} — not just ch${range} — until a human resolves the conflict by hand or ` +
+      `merges/closes the PR on Door43. After that, the next chapter export starts a fresh branch from master.`;
     const linkUrl = `${await exportOwnerUrl(this.env)}/${repo}/pulls`;
     await this.writeAlert(source, message, linkUrl, "error");
   }
