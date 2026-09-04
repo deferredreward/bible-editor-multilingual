@@ -8,6 +8,7 @@ import {
   formatChapterRange,
   parseChapterRangeLabel,
   mergeTsvChapterRange,
+  chapterShrinkRefused,
 } from "./exportChapterMerge.ts";
 
 function assert(cond, msg) {
@@ -273,6 +274,34 @@ console.log("unparseable master reference kept (never in range)");
   const expected = tsv(HEADER, [row("garbage", "g1"), row("2:1", "b1new")]);
   assert(result.content === expected, "a row with an unparseable Reference is kept, not dropped or replaced");
   assert(result.masterRowsInRange === 1, "only the real chapter-2 row counts as in-range");
+}
+
+// --- chapterShrinkRefused: range-local shrink policy ---
+console.log("chapterShrinkRefused");
+assert(chapterShrinkRefused(1, 20) === true, "20 existing, 1 rendered (19 lost, 95%) is refused");
+assert(chapterShrinkRefused(12, 20) === false, "20 existing, 12 rendered (8 lost, 40%, under the 25-row floor) passes");
+assert(chapterShrinkRefused(9, 20) === true, "20 existing, 9 rendered (11 lost, 55% > half) is refused");
+assert(chapterShrinkRefused(60, 100) === true, "100 existing, 60 rendered (40 lost, >25 and >5%) is refused");
+assert(chapterShrinkRefused(80, 100) === false, "100 existing, 80 rendered (20 lost, under the 25-row floor) passes");
+assert(chapterShrinkRefused(5, 0) === false, "0 existing rows has nothing to protect — always passes");
+assert(chapterShrinkRefused(25, 20) === false, "growth (rendered > existing) always passes");
+assert(chapterShrinkRefused(20, 20) === false, "no change (rendered === existing) passes");
+
+// --- header-only render removes all in-range master rows, keeps the rest ---
+console.log("header-only render (zero rows in range) removes master's in-range rows");
+{
+  const master = tsv(HEADER, [
+    row("1:1", "a1"),
+    row("2:1", "b1"),
+    row("2:2", "b2"),
+    row("3:1", "c1"),
+  ]);
+  const rendered = tsv(HEADER, []); // header + newline, zero data rows
+  const result = mergeTsvChapterRange(master, rendered, { start: 2, end: 2 });
+  const expected = tsv(HEADER, [row("1:1", "a1"), row("3:1", "c1")]);
+  assert(result.content === expected, "chapter 2's rows are removed; chapters 1 and 3 are kept verbatim");
+  assert(result.masterRowsInRange === 2, "masterRowsInRange still counts the 2 removed chapter-2 rows");
+  assert(result.renderedRows === 0, "renderedRows is 0 for a header-only render");
 }
 
 console.log("All exportChapterMerge tests passed.");

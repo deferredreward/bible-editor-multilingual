@@ -26,6 +26,7 @@ import {
   closeDcsPr,
   commitToDcs,
   commitFilesToDcs,
+  dcsBranchExists,
   deleteDcsBranch,
   ensureDcsPr,
   exportTsvShrinkRefused,
@@ -35,6 +36,7 @@ import {
   updateDcsPrBranch,
   usfmAlignmentShrinkRefused,
   resourceTargetsFor,
+  type DcsCommitResult,
   type Resource,
 } from "./export";
 import {
@@ -62,7 +64,7 @@ const LEGACY_EXPORT_BRANCH = "live-snapshot";
 import { applyTwlSortOrderUpdates } from "./twlSortOrderApply";
 import { runPostExport, VALIDATORS } from "./postExport";
 import { runChunkedReimport, storedResourceSha, resourceSourceRef, ALL_RESOURCES as REIMPORT_RESOURCES } from "./bookReimport";
-import { dcsRawUrl, dcsResourceFile, fetchDcsMasterText, fetchText, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
+import { dcsRawUrl, dcsResourceFile, fetchDcsFileWithSha, fetchDcsMasterText, fetchText, fileCommitSha, heldOutNoteResources, type ReimportResource } from "./dcsSources";
 import { getProjectConfig, exportOwnerFor } from "./projectConfig.ts";
 import { sameDcsName } from "./repoUrl.ts";
 import { heldOutChapters, type HeldOut, type BookSourceResource } from "./bookSource.ts";
@@ -106,7 +108,7 @@ import {
 } from "./contextExportResults.ts";
 import type { TermImport } from "./translationMemoryLib.ts";
 import { workspaceEnv, resolveWorkspace, primeWorkspaces } from "./workspaces.ts";
-import { formatChapterRange, mergeTsvChapterRange, type ChapterRange } from "./exportChapterMerge.ts";
+import { chapterShrinkRefused, formatChapterRange, mergeTsvChapterRange, type ChapterRange } from "./exportChapterMerge.ts";
 
 export interface ExportParams {
   // Workspace slug this run belongs to. Workflows don't inherit the
@@ -384,7 +386,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           const result = await step.do(
             stepName,
             { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
-            async () => this.exportOne(book, resource, instanceId, dcsAllowed, params.chapters),
+            async () => this.exportOne(book, resource, instanceId, dcsAllowed, params.chapters, !!params.shrinkOverride),
           );
           results.push(result);
         } catch (e) {
@@ -934,6 +936,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     instanceId: string,
     dcsAllowed: boolean,
     chapters?: ChapterRange,
+    // Admin override for the chapter-scoped shrink guard (chapterShrinkRefused)
+    // — explicit acknowledgement that this range render deleting rows,
+    // including every row in the range, is intended. Unused outside chapter
+    // mode; every whole-book call site leaves it at the default.
+    shrinkOverride = false,
   ): Promise<StepResult> {
     // Chapter-scoped export: tn/tq/twl only. The route (exports.ts) already
     // rejects ult/ust with a chapter range at request time; this is a
@@ -1076,7 +1083,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
     // Book-specific branch named for this resource's human contributors.
     const contributors = await this.contributorsFor(book, resource);
-    const branch = buildExportBranch(book, contributors);
+    let branch = buildExportBranch(book, contributors);
 
     const projectCfg = await getProjectConfig(this.env);
     const projectTarget = resourceTargetsFor(projectCfg)[resource];
@@ -1094,53 +1101,54 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       : exportOwnerFor(this.env, projectCfg);
     const dcsRepo = lane && laneExport ? laneExport.repo : projectTarget.repo;
 
-    // Chapter-scoped export: MERGE the chapter range's render into master's
-    // existing whole-book file instead of pushing the range alone (which
-    // would replace the whole file with just those chapters). Only reachable
+    // Chapter mode: reuse a still-open PR's branch instead of the
+    // contributor-derived name. Without this, exporting ch14 while ch13's PR
+    // is still open could land on a different branch (a new/different
+    // contributor changes buildExportBranch's suffix) and merge ch14 against
+    // MASTER — which doesn't have ch13's unmerged rows — silently dropping
+    // ch13 from the new branch. Reusing the branch a still-open PR points at
+    // means the merge below reads FROM that branch and carries ch13's rows
+    // forward. Whole-book exports never do this lookup; also see F1c below
+    // (chapter mode skips pruneSupersededBranches so a sibling branch from an
+    // earlier chapter run is never deleted out from under an open PR).
+    if (chapters && dcsAllowed) {
+      branch = await this.reuseOpenPrBranch(book, resource, dcsOwner, dcsRepo, laneExport?.baseRef ?? "master", branch);
+    }
+
+    // Chapter-scoped export: MERGE the chapter range's render into the
+    // existing whole-book file — read from the EXPORT BRANCH when one is
+    // already live (carrying forward an earlier chapter run's rows, which
+    // are outside this range so the merge keeps them verbatim) and falling
+    // back to master otherwise — instead of pushing the range alone (which
+    // would replace the whole file with just these chapters). Only reachable
     // for tn/tq/twl (checked at the top of this method); replaces the
     // whole-file shrink guard below for this path with a scoped one — see
     // exportChapterMerge.ts. `contentToCommit` is what gets written to R2,
     // committed to DCS, and re-committed on conflict recovery; it stays
     // `built.content` (the range-only render) for a dry run / no-token run,
-    // since nothing is actually pushed to compare against master.
+    // since nothing is actually pushed to compare against a base.
+    // `chapterExpectedSha` is the base file's blob sha the merge was computed
+    // against — commitToDcs's CAS check (see mergeChapterAgainstBase and
+    // commitChapterRange below) refuses to overwrite the branch if it moved
+    // since this read, and the caller re-merges against the new base instead
+    // of silently clobbering whatever landed there (issue: sequential
+    // chapter exports racing each other or an out-of-band edit).
     let contentToCommit = built.content;
+    let chapterExpectedSha: string | null = null;
     if (chapters && dcsAllowed) {
-      const masterGate = await this.fetchResourceMasterGate(book, resource, dcsOwner, dcsRepo, "master");
-      if (masterGate.kind === "unreadable" || masterGate.kind === "no_file") {
-        // no_file = dcsResourceFile has no path for this resource, so we can't
-        // know what master holds; a chapter render must never be pushed as if
-        // it were the whole book, so fail closed (the whole-file path allows
-        // no_file because it replaces the file regardless).
-        const reason = masterGate.kind === "no_file" ? "chapter_merge:no_master_path" : "shrink_guard:master_unreadable";
-        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+      const merged = await this.mergeChapterAgainstBase(book, resource, built, chapters, dcsOwner, dcsRepo, branch);
+      if (!merged.ok) {
+        await this.recordSnapshot(book, resource, null, null, built.rowCount, merged.reason, null, null, chapterLabel);
         return {
           book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
           branch: null, dcsCommitSha: null, dcsChanged: false,
-          dcsSkippedReason: reason, prNumber: null, prReason: null,
+          dcsSkippedReason: merged.reason, prNumber: null, prReason: null,
         };
       }
-      const masterText = masterGate.kind === "content" ? masterGate.text : null;
-      let merge: ReturnType<typeof mergeTsvChapterRange>;
-      try {
-        merge = mergeTsvChapterRange(masterText, built.content, chapters);
-      } catch (e) {
-        // A merge failure (header mismatch, an out-of-range rendered row, a
-        // duplicate ID) means either master or the range render is in a state
-        // we must not push over — a terminal skip for this step, not a
-        // thrown/retried error (retrying would just fail identically).
-        const msg = e instanceof Error ? e.message : String(e);
-        const reason = `chapter_merge:${msg}`;
-        console.error("export chapter-merge failed", { book, resource, chapters, error: msg });
-        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
-        return {
-          book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
-          branch: null, dcsCommitSha: null, dcsChanged: false,
-          dcsSkippedReason: reason, prNumber: null, prReason: null,
-        };
-      }
-      if (exportTsvShrinkRefused(merge.renderedRows, merge.masterRowsInRange)) {
-        const detail = `chapter_shrink_${merge.masterRowsInRange - merge.renderedRows}_of_${merge.masterRowsInRange}`;
-        await this.recordChapterShrinkSkipAlert(book, resource, chapters, merge.renderedRows, merge.masterRowsInRange);
+      const refused = chapterShrinkRefused(merged.merge.renderedRows, merged.merge.masterRowsInRange);
+      if (refused && !shrinkOverride) {
+        const detail = `chapter_shrink_${merged.merge.masterRowsInRange - merged.merge.renderedRows}_of_${merged.merge.masterRowsInRange}`;
+        await this.recordChapterShrinkSkipAlert(book, resource, chapters, merged.merge.renderedRows, merged.merge.masterRowsInRange);
         const reason = `shrink_guard:${detail}`;
         await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
         return {
@@ -1149,7 +1157,13 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           dcsSkippedReason: reason, prNumber: null, prReason: null,
         };
       }
-      contentToCommit = merge.content;
+      if (refused && shrinkOverride) {
+        console.log("chapter export: range shrink guard overridden by admin (shrinkOverride)", {
+          book, resource, chapters: chapterLabel,
+        });
+      }
+      contentToCommit = merged.content;
+      chapterExpectedSha = merged.expectedSha;
     }
 
     // R2 is the local-only backup. Writing here first means a failed DCS
@@ -1329,7 +1343,22 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       // nothing was committed.
       await this.assertFencingOrThrow(lane, fencingToken);
 
-      const commit = await commitToDcs(dcsCfg, filename, contentToCommit, message);
+      let commit: DcsCommitResult;
+      if (chapters) {
+        // Chapter mode: read-base → merge → shrink-guard → commit, retried up
+        // to 3 times against a fresh base whenever commitToDcs reports
+        // staleBase (something else — a sibling chapter run, an out-of-band
+        // edit — landed on the branch between our read and this write).
+        const settled = await this.commitChapterRange(
+          book, resource, chapters, chapterLabel, built, dcsOwner, dcsRepo, branch,
+          dcsCfg, filename, message, contentToCommit, chapterExpectedSha, shrinkOverride,
+        );
+        if ("terminal" in settled) return settled.terminal;
+        commit = settled.commit;
+        contentToCommit = settled.content;
+      } else {
+        commit = await commitToDcs(dcsCfg, filename, contentToCommit, message);
+      }
       if (!commit.branchTouched) {
         // Rendered content matches master — nothing to merge. Close any open PR
         // lingering from an earlier night so empty (0-diff) PRs don't pile up.
@@ -1371,9 +1400,18 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         dcsSkippedReason = "unchanged";
       } else {
         try {
-          // Pruning superseded branches deletes refs on DCS — re-verify ownership.
-          await this.assertFencingOrThrow(lane, fencingToken);
-          await this.pruneSupersededBranches(book, resource, owner, dcsRepo, branch, lane, fencingToken);
+          // Pruning superseded branches deletes refs on DCS for OLDER exports
+          // of this (book, resource) — correct for a whole-book run (which
+          // always fully replaces the file) but wrong for chapter mode, where
+          // a "superseded" branch may be a SIBLING chapter export still
+          // carrying its own open PR (see the branch-reuse comment above);
+          // deleting it would destroy that unmerged work. Chapter mode skips
+          // this entirely (F1c).
+          if (!chapters) {
+            // Pruning superseded branches deletes refs on DCS — re-verify ownership.
+            await this.assertFencingOrThrow(lane, fencingToken);
+            await this.pruneSupersededBranches(book, resource, owner, dcsRepo, branch, lane, fencingToken);
+          }
 
           // Renew around the (potentially long) PR operations; a failed renew
           // means another Worker took the lane — treat it as lost ownership and
@@ -1414,6 +1452,19 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
                   const recovered = await this.recoverConflictedBranch(
                     book, resource, owner, dcsRepo, branch, dcsCfg, filename, contentToCommit, message,
                     lane, fencingToken,
+                    // Chapter mode: the recreated branch is a fresh copy of
+                    // master, so `contentToCommit` (merged against the OLD
+                    // branch base) is stale — re-merge against the new base
+                    // (which mergeChapterAgainstBase resolves to master, since
+                    // the just-recreated branch equals it) before recommitting.
+                    chapters
+                      ? async () => {
+                          const remerged = await this.mergeChapterAgainstBase(
+                            book, resource, built, chapters, dcsOwner, dcsRepo, branch,
+                          );
+                          return remerged.ok ? { content: remerged.content, expectedSha: remerged.expectedSha } : null;
+                        }
+                      : undefined,
                   );
                   if (recovered) {
                     prNumber = recovered.prNumber;
@@ -1744,8 +1795,16 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       if (heldForReview > 0) {
         console.log(`export gate: ${resource} ${book} held ${heldForReview} foreign-sourced row(s) for review (not validated, no snapshot) — omitted from render`);
       }
+      // Zero gated rows: a whole-book render returns "" (unchanged — exportOne
+      // reads that as no_rows and skips the commit entirely). A CHAPTER render
+      // must not collapse to "" the same way — a chapter whose rows were all
+      // deleted needs a header-only render so the merge (exportChapterMerge.ts)
+      // can remove master's in-range rows, subject to the range shrink guard
+      // (chapterShrinkRefused) rather than silently no-op'ing the deletion.
       const content = gated.length === 0
-        ? ""
+        ? chapters
+          ? (resource === "tn" ? buildTnTsv([]) : buildTqTsv([]))
+          : ""
         : resource === "tn"
           ? buildTnTsv(gated as TnRow[])
           : buildTqTsv(gated as TqRow[]);
@@ -1778,7 +1837,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         .bind(...ultBindArgs)
         .all<VerseRow>();
       if (rs.results.length === 0) {
-        return { content: "", rowCount: 0, heldForReview: 0, sortOrderUpdates: [] };
+        // See the tn/tq comment above: a whole-book render stays "" (no_rows,
+        // skip), a chapter render needs a header-only TSV so the merge can
+        // remove master's in-range rows.
+        const content = chapters ? buildTwlTsv([]).tsv : "";
+        return { content, rowCount: 0, heldForReview: 0, sortOrderUpdates: [] };
       }
       const result = buildTwlTsv(rs.results, {
         book,
@@ -1951,6 +2014,15 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   // throughout: any failure alerts rather than failing the export step (the
   // commit + snapshot already succeeded). Returns the new PR info to record, or
   // null when nothing changed. See docs/export-rebase-fix.md.
+  //
+  // `remerge` (chapter mode only): the branch this recreates is a fresh copy
+  // of master, so `content` — merged against the OLD (now-deleted) branch's
+  // base — is stale and must not be recommitted as-is. When provided, it is
+  // called AFTER the recreate to get a base-consistent {content, expectedSha}
+  // (it re-reads master, since the fresh branch equals master, and re-merges);
+  // a null result or a staleBase commit is treated as recovery failure, same
+  // as any other conflict-recovery error. Whole-book callers pass nothing and
+  // behave exactly as before.
   private async recoverConflictedBranch(
     book: string,
     resource: Resource,
@@ -1963,6 +2035,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     message: string,
     lane: LaneKey | null = null,
     fencingToken: string | null = null,
+    remerge?: () => Promise<{ content: string; expectedSha: string | null } | null>,
   ): Promise<{ prNumber: number | null; prReason: string; commitSha: string | null } | null> {
     const adminToken = this.env.DCS_TOKEN;
     if (!adminToken) {
@@ -1986,6 +2059,17 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         await this.recordPrConflictAlert(book, resource, repo, branch, res.detail);
         return null;
       }
+      let recommitContent = content;
+      let expectedSha: string | null | undefined;
+      if (remerge) {
+        const merged = await remerge();
+        if (!merged) {
+          await this.recordPrConflictAlert(book, resource, repo, branch, "remerge_failed");
+          return null;
+        }
+        recommitContent = merged.content;
+        expectedSha = merged.expectedSha;
+      }
       // Branch is now master HEAD. Re-commit the rendered D1 file (forceBranch:
       // we know it differs from master — that's what conflicted) → one commit,
       // child of master. The delete auto-closed the old PR, so ensureDcsPr mints
@@ -1999,10 +2083,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
             : undefined,
         },
         filename,
-        content,
+        recommitContent,
         message,
-        { forceBranch: true },
+        remerge ? { forceBranch: true, expectedSha: expectedSha ?? null } : { forceBranch: true },
       );
+      if (remerge && recommit.staleBase) {
+        await this.recordPrConflictAlert(book, resource, repo, branch, "stale_after_recreate");
+        return null;
+      }
       await this.assertFencingOrThrow(lane, fencingToken);
       const pr = await ensureDcsPr(
         dcsCfg,
@@ -2071,12 +2159,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   // master, which a D1 partial from the SAME correlated truncation could then
   // wave through as "no shrink"), so a short read lands on the fail-closed
   // "unreadable" branch below instead of being compared as content.
-  // Shared fetch+gate for both the whole-file and chapter-scoped TSV shrink
-  // guards: resolve the resource's DCS file path for this project config, then
-  // fetch and classify the destination master read (masterFetchGate). Pulled
-  // out of checkTsvShrink so the chapter-scoped merge path (exportOne) reads
-  // master through the exact same completeness-verified fetch instead of a
-  // second, potentially-diverging copy.
+  // Shared fetch+gate for the whole-file TSV shrink guard: resolve the
+  // resource's DCS file path for this project config, then fetch and
+  // classify the destination master read (masterFetchGate). The chapter-
+  // scoped merge path uses fetchResourceBaseWithSha instead (below) — it
+  // needs the file's blob sha too, for the merge's compare-and-swap guard.
   private async fetchResourceMasterGate(
     book: string,
     resource: Resource,
@@ -2093,6 +2180,215 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const file = dcsResourceFile(cfg, book, resource as ReimportResource);
     if (!file) return { kind: "no_file" };
     return masterFetchGate(await fetchDcsMasterText(this.env, destOwner, destRepo, file.path, baseRef));
+  }
+
+  // Sibling of fetchResourceMasterGate that also returns the file's blob sha
+  // at the given ref — the chapter-scoped merge (mergeChapterAgainstBase)
+  // needs it as the compare-and-swap token for commitToDcs's expectedSha
+  // guard (F2). `bootstrap` (no file at this ref yet) carries no sha; the
+  // caller reads that as "merge against nothing" (expectedSha: null).
+  private async fetchResourceBaseWithSha(
+    book: string,
+    resource: Resource,
+    destOwner: string,
+    destRepo: string,
+    baseRef: string,
+  ): Promise<
+    | { kind: "no_file" }
+    | { kind: "bootstrap" }
+    | { kind: "unreadable" }
+    | { kind: "content"; text: string; sha: string | null }
+  > {
+    const cfg = await getProjectConfig(this.env);
+    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
+    if (!file) return { kind: "no_file" };
+    const res = await fetchDcsFileWithSha(this.env, destOwner, destRepo, file.path, baseRef);
+    const gate = masterFetchGate(res);
+    return gate.kind === "content" ? { kind: "content", text: gate.text, sha: res.sha } : gate;
+  }
+
+  // Reuse the branch a still-open PR already points at, instead of the
+  // freshly-computed contributor-derived name (F1a). Looks at the most
+  // recent export_snapshots row for this (book, resource) that recorded BOTH
+  // a branch and a pr_number; if that PR is confirmed still open on the
+  // destination, its branch is reused so a sequential chapter run (ch14
+  // after ch13) lands on the SAME branch/PR instead of drifting to a new one
+  // and orphaning ch13's unmerged rows. Falls back to `defaultBranch` on any
+  // failure to look up or confirm — a lookup failure must never block the
+  // export, it just means this run gets a fresh branch like before.
+  private async reuseOpenPrBranch(
+    book: string,
+    resource: Resource,
+    dcsOwner: string,
+    dcsRepo: string,
+    baseRef: string,
+    defaultBranch: string,
+  ): Promise<string> {
+    try {
+      const prior = await this.env.DB.prepare(
+        `SELECT branch FROM export_snapshots
+          WHERE book = ?1 AND resource = ?2 AND branch IS NOT NULL AND pr_number IS NOT NULL
+          ORDER BY committed_at DESC, id DESC LIMIT 1`,
+      )
+        .bind(book, resource)
+        .first<{ branch: string }>();
+      if (!prior?.branch || prior.branch === defaultBranch) return defaultBranch;
+      const open = await findDcsOpenPr({
+        baseUrl: this.env.DCS_BASE_URL,
+        token: this.env.DCS_SERVICE_TOKEN!,
+        owner: dcsOwner,
+        repo: dcsRepo,
+        branch: prior.branch,
+        base: baseRef,
+      });
+      if (open != null) {
+        console.log("chapter export: reusing open-PR branch from a prior chapter run", {
+          book, resource, branch: prior.branch, pr: open,
+        });
+        return prior.branch;
+      }
+      console.log("chapter export: prior branch's PR is no longer open; using the contributor-derived branch", {
+        book, resource, priorBranch: prior.branch, branch: defaultBranch,
+      });
+      return defaultBranch;
+    } catch (e) {
+      console.error("chapter export: branch-reuse lookup failed; using the contributor-derived branch", {
+        book, resource, error: e instanceof Error ? e.message : String(e),
+      });
+      return defaultBranch;
+    }
+  }
+
+  // Read-base + merge for the chapter-scoped export (F1b/F2). Reads the MERGE
+  // BASE from the export branch itself when it already exists on DCS (so an
+  // earlier chapter run's rows, outside this range, are carried forward by
+  // the merge) and falls back to master otherwise. Returns the merged
+  // whole-file content plus the base file's blob sha (null = merged against
+  // no file — bootstrap) for commitToDcs's compare-and-swap guard, and the
+  // raw ChapterMergeResult so the caller can apply the range shrink guard
+  // (F4). Reusable by both exportOne's initial attempt/retries and
+  // recoverConflictedBranch's post-rebuild remerge.
+  private async mergeChapterAgainstBase(
+    book: string,
+    resource: Resource,
+    built: { content: string },
+    chapters: ChapterRange,
+    dcsOwner: string,
+    dcsRepo: string,
+    branch: string,
+  ): Promise<
+    | { ok: true; content: string; expectedSha: string | null; merge: ReturnType<typeof mergeTsvChapterRange> }
+    | { ok: false; reason: string }
+  > {
+    let branchIsLive = false;
+    try {
+      branchIsLive = await dcsBranchExists(
+        { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner: dcsOwner, repo: dcsRepo },
+        branch,
+      );
+    } catch (e) {
+      console.error("chapter export: branch-exists check failed; merging against master instead", {
+        book, resource, branch, error: e instanceof Error ? e.message : String(e),
+      });
+    }
+    const baseRef = branchIsLive ? branch : "master";
+    const baseGate = await this.fetchResourceBaseWithSha(book, resource, dcsOwner, dcsRepo, baseRef);
+    if (baseGate.kind === "unreadable" || baseGate.kind === "no_file") {
+      // no_file = dcsResourceFile has no path for this resource, so we can't
+      // know what the base holds; a chapter render must never be pushed as if
+      // it were the whole book, so fail closed (the whole-file path allows
+      // no_file because it replaces the file regardless).
+      return {
+        ok: false,
+        reason: baseGate.kind === "no_file" ? "chapter_merge:no_master_path" : "shrink_guard:master_unreadable",
+      };
+    }
+    const baseText = baseGate.kind === "content" ? baseGate.text : null;
+    const expectedSha = baseGate.kind === "content" ? baseGate.sha : null;
+    try {
+      const merge = mergeTsvChapterRange(baseText, built.content, chapters);
+      return { ok: true, content: merge.content, expectedSha, merge };
+    } catch (e) {
+      // A merge failure (header mismatch, an out-of-range rendered row, a
+      // duplicate ID) means either the base or the range render is in a
+      // state we must not push over — a terminal skip for this step, not a
+      // thrown/retried error (retrying would just fail identically).
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("export chapter-merge failed", { book, resource, chapters, baseRef, error: msg });
+      return { ok: false, reason: `chapter_merge:${msg}` };
+    }
+  }
+
+  // Commit a chapter-scoped merge with staleBase retry (F2c). Attempts up to
+  // 3 times: commit with the current content/expectedSha; if commitToDcs
+  // reports staleBase (the base moved since we read it), re-read the base
+  // (branch if it exists, else master), re-merge, re-check the range shrink
+  // guard, and retry. Exhausting all attempts is a terminal skip, not a
+  // thrown error — a persistent racer means this run should quietly stand
+  // down, not retry the whole step and alert on every scheduler tick.
+  private async commitChapterRange(
+    book: string,
+    resource: Resource,
+    chapters: ChapterRange,
+    chapterLabel: string | null,
+    built: { rowCount: number; content: string },
+    dcsOwner: string,
+    dcsRepo: string,
+    branch: string,
+    dcsCfg: Parameters<typeof commitToDcs>[0],
+    filename: string,
+    message: string,
+    initialContent: string,
+    initialExpectedSha: string | null,
+    shrinkOverride: boolean,
+  ): Promise<{ commit: DcsCommitResult; content: string } | { terminal: StepResult }> {
+    const maxAttempts = 3;
+    let content = initialContent;
+    let expectedSha = initialExpectedSha;
+    const terminal = (reason: string): { terminal: StepResult } => ({
+      terminal: {
+        book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
+        branch: null, dcsCommitSha: null, dcsChanged: false,
+        dcsSkippedReason: reason, prNumber: null, prReason: null,
+      },
+    });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const commit = await commitToDcs(dcsCfg, filename, content, message, { expectedSha });
+      if (!commit.staleBase) return { commit, content };
+      if (attempt >= maxAttempts) {
+        const reason = "chapter_merge:base_moved";
+        console.error("chapter export: base kept moving; giving up after retries", {
+          book, resource, chapters: chapterLabel, attempts: maxAttempts,
+        });
+        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+        return terminal(reason);
+      }
+      console.warn("chapter export: base moved (staleBase); re-reading and re-merging", {
+        book, resource, chapters: chapterLabel, attempt,
+      });
+      const remerged = await this.mergeChapterAgainstBase(book, resource, built, chapters, dcsOwner, dcsRepo, branch);
+      if (!remerged.ok) {
+        await this.recordSnapshot(book, resource, null, null, built.rowCount, remerged.reason, null, null, chapterLabel);
+        return terminal(remerged.reason);
+      }
+      const refused = chapterShrinkRefused(remerged.merge.renderedRows, remerged.merge.masterRowsInRange);
+      if (refused && !shrinkOverride) {
+        const detail = `chapter_shrink_${remerged.merge.masterRowsInRange - remerged.merge.renderedRows}_of_${remerged.merge.masterRowsInRange}`;
+        await this.recordChapterShrinkSkipAlert(book, resource, chapters, remerged.merge.renderedRows, remerged.merge.masterRowsInRange);
+        const reason = `shrink_guard:${detail}`;
+        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+        return terminal(reason);
+      }
+      if (refused && shrinkOverride) {
+        console.log("chapter export: range shrink guard overridden by admin (shrinkOverride) on retry", {
+          book, resource, chapters: chapterLabel, attempt,
+        });
+      }
+      content = remerged.content;
+      expectedSha = remerged.expectedSha;
+    }
+    // Unreachable: the loop always returns by attempt === maxAttempts.
+    throw new Error("chapter_merge:retry_loop_exhausted");
   }
 
   private async checkTsvShrink(
@@ -2351,9 +2647,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const source = `export_shrink:${book}:${resource}:ch${range}`;
     const message =
       `Benjamin — chapter export BLOCKED ${book} ${resource.toUpperCase()} ch${range}: the range render has ` +
-      `${renderedRows} rows but master has ${masterRowsInRange} in that range. This looks like an incomplete ` +
-      `D1 load (truncated fetch), not a real deletion — refusing to shrink master. Re-sync ${book} ` +
-      `${resource.toUpperCase()} from master, verify the row count, then re-export ch${range}.`;
+      `${renderedRows} rows but the base has ${masterRowsInRange} in that range. This looks like an incomplete ` +
+      `D1 load (truncated fetch), not a real deletion — refusing to shrink it. Re-sync ${book} ` +
+      `${resource.toUpperCase()}, verify the row count, then re-export ch${range}. If the deletion IS intentional ` +
+      `(including removing every row in this range), re-run the chapter export with the shrink override.`;
     await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 

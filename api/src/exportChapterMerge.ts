@@ -63,6 +63,20 @@ function splitDataLines(text: string): string[] {
   return lines.filter((l) => l.length > 0);
 }
 
+// Range-local shrink policy. The whole-book guard (exportTsvShrinkRefused)
+// always passes a loss of <=25 rows regardless of the book's size — fine for
+// a 700-row book, but a 20-row chapter rendered down to 1 row loses 19, well
+// under that floor, and would sail through. Refuse when more than half of
+// the range's rows would vanish, or when the whole-book policy would refuse
+// (large ranges, same >25-lost-and->5% shape) — whichever threshold is
+// stricter for the range at hand.
+export function chapterShrinkRefused(rendered: number, existing: number): boolean {
+  if (existing <= 0) return false; // nothing in the range to protect
+  const lost = existing - rendered;
+  if (lost <= 0) return false; // no shrink (incl. growth) — fine
+  return lost / existing > 0.5 || (lost > 25 && lost / existing > 0.05);
+}
+
 export function mergeTsvChapterRange(
   masterText: string | null,
   rendered: string,

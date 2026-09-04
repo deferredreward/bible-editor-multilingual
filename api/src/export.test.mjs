@@ -471,6 +471,89 @@ function utf8Base64(s) {
   }
 }
 
+// --- commitToDcs opts.expectedSha: compare-and-swap guard for the
+// chapter-scoped export (exportChapterMerge.ts). A caller that merged its
+// content against a specific base-file read must not have that write land
+// blindly if the branch moved since — this is the "sequential chapter
+// exports racing master" fix (see exportWorkflow.ts commitChapterRange).
+{
+  const originalFetch = globalThis.fetch;
+  const cfg = { baseUrl: "https://dcs.example", token: "t", owner: "o", repo: "r", branch: "MRK-be-x" };
+  const okJson = (obj, status = 200) =>
+    new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
+  const masterRef = () => okJson({ ref: "refs/heads/master", object: { sha: "master-sha" } });
+  try {
+    // (a) expectedSha does NOT match the branch file's actual sha → staleBase,
+    //     and no write (PUT/POST) is ever issued.
+    {
+      let wrote = false;
+      globalThis.fetch = async (url, init = {}) => {
+        const u = String(url);
+        const m = init.method ?? "GET";
+        if (u.includes("/git/refs/heads/master") && m === "GET") return masterRef();
+        if (u.includes("/git/refs/heads/") && m === "PATCH") {
+          return okJson({ ref: "refs/heads/MRK-be-x", object: { sha: "master-sha" } });
+        }
+        if (u.includes("/branches/") && m === "GET") return okJson({ name: "MRK-be-x" });
+        if (u.includes("/contents/") && m === "GET") {
+          // Master pre-check (baseRef) vs. branch lookup (config.branch) —
+          // distinguish by the ref query param.
+          if (u.includes("ref=master")) {
+            return okJson({ sha: "master-blob", encoding: "base64", content: utf8Base64("old master content") });
+          }
+          return okJson({ sha: "branch-blob-sha", encoding: "base64", content: utf8Base64("branch content") });
+        }
+        if (u.includes("/contents/")) {
+          wrote = true;
+          return okJson({ content: { sha: "new-sha" }, commit: { sha: "commit-sha" } });
+        }
+        throw new Error(`unexpected ${m} ${u}`);
+      };
+      const r = await commitToDcs(cfg, "42-MRK.tsv", "new merged content", "msg", {
+        expectedSha: "sha-the-caller-merged-against",
+      });
+      assert(r.staleBase === true, "mismatched expectedSha reports staleBase");
+      assert(r.changed === false, "staleBase result reports changed:false");
+      assert(!wrote, "no PUT/POST is issued when expectedSha doesn't match the branch file's sha");
+    }
+
+    // (b) expectedSha matches the branch file's actual sha → the write
+    //     proceeds and the PUT body carries that sha (not staleBase).
+    {
+      let putBody = null;
+      globalThis.fetch = async (url, init = {}) => {
+        const u = String(url);
+        const m = init.method ?? "GET";
+        if (u.includes("/git/refs/heads/master") && m === "GET") return masterRef();
+        if (u.includes("/git/refs/heads/") && m === "PATCH") {
+          return okJson({ ref: "refs/heads/MRK-be-x", object: { sha: "master-sha" } });
+        }
+        if (u.includes("/branches/") && m === "GET") return okJson({ name: "MRK-be-x" });
+        if (u.includes("/contents/") && m === "GET") {
+          if (u.includes("ref=master")) {
+            return okJson({ sha: "master-blob", encoding: "base64", content: utf8Base64("old master content") });
+          }
+          return okJson({ sha: "branch-blob-sha", encoding: "base64", content: utf8Base64("branch content") });
+        }
+        if (u.includes("/contents/") && m === "PUT") {
+          putBody = JSON.parse(String(init.body));
+          return okJson({ content: { sha: "new-sha" }, commit: { sha: "commit-sha" } });
+        }
+        throw new Error(`unexpected ${m} ${u}`);
+      };
+      const r = await commitToDcs(cfg, "42-MRK.tsv", "new merged content", "msg", {
+        expectedSha: "branch-blob-sha",
+      });
+      assert(!r.staleBase, "matching expectedSha does not report staleBase");
+      assert(r.changed === true, "matching expectedSha proceeds with the commit");
+      assert(putBody !== null, "a matching expectedSha issues a PUT");
+      assert(putBody.sha === "branch-blob-sha", "PUT body carries the matching expectedSha as the file's sha");
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 // --- corrupt content_json fails export instead of emitting a partial book ---
 {
   const bad = {

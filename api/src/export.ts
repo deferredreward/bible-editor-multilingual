@@ -622,6 +622,13 @@ export interface DcsCommitResult {
   // pairs must not mint junk `-be-` branches — the service token can't
   // delete them. Callers skip prune/PR work when this is false.
   branchTouched: boolean;
+  // true when opts.expectedSha was supplied (a caller that merged against a
+  // specific base file — the chapter-scoped export, exportChapterMerge.ts)
+  // and the branch file's sha no longer matches it: something else landed on
+  // the branch between the caller's read and this write, so nothing was
+  // written (no PUT/POST). Absent/false on every other result. The caller is
+  // expected to re-read the base, re-merge, and retry.
+  staleBase?: boolean;
 }
 
 // Encode a UTF-8 string as base64 (the Gitea contents API expects base64).
@@ -732,6 +739,24 @@ async function branchExists(
   throw new Error(`dcs_branch_get_failed: ${res.status} ${await res.text()}`);
 }
 
+// Exported wrapper around branchExists for callers outside this module (the
+// chapter-scoped export merge, exportWorkflow.ts, needs to know whether the
+// export branch already exists so it can read the MERGE BASE from the branch
+// itself — carrying forward rows an earlier chapter run already landed there
+// — instead of always from master, which would silently drop them; see
+// exportChapterMerge.ts F1).
+export async function dcsBranchExists(
+  config: { baseUrl: string; token: string; owner: string; repo: string },
+  branch: string,
+): Promise<boolean> {
+  const headers: Record<string, string> = {
+    Authorization: `token ${config.token}`,
+    Accept: "application/json",
+  };
+  const repoBase = `${config.baseUrl}/api/v1/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
+  return branchExists(repoBase, headers, branch);
+}
+
 // Ensure the branch is a valid, visible branch before the commit. Gitea can be
 // read-after-write inconsistent right after a create, so we poll. If it never
 // appears but a dangling ref exists (the ref is present yet GET /branches
@@ -840,6 +865,13 @@ async function getDcsFileBase64(
 // - When changed (or forced): reset the branch onto master, GET to discover
 //   the existing SHA on the branch (404 = new file), no-op if the branch file
 //   already matches, else PUT/POST.
+// - opts.expectedSha is a CAS guard for callers that computed `content` by
+//   merging against a specific base-file read (the chapter-scoped export —
+//   exportChapterMerge.ts, issue: sequential chapter runs racing master).
+//   When supplied (an explicit `null` means "I merged against no file at
+//   all"), the branch file's sha must still match it after the reset/lookup
+//   above, or something else landed on the branch since that read and this
+//   write must NOT clobber it — see DcsCommitResult.staleBase.
 // - Returns the new content SHA + the resulting commit SHA so the caller can
 //   record both for traceability.
 export async function commitToDcs(
@@ -847,7 +879,7 @@ export async function commitToDcs(
   path: string,
   content: string,
   message: string,
-  opts?: { forceBranch?: boolean },
+  opts?: { forceBranch?: boolean; expectedSha?: string | null },
 ): Promise<DcsCommitResult> {
   const headers: Record<string, string> = {
     Authorization: `token ${config.token}`,
@@ -878,6 +910,14 @@ export async function commitToDcs(
   // still open). Saves a commit per nightly run.
   if (existingBase64 !== null && existingBase64 === contentBase64) {
     return { contentSha: existingSha ?? "", commitSha: "", changed: false, branchTouched: true };
+  }
+
+  // CAS check — must come after the identical-content no-op above (that's a
+  // legitimate "nothing to do" regardless of whether the base moved) and
+  // before the write. `existingSha` is what the branch ACTUALLY carries right
+  // now; `opts.expectedSha` is what the caller's merge was computed against.
+  if (opts && "expectedSha" in opts && existingSha !== (opts.expectedSha ?? null)) {
+    return { contentSha: existingSha ?? "", commitSha: "", changed: false, branchTouched: true, staleBase: true };
   }
 
   const body: Record<string, unknown> = {

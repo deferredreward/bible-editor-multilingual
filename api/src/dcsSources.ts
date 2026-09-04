@@ -495,13 +495,19 @@ export async function fileCommitSha(env: Env, owner: string, repo: string, path:
 // Content-Length (if any) the raw endpoint decided to send, so it is a
 // genuinely independent source of truth fetchDcsMasterText can cross-check
 // the downloaded bytes against — including in the no-Content-Length case.
-export async function dcsFileSize(
+// One call to the Gitea contents API for a (owner, repo, path, ref), yielding
+// both the byte size AND the git blob sha it has on record — dcsFileSize and
+// fetchDcsFileWithSha both need this same metadata and previously each made
+// their own fetch (fetchDcsMasterText still does, for the size half — see its
+// comment). null on any non-ok response or network error, matching
+// dcsFileSize's existing null-on-failure contract.
+async function dcsFileMeta(
   env: Env,
   owner: string,
   repo: string,
   path: string,
   ref = "master",
-): Promise<number | null> {
+): Promise<{ size: number | null; sha: string | null } | null> {
   const base = (env.DCS_BASE_URL ?? "https://git.door43.org").replace(/\/$/, "");
   const url =
     `${base}/api/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
@@ -511,11 +517,25 @@ export async function dcsFileSize(
     if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
     const r = await fetch(url, { headers });
     if (!r.ok) return null;
-    const data = (await r.json()) as { size?: number };
-    return typeof data.size === "number" && Number.isFinite(data.size) ? data.size : null;
+    const data = (await r.json()) as { size?: number; sha?: string };
+    return {
+      size: typeof data.size === "number" && Number.isFinite(data.size) ? data.size : null,
+      sha: typeof data.sha === "string" ? data.sha : null,
+    };
   } catch {
     return null;
   }
+}
+
+export async function dcsFileSize(
+  env: Env,
+  owner: string,
+  repo: string,
+  path: string,
+  ref = "master",
+): Promise<number | null> {
+  const meta = await dcsFileMeta(env, owner, repo, path, ref);
+  return meta?.size ?? null;
 }
 
 // Master-file fetch for the export shrink guards, verified against
@@ -544,52 +564,70 @@ export async function fetchDcsMasterText(
   path: string,
   ref = "master",
 ): Promise<FetchTextResult> {
+  // Same completeness-verified read as fetchDcsFileWithSha; callers here just
+  // don't need the blob sha.
+  const { sha: _sha, ...rest } = await fetchDcsFileWithSha(env, owner, repo, path, ref);
+  return rest;
+}
+
+// Sibling of fetchDcsMasterText that ALSO returns the git blob sha Gitea has
+// on record for the file at `ref` — the chapter-scoped export merge
+// (exportChapterMerge.ts / exportWorkflow.ts) needs it as a compare-and-swap
+// token: it merges a chapter render against this exact base, and commitToDcs
+// refuses to overwrite the branch if that sha has moved since (another
+// chapter run, or an out-of-band edit, landed first) rather than silently
+// clobbering it. Same completeness verification as fetchDcsMasterText
+// (Content-Length + the independent contents-API size check, issue #494);
+// duplicated rather than layered on top of it because the sha has to come
+// from the SAME contents-API response the size does, one fetch, so a caller
+// can trust `sha` actually corresponds to the returned `text`. 404 → status
+// 404 with sha:null, matching fetchTextWithStatus/fetchDcsMasterText.
+export async function fetchDcsFileWithSha(
+  env: Env,
+  owner: string,
+  repo: string,
+  path: string,
+  ref = "master",
+): Promise<FetchTextResult & { sha: string | null }> {
   const url = dcsRawUrl(env, owner, repo, path, ref);
-  const apiSize = await dcsFileSize(env, owner, repo, path, ref);
+  const meta = await dcsFileMeta(env, owner, repo, path, ref);
+  const apiSize = meta?.size ?? null;
+  const sha = meta?.sha ?? null;
   const headers: Record<string, string> = {};
   if (env.DCS_SERVICE_TOKEN) headers.Authorization = `token ${env.DCS_SERVICE_TOKEN}`;
   let sawShortRead = false;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const r = await fetch(url, Object.keys(headers).length ? { headers } : undefined);
-      if (!r.ok) return { status: r.status, text: null };
+      if (!r.ok) return { status: r.status, text: null, sha: null };
       const buf = await r.arrayBuffer();
       const cl = r.headers.get("content-length");
       const expectedCl = cl == null ? null : Number(cl);
       if (expectedCl != null && Number.isFinite(expectedCl) && buf.byteLength < expectedCl) {
-        console.error("fetchDcsMasterText: short read vs Content-Length; retrying", {
-          url,
-          expectedBytes: expectedCl,
-          gotBytes: buf.byteLength,
-          attempt,
+        console.error("fetchDcsFileWithSha: short read vs Content-Length; retrying", {
+          url, expectedBytes: expectedCl, gotBytes: buf.byteLength, attempt,
         });
         sawShortRead = true;
         continue;
       }
-      // The independent check: fires whether or not Content-Length was even
-      // present, so it is the part that actually covers the HAB-shaped case.
       if (apiSize != null && buf.byteLength < apiSize) {
-        console.error(
-          "fetchDcsMasterText: short read vs Gitea contents-API size; retrying",
-          { url, apiSize, gotBytes: buf.byteLength, attempt },
-        );
+        console.error("fetchDcsFileWithSha: short read vs Gitea contents-API size; retrying", {
+          url, apiSize, gotBytes: buf.byteLength, attempt,
+        });
         sawShortRead = true;
         continue;
       }
       if (expectedCl == null && apiSize == null) {
-        // Neither independent size source was available — completeness is
-        // genuinely unverifiable here. Surface it (mirrors fetchText's own
-        // no-Content-Length warning) so the condition stays visible even
-        // though we cannot act on it further.
-        console.warn("fetchDcsMasterText: no Content-Length and no contents-API size; completeness unverified", {
-          url,
-          gotBytes: buf.byteLength,
+        console.warn("fetchDcsFileWithSha: no Content-Length and no contents-API size; completeness unverified", {
+          url, gotBytes: buf.byteLength,
         });
       }
-      return { status: 200, text: new TextDecoder("utf-8").decode(buf) };
+      return { status: 200, text: new TextDecoder("utf-8").decode(buf), sha };
     } catch {
       // network error → retry once, then fall through
     }
   }
-  return sawShortRead ? { status: 200, text: null, truncated: true } : { status: 0, text: null };
+  return sawShortRead
+    ? { status: 200, text: null, truncated: true, sha: null }
+    : { status: 0, text: null, sha: null };
 }
