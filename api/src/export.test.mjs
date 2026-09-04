@@ -5,7 +5,7 @@
 // instead of getting silently flattened to `\v 6`. Not a test framework;
 // failures exit non-zero.
 
-import { buildExportBranch, buildTnTsv, buildTwlTsv, buildUsfm, commitToDcs, ensureDcsPr, exportTsvShrinkRefused, findDcsOpenPr, masterFetchGate, recreateExportBranchFromMaster, updateDcsPrBranch, usfmAlignmentShrinkRefused } from "./export.ts";
+import { buildChapterExportBranch, buildExportBranch, buildTnTsv, buildTwlTsv, buildUsfm, commitToDcs, ensureDcsPr, exportTsvShrinkRefused, findDcsOpenPr, masterFetchGate, recreateExportBranchFromMaster, updateDcsPrBranch, usfmAlignmentShrinkRefused } from "./export.ts";
 import { CorruptContentJsonError } from "./contentJson.ts";
 import { extractVersesForRange } from "./importParsers.ts";
 
@@ -227,6 +227,17 @@ function utf8Base64(s) {
   assert(buildExportBranch("ISA", ["a", "b"]) === "ISA-be-a-b", `multiple contributors joined`);
   for (const b of [buildExportBranch("LAM", []), buildExportBranch("NUM", ["x"])]) {
     assert(b.includes("-be-"), `${b} contains "-be-" (DCS gate literal)`);
+  }
+}
+
+// --- chapter-scoped export branches use a distinct `-bec-` family ---
+{
+  assert(buildChapterExportBranch("LAM", []) === "LAM-bec-mechanical", `no contributors → {BOOK}-bec-mechanical`);
+  assert(buildChapterExportBranch("AMO", ["", "  "]) === "AMO-bec-mechanical", `sanitized-to-empty usernames → mechanical`);
+  assert(buildChapterExportBranch("NUM", ["stephenwunrow"]) === "NUM-bec-stephenwunrow", `single contributor unchanged`);
+  assert(buildChapterExportBranch("ISA", ["a", "b"]) === "ISA-bec-a-b", `multiple contributors joined`);
+  for (const b of [buildChapterExportBranch("LAM", []), buildChapterExportBranch("NUM", ["x"])]) {
+    assert(!b.includes("-be-"), `${b} must NOT contain "-be-" (must not match the nightly/DCS-gate branch family)`);
   }
 }
 

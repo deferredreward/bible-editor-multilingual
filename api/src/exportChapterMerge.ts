@@ -86,6 +86,38 @@ export function chapterShrinkRefused(rendered: number, existing: number): boolea
   return lost / existing >= 0.5 || (lost > 25 && lost / existing > 0.05);
 }
 
+// F2 (strict): out-of-range rows on `masterText` that are absent from
+// `mergedText`'s full ID set. Used when the merge's base was read from the
+// export BRANCH rather than master — the branch may itself be behind or
+// sparse relative to master (an out-of-band edit landed on master, or an
+// earlier conflict-recovery rebuilt the branch incompletely), and the
+// range-local shrink guard (chapterShrinkRefused) never looks outside
+// [start,end], so it can't catch that. Only OUT-OF-RANGE rows are compared —
+// an in-range master row disappearing is expected (that IS the edit); this
+// function never counts one. Returns every master out-of-range row's ID
+// (column 2) not found anywhere in the merged file; empty = clean.
+export function missingOutOfRangeIds(
+  masterText: string,
+  mergedText: string,
+  range: ChapterRange,
+): string[] {
+  const masterBody = splitDataLines(masterText).slice(1); // drop header
+  const mergedBody = splitDataLines(mergedText).slice(1);
+  const mergedIds = new Set<string>();
+  for (const line of mergedBody) {
+    mergedIds.add(line.split("\t")[1] ?? "");
+  }
+  const missing: string[] = [];
+  for (const line of masterBody) {
+    const cells = line.split("\t");
+    const ref = (cells[0] ?? "").trim();
+    if (isInRange(ref, range)) continue; // in-range rows are expected to differ
+    const id = cells[1] ?? "";
+    if (!mergedIds.has(id)) missing.push(id);
+  }
+  return missing;
+}
+
 export function mergeTsvChapterRange(
   masterText: string | null,
   rendered: string,

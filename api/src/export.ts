@@ -56,11 +56,33 @@ export function usfmFilename(book: string): string {
 // Stand-in "username" for a machine-only export (no human contributors).
 export const MECHANICAL_CONTRIBUTOR = "mechanical";
 
-export function buildExportBranch(book: string, usernames: string[]): string {
+// Shared contributor-slug logic for both branch families below: sanitize each
+// username to the git ref-safe set and join with "-", falling back to
+// MECHANICAL_CONTRIBUTOR when nothing survives sanitization.
+function contributorSlug(usernames: string[]): string {
   const safe = usernames
     .map((u) => u.replace(/[^A-Za-z0-9._-]/g, ""))
     .filter((u) => u.length > 0);
-  return `${book}-be-${safe.length === 0 ? MECHANICAL_CONTRIBUTOR : safe.join("-")}`;
+  return safe.length === 0 ? MECHANICAL_CONTRIBUTOR : safe.join("-");
+}
+
+export function buildExportBranch(book: string, usernames: string[]): string {
+  return `${book}-be-${contributorSlug(usernames)}`;
+}
+
+// Chapter-scoped export branch: `{BOOK}-bec-{user1}-{user2}-...}` / `{BOOK}-bec-mechanical`
+// — same contributor formatting as buildExportBranch, but a DISTINCT `-bec-`
+// infix (never a substring match of `-be-` alone, since it's followed by `c`)
+// so a chapter export can never land on, reset, or be pruned as if it were the
+// nightly whole-book branch, and vice versa. This is deliberate, not
+// incidental: a chapter export is reviewed and merged by a HUMAN on Door43 —
+// it must never be picked up by the DCS-side validate-and-merge job (which
+// gates on `-be-` and auto-merges anything mergeable), and it must never be
+// reset onto master or pruned by the nightly whole-book export the way an
+// ordinary `-be-` branch is (see reuseChapterBranch / isChapterExportBranch in
+// exportWorkflow.ts).
+export function buildChapterExportBranch(book: string, usernames: string[]): string {
+  return `${book}-bec-${contributorSlug(usernames)}`;
 }
 
 // ── TSV builders ─────────────────────────────────────────────────────────────

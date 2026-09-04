@@ -18,6 +18,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import type { Env } from "./index";
 import {
   ALL_RESOURCES,
+  buildChapterExportBranch,
   buildExportBranch,
   buildTnTsv,
   buildTqTsv,
@@ -108,7 +109,7 @@ import {
 } from "./contextExportResults.ts";
 import type { TermImport } from "./translationMemoryLib.ts";
 import { workspaceEnv, resolveWorkspace, primeWorkspaces } from "./workspaces.ts";
-import { chapterShrinkRefused, formatChapterRange, mergeTsvChapterRange, type ChapterRange } from "./exportChapterMerge.ts";
+import { chapterShrinkRefused, formatChapterRange, mergeTsvChapterRange, missingOutOfRangeIds, type ChapterRange } from "./exportChapterMerge.ts";
 
 export interface ExportParams {
   // Workspace slug this run belongs to. Workflows don't inherit the
@@ -1116,8 +1117,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     }
 
     // Book-specific branch named for this resource's human contributors.
+    // Chapter-scoped exports use a DISTINCT `-bec-` branch family (never a
+    // substring of `-be-`) so they can never be reset, pruned, or auto-merged
+    // as if they were the nightly whole-book branch — see
+    // buildChapterExportBranch's doc comment in export.ts.
     const contributors = await this.contributorsFor(book, resource);
-    let branch = buildExportBranch(book, contributors);
+    let branch = chapters
+      ? buildChapterExportBranch(book, contributors)
+      : buildExportBranch(book, contributors);
 
     const projectCfg = await getProjectConfig(this.env);
     const projectTarget = resourceTargetsFor(projectCfg)[resource];
@@ -1135,18 +1142,105 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       : exportOwnerFor(this.env, projectCfg);
     const dcsRepo = lane && laneExport ? laneExport.repo : projectTarget.repo;
 
-    // Chapter mode: reuse a still-open PR's branch instead of the
-    // contributor-derived name. Without this, exporting ch14 while ch13's PR
-    // is still open could land on a different branch (a new/different
-    // contributor changes buildExportBranch's suffix) and merge ch14 against
-    // MASTER — which doesn't have ch13's unmerged rows — silently dropping
-    // ch13 from the new branch. Reusing the branch a still-open PR points at
-    // means the merge below reads FROM that branch and carries ch13's rows
-    // forward. Whole-book exports never do this lookup; also see F1c below
-    // (chapter mode skips pruneSupersededBranches so a sibling branch from an
-    // earlier chapter run is never deleted out from under an open PR).
+    // Chapter mode: reuse a still-live chapter branch instead of the
+    // contributor-derived name. Without this, exporting ch14 while ch13's
+    // branch is still unmerged could land on a different branch (a
+    // new/different contributor changes buildChapterExportBranch's suffix)
+    // and merge ch14 against MASTER — which doesn't have ch13's unmerged
+    // rows — silently dropping ch13 from the new branch. Reusing the prior
+    // chapter branch means the merge below reads FROM that branch and
+    // carries ch13's rows forward. Whole-book exports never do this lookup;
+    // also see F1c below (chapter mode skips pruneSupersededBranches so a
+    // sibling branch from an earlier chapter run is never deleted out from
+    // under unmerged work).
     if (chapters && dcsAllowed) {
-      branch = await this.reuseOpenPrBranch(book, resource, dcsOwner, dcsRepo, laneExport?.baseRef ?? "master", branch);
+      branch = await this.reuseChapterBranch(book, resource, dcsOwner, dcsRepo, branch);
+    }
+
+    // Shared PR title/body builders for THIS (book, resource, chapters,
+    // overwrite) — used both by the update-first step below (F3, run before
+    // the merge base is read) and by the post-commit ensureDcsPr call further
+    // down, so both PR-open attempts always agree on the same title/body.
+    const buildExportPrTitle = (): string =>
+      `bible-editor: ${book} ${resource}${chapterLabel ? ` ch${chapterLabel}` : ""}${overwrite ? " (overwrite)" : ""} → master`;
+    const buildExportPrBody = (forBranch: string): string =>
+      `Auto-opened by the bible-editor nightly export so the DCS validate-and-merge workflow can process \`${forBranch}\`. Holds the latest ${resource.toUpperCase()} edits for ${book}${chapterLabel ? ` (chapters ${chapterLabel})` : ""}.` +
+      (overwrite
+        ? ` This run used overwrite mode: any Door43 edits inside chapters ${chapterLabel} made since the last sync were intentionally replaced by the editor's rows.`
+        : "");
+
+    // Chapter mode, update-first (Finding 3): before reading the merge base,
+    // if the branch already exists on DCS, ensure it has an open PR and merge
+    // MASTER INTO the branch (the Door43-compatible rebase) FIRST. Without
+    // this, mergeAndGuardChapterRange could read a base that is already
+    // behind master (an out-of-band edit landed there since the branch was
+    // last updated), silently drop that edit from the merged content, and
+    // only discover the drift after committing — the F2 whole-file guard
+    // catches a discrepancy CAUGHT AFTER THE FACT, but updating first avoids
+    // creating one to begin with whenever Door43 can auto-merge cleanly. A
+    // real conflict here (the branch's chapter-scoped rows genuinely diverge
+    // from master, e.g. the same rows edited on Door43 by a human) is left
+    // for a human exactly like the existing post-commit 409 handling — see
+    // recordChapterConflictAlert's comment: chapter branches are never
+    // auto-rebuilt, only whole-book branches are.
+    if (chapters && dcsAllowed) {
+      let branchLive = false;
+      try {
+        branchLive = await dcsBranchExists(
+          { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner: dcsOwner, repo: dcsRepo },
+          branch,
+        );
+      } catch (e) {
+        console.error("chapter export: pre-merge branch-exists check failed; merging against best-effort base", {
+          book, resource, branch, error: e instanceof Error ? e.message : String(e),
+        });
+      }
+      if (branchLive) {
+        // Chapter mode is tn/tq/twl-only (enforced at the top of this
+        // method), so `lane` is always null here — no fencing/lease token to
+        // thread through these calls.
+        const dcsCfgEarly = {
+          baseUrl: this.env.DCS_BASE_URL,
+          token: this.env.DCS_SERVICE_TOKEN!,
+          owner: dcsOwner,
+          repo: dcsRepo,
+          branch,
+          baseRef: laneExport?.baseRef ?? "master",
+        };
+        try {
+          const pr = await ensureDcsPr(dcsCfgEarly, buildExportPrTitle(), buildExportPrBody(branch));
+          // pr.number is null on "head_equals_base" (branch is the base ref —
+          // never true here) or "no_diff" (branch has no diff against master
+          // yet, e.g. brand new): nothing to merge master into, continue.
+          if (pr.number != null) {
+            const upd = await updateDcsPrBranch(
+              { baseUrl: dcsCfgEarly.baseUrl, token: dcsCfgEarly.token, owner: dcsOwner, repo: dcsRepo },
+              pr.number,
+            );
+            if (!upd.ok && upd.status === 409) {
+              // Merge conflict merging master INTO the branch — the same
+              // manual-resolution posture as the post-commit 409 handling
+              // below (chapter branches are never auto-rebuilt). Terminal
+              // skip: nothing was committed.
+              const reason = "chapter_merge:branch_conflict";
+              await this.recordChapterConflictAlert(book, resource, dcsRepo, branch, chapterLabel);
+              await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+              return {
+                book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
+                branch: null, dcsCommitSha: null, dcsChanged: false,
+                dcsSkippedReason: reason, prNumber: null, prReason: null,
+              };
+            }
+          }
+        } catch (e) {
+          // A transient DCS failure here must not fail the whole export step
+          // — the post-commit ensureDcsPr/updateDcsPrBranch calls run again
+          // after the commit regardless, so this step is best-effort.
+          console.error("chapter export: update-first ensure-PR/merge-master failed; proceeding to merge-and-commit", {
+            book, resource, branch, error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
     }
 
     // Chapter-scoped export: MERGE the chapter range's render into the
@@ -1445,7 +1539,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
             // Pruning superseded branches deletes refs on DCS — re-verify ownership.
             await this.assertFencingOrThrow(lane, fencingToken);
             await this.pruneSupersededBranches(
-              book, resource, owner, dcsRepo, branch, lane, fencingToken, laneExport?.baseRef ?? "master",
+              book, resource, owner, dcsRepo, branch, lane, fencingToken,
             );
           }
 
@@ -1457,14 +1551,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           }
           await this.assertFencingOrThrow(lane, fencingToken);
 
-          const pr = await ensureDcsPr(
-            dcsCfg,
-            `bible-editor: ${book} ${resource}${chapterLabel ? ` ch${chapterLabel}` : ""}${overwrite ? " (overwrite)" : ""} → master`,
-            `Auto-opened by the bible-editor nightly export so the DCS validate-and-merge workflow can process \`${branch}\`. Holds the latest ${resource.toUpperCase()} edits for ${book}${chapterLabel ? ` (chapters ${chapterLabel})` : ""}.` +
-              (overwrite
-                ? ` This run used overwrite mode: any Door43 edits inside chapters ${chapterLabel} made since the last sync were intentionally replaced by the editor's rows.`
-                : ""),
-          );
+          const pr = await ensureDcsPr(dcsCfg, buildExportPrTitle(), buildExportPrBody(branch));
           prNumber = pr.number;
           prReason = pr.reason;
           if (pr.number != null) {
@@ -1997,11 +2084,6 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     keepBranch: string,
     lane: LaneKey | null = null,
     fencingToken: string | null = null,
-    // Base ref chapter branches were opened against — needed to look up an
-    // open PR for the F4 skip check below. Whole-book callers (the only
-    // callers of this method — chapter mode never calls it) pass the same
-    // baseRef they committed against; default "master" for existing callers.
-    baseRef: string = "master",
   ): Promise<void> {
     // Steady-state short-circuit: when the most recent snapshot already
     // recorded this same branch, any superseded branches were already pruned
@@ -2034,18 +2116,20 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const targets = [...new Set([...stale, LEGACY_EXPORT_BRANCH])].filter((b) => b && b !== keepBranch);
     for (const b of targets) {
       try {
-        // F4: a whole-book (nightly) prune is keyed only by (book, resource),
-        // so without this check it would delete a SIBLING branch that a
-        // manual chapter-scoped export is still accumulating chapters on —
-        // orphaning that unmerged, still-open work. Skip a branch when
-        // export_snapshots recorded it with a chapter label AND it still has
-        // an open PR on Door43; a chapter branch whose PR already
-        // merged/closed is fair game for the normal prune. Any failure to
-        // determine this fails toward SKIPPING the delete (safe — a stale
-        // branch left one more night is harmless; deleting a live chapter
-        // export is not).
-        if (await this.isOpenChapterExportBranch(book, resource, b, owner, repo, baseRef)) {
-          console.log("prune: skipping branch — open chapter export in progress", { book, resource, branch: b });
+        // F4 (revised): a whole-book (nightly) prune is keyed only by
+        // (book, resource), so without this check it would delete a SIBLING
+        // branch a manual chapter-scoped export is still accumulating
+        // chapters on — orphaning that unmerged work. PR state (open vs
+        // merged/closed) is deliberately NOT part of this check anymore: a
+        // chapter branch's PR merging or closing on Door43 doesn't mean the
+        // branch is done being reused by reuseChapterBranch (a later chapter
+        // run can still find it via export_snapshots and build on it), and a
+        // chapter branch must never be auto-deleted by the nightly at all —
+        // only a human, on Door43, retires one. Any failure to determine
+        // this fails toward SKIPPING the delete (safe — a stale branch left
+        // one more night is harmless; deleting a live chapter export is not).
+        if (await this.isChapterExportBranch(book, resource, b)) {
+          console.log("prune: skipping branch — chapter export branch", { book, resource, branch: b });
           continue;
         }
         // Re-verify fencing before every branch DELETE — a mid-loop activation
@@ -2062,19 +2146,25 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     }
   }
 
-  // F4 helper: true when `branch` was recorded by a chapter-scoped export for
-  // this (book, resource) AND it still has an open PR against `baseRef` on
-  // Door43. Fails toward true (protect the branch from deletion) on any
-  // lookup error — the safe direction, since keeping a possibly-stale branch
-  // one more night is harmless but deleting a live chapter export is not.
-  private async isOpenChapterExportBranch(
+  // F4 helper (revised): true when `branch` is a chapter export branch for
+  // this (book, resource) — regardless of PR state. A branch is off-limits to
+  // the nightly prune when EITHER export_snapshots recorded it with a chapter
+  // label for this (book, resource), OR its name carries the `-bec-`
+  // chapter-export infix (buildChapterExportBranch) — the second check
+  // catches a chapter branch that was created but never made it into
+  // export_snapshots (a crash between branch-creation and the snapshot
+  // write). PR state is deliberately not consulted: a chapter branch's PR
+  // merging or closing on Door43 does not make the branch fair game for
+  // automatic deletion — only a human retires one, on Door43. Fails toward
+  // true (protect the branch from deletion) on any lookup error — the safe
+  // direction, since keeping a possibly-stale branch one more night is
+  // harmless but deleting a live chapter export is not.
+  private async isChapterExportBranch(
     book: string,
     resource: Resource,
     branch: string,
-    owner: string,
-    repo: string,
-    baseRef: string,
   ): Promise<boolean> {
+    if (branch.includes("-bec-")) return true;
     try {
       const row = await this.env.DB.prepare(
         `SELECT 1 FROM export_snapshots
@@ -2083,18 +2173,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       )
         .bind(book, resource, branch)
         .first();
-      if (!row) return false;
-      const open = await findDcsOpenPr({
-        baseUrl: this.env.DCS_BASE_URL,
-        token: this.env.DCS_SERVICE_TOKEN!,
-        owner,
-        repo,
-        branch,
-        base: baseRef,
-      });
-      return open != null;
+      return !!row;
     } catch (e) {
-      console.error("prune: chapter-branch open-PR check failed; not deleting", {
+      console.error("prune: chapter-branch check failed; not deleting", {
         book, resource, branch, error: e instanceof Error ? e.message : String(e),
       });
       return true;
@@ -2285,38 +2366,38 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     return gate.kind === "content" ? { kind: "content", text: gate.text, sha: res.sha } : gate;
   }
 
-  // Reuse a still-live chapter export branch instead of the freshly-computed
-  // contributor-derived name (F1a/F5). Looks at the most recent
-  // export_snapshots row for this (book, resource) that recorded both a
-  // branch and a commit — NOT necessarily a pr_number: ensureDcsPr can leave
-  // pr_number null (e.g. `reason: "no_diff"`/"head_equals_base") even though
-  // the branch itself is exactly what a later chapter run needs to build on,
-  // so requiring pr_number here used to force those runs onto a fresh branch
-  // and silently orphan the earlier chapter's rows. Reuse when the branch
-  // still exists on DCS AND either it never got a PR (pr_number null — safe,
-  // there's nothing to have closed) or its PR is confirmed still open.
-  // A branch whose recorded PR is closed/merged is NOT reused — that
-  // (book, resource)'s prior chapters already landed on master, and reusing
-  // the dead branch would resurrect them as a stale diff. Falls back to
-  // `defaultBranch` on any failure to look up or confirm — a lookup failure
-  // must never block the export, it just means this run gets a fresh branch
-  // like before.
-  private async reuseOpenPrBranch(
+  // Reuse a still-live CHAPTER export branch instead of the freshly-computed
+  // contributor-derived `-bec-` name (F1a/F5, revised). Looks at the most
+  // recent export_snapshots row for this (book, resource) that is ITSELF a
+  // chapter-scoped export (chapters IS NOT NULL) and recorded both a branch
+  // and a commit. PR state is deliberately NOT part of this decision anymore
+  // (that's step 3's job, not this one's) — this only answers "is there a
+  // prior chapter branch, and does it still exist on DCS": if it does, reuse
+  // it so an earlier chapter run's rows (outside this range) are carried
+  // forward by the merge; if it doesn't (deleted, or never existed), fall
+  // back to `defaultBranch`. Restricting the lookup to `chapters IS NOT NULL`
+  // means a whole-book `-be-` branch can never be picked up here even if it
+  // happens to be the most recent snapshot for this (book, resource) — chapter
+  // and whole-book exports now live in disjoint branch families (`-bec-` vs
+  // `-be-`), and reuse must never cross that boundary. Falls back to
+  // `defaultBranch` on any lookup failure — a lookup failure must never block
+  // the export, it just means this run gets a fresh branch like before.
+  private async reuseChapterBranch(
     book: string,
     resource: Resource,
     dcsOwner: string,
     dcsRepo: string,
-    baseRef: string,
     defaultBranch: string,
   ): Promise<string> {
     try {
       const prior = await this.env.DB.prepare(
-        `SELECT branch, pr_number FROM export_snapshots
-          WHERE book = ?1 AND resource = ?2 AND branch IS NOT NULL AND commit_sha IS NOT NULL
+        `SELECT branch FROM export_snapshots
+          WHERE book = ?1 AND resource = ?2 AND chapters IS NOT NULL
+            AND branch IS NOT NULL AND commit_sha IS NOT NULL
           ORDER BY committed_at DESC, id DESC LIMIT 1`,
       )
         .bind(book, resource)
-        .first<{ branch: string; pr_number: number | null }>();
+        .first<{ branch: string }>();
       if (!prior?.branch || prior.branch === defaultBranch) return defaultBranch;
       if (!(await dcsBranchExists(
         { baseUrl: this.env.DCS_BASE_URL, token: this.env.DCS_SERVICE_TOKEN!, owner: dcsOwner, repo: dcsRepo },
@@ -2327,30 +2408,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         });
         return defaultBranch;
       }
-      if (prior.pr_number == null) {
-        console.log("chapter export: reusing prior chapter branch (no PR recorded yet)", {
-          book, resource, branch: prior.branch,
-        });
-        return prior.branch;
-      }
-      const open = await findDcsOpenPr({
-        baseUrl: this.env.DCS_BASE_URL,
-        token: this.env.DCS_SERVICE_TOKEN!,
-        owner: dcsOwner,
-        repo: dcsRepo,
-        branch: prior.branch,
-        base: baseRef,
+      console.log("chapter export: reusing prior chapter branch", {
+        book, resource, branch: prior.branch,
       });
-      if (open != null) {
-        console.log("chapter export: reusing open-PR branch from a prior chapter run", {
-          book, resource, branch: prior.branch, pr: open,
-        });
-        return prior.branch;
-      }
-      console.log("chapter export: prior branch's PR is closed/merged; using the contributor-derived branch", {
-        book, resource, priorBranch: prior.branch, branch: defaultBranch,
-      });
-      return defaultBranch;
+      return prior.branch;
     } catch (e) {
       console.error("chapter export: branch-reuse lookup failed; using the contributor-derived branch", {
         book, resource, error: e instanceof Error ? e.message : String(e),
@@ -2495,16 +2556,24 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       });
     }
 
-    // F2: the range guard above only compares in-range counts against
-    // whatever base the merge read (the branch, when one is already live —
-    // see mergeChapterAgainstBase). That leaves a gap: if the branch's file
-    // is itself behind or sparse relative to master (missing chapters master
-    // has — an out-of-band edit landed on master, or an earlier recovery
-    // rebuilt the branch incompletely), the range guard alone would never
-    // notice, because it never looks at rows outside the range. So when the
-    // base came from the BRANCH (not master), also sanity-check the merged
-    // WHOLE FILE against master's current whole-file row count, using the
-    // same policy as the whole-book shrink guard (checkTsvShrink).
+    // F2 (strict, revised): the range guard above only compares in-range
+    // counts against whatever base the merge read (the branch, when one is
+    // already live — see mergeChapterAgainstBase). That leaves a gap: if the
+    // branch's file is itself behind or sparse relative to master (missing
+    // rows master has — an out-of-band edit landed on master, or an earlier
+    // recovery rebuilt the branch incompletely), the range guard alone would
+    // never notice, because it never looks at rows outside the range. The
+    // OLD version of this check compared whole-file ROW COUNTS, which is too
+    // loose: a branch that dropped N out-of-range rows while this run's merge
+    // happened to also ADD N-or-more in-range rows would net to no shrink at
+    // all and sail through. So when the base came from the BRANCH (not
+    // master), compare IDENTITY, not count: every one of master's
+    // OUT-OF-RANGE row IDs must still be present somewhere in the merged
+    // file. This is NOT bypassed by shrinkOverride — shrinkOverride is an
+    // admit-a-real-deletion knob for THIS range's own rows (chapterShrinkRefused,
+    // above); a master row outside the range going missing is never something
+    // this export's range/overwrite intent covers, so there is no legitimate
+    // reason to override it.
     if (merged.baseRef !== "master") {
       const masterGate = await this.fetchResourceMasterGate(book, resource, dcsOwner, dcsRepo, "master");
       if (masterGate.kind === "bootstrap" || masterGate.kind === "no_file") {
@@ -2512,19 +2581,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       } else if (masterGate.kind === "unreadable") {
         return { ok: false, reason: "shrink_guard:master_unreadable" };
       } else {
-        const masterRows = this.countTsvDataRows(masterGate.text);
-        const mergedRows = this.countTsvDataRows(merged.content);
-        if (exportTsvShrinkRefused(mergedRows, masterRows)) {
-          const lost = masterRows - mergedRows;
-          const detail = `shrink_${lost}_of_${masterRows}`;
-          if (shrinkOverride) {
-            console.log("chapter export: whole-file sanity guard overridden by admin (shrinkOverride)", {
-              book, resource, chapters: chapterLabel, detail,
-            });
-          } else {
-            await this.recordShrinkSkipAlert(book, resource, mergedRows, masterRows, detail);
-            return { ok: false, reason: `shrink_guard:${detail}` };
-          }
+        const missing = missingOutOfRangeIds(masterGate.text, merged.content, chapters);
+        if (missing.length > 0) {
+          const reason = `chapter_merge:base_missing_master_rows:${missing.length}`;
+          await this.recordChapterBaseMissingRowsAlert(book, resource, chapters, missing);
+          return { ok: false, reason };
         }
       }
     }
@@ -2574,7 +2635,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     });
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       // preserveBranch: this branch may already carry an earlier chapter
-      // run's rows outside this range (see reuseOpenPrBranch) — never reset
+      // run's rows outside this range (see reuseChapterBranch) — never reset
       // it onto master here (Finding 1); commitToDcs still creates it from
       // master if it's genuinely missing.
       const commit = await commitToDcs(dcsCfg, filename, content, message, { expectedSha, preserveBranch: true });
@@ -2862,6 +2923,33 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       `D1 load (truncated fetch), not a real deletion — refusing to shrink it. Re-sync ${book} ` +
       `${resource.toUpperCase()}, verify the row count, then re-export ch${range}. If the deletion IS intentional ` +
       `(including removing every row in this range), re-run the chapter export with the shrink override.`;
+    await this.writeAlert(source, message, await exportOwnerUrl(this.env));
+  }
+
+  // F2 (strict, revised): the chapter merge's base (read from the export
+  // branch) is missing rows master has OUTSIDE the requested range — the base
+  // is behind or sparse relative to master for reasons this chapter export
+  // never touched. Unlike recordChapterShrinkSkipAlert, this is never
+  // overridable (see mergeAndGuardChapterRange's comment) — a human must
+  // reconcile the branch with master before this (book, resource) can be
+  // re-exported.
+  private async recordChapterBaseMissingRowsAlert(
+    book: string,
+    resource: Resource,
+    chapters: ChapterRange,
+    missingIds: string[],
+  ): Promise<void> {
+    const range = formatChapterRange(chapters);
+    const source = `export_base_missing:${book}:${resource}:ch${range}`;
+    const sample = missingIds.slice(0, 10).join(", ");
+    const more = missingIds.length > 10 ? ` (+${missingIds.length - 10} more)` : "";
+    const message =
+      `Benjamin fix this — chapter export BLOCKED ${book} ${resource.toUpperCase()} ch${range}: the export ` +
+      `branch is missing ${missingIds.length} row(s) master has OUTSIDE chapters ${range} (IDs: ${sample}${more}). ` +
+      `This looks like the branch drifted behind master (an out-of-band edit, or an earlier conflict-recovery ` +
+      `rebuilt it incompletely) rather than an intentional deletion — refusing to push a merge that would drop ` +
+      `rows this chapter export never touched. This guard cannot be overridden; reconcile the branch with master ` +
+      `on Door43 (or let a fresh chapter export rebuild it), then re-export ch${range}.`;
     await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 

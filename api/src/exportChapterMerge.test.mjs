@@ -8,6 +8,7 @@ import {
   formatChapterRange,
   parseChapterRangeLabel,
   mergeTsvChapterRange,
+  missingOutOfRangeIds,
   chapterShrinkRefused,
 } from "./exportChapterMerge.ts";
 
@@ -339,5 +340,45 @@ console.log("Reference with leading/trailing spaces is treated as in range");
 console.log("chapterShrinkRefused: exact 50% boundary");
 assert(chapterShrinkRefused(10, 20) === true, "20 existing, 10 rendered (exactly 50% lost) is refused");
 assert(chapterShrinkRefused(11, 20) === false, "20 existing, 11 rendered (45% lost) passes");
+
+// --- missingOutOfRangeIds ---
+console.log("missingOutOfRangeIds");
+{
+  const master = tsv(HEADER, [row("1:1", "a1"), row("2:1", "b1"), row("3:1", "c1")]);
+  const merged = tsv(HEADER, [row("1:1", "a1"), row("2:1", "b1new"), row("3:1", "c1")]);
+  assert(
+    JSON.stringify(missingOutOfRangeIds(master, merged, { start: 2, end: 2 })) === "[]",
+    "no out-of-range rows missing -> []",
+  );
+}
+{
+  // Chapters 1 and 3 (out of range) vanished from the merged file entirely —
+  // as if the base the merge read was itself missing them (F2's motivating gap).
+  const master = tsv(HEADER, [row("1:1", "a1"), row("2:1", "b1"), row("3:1", "c1")]);
+  const merged = tsv(HEADER, [row("2:1", "b1new")]);
+  assert(
+    JSON.stringify(missingOutOfRangeIds(master, merged, { start: 2, end: 2 })) === JSON.stringify(["a1", "c1"]),
+    "master out-of-range rows absent from merged are reported by ID",
+  );
+}
+{
+  // An in-range master row disappearing is the whole point of the edit —
+  // never counted, even when the merged file drops it entirely.
+  const master = tsv(HEADER, [row("1:1", "a1"), row("2:1", "b1")]);
+  const merged = tsv(HEADER, [row("1:1", "a1")]); // chapter 2 (in range) intentionally removed
+  assert(
+    JSON.stringify(missingOutOfRangeIds(master, merged, { start: 2, end: 2 })) === "[]",
+    "an in-range master row going missing is never counted",
+  );
+}
+{
+  // BOM + whitespace on both inputs tolerated (mirrors mergeTsvChapterRange's F6 cases).
+  const master = `﻿${tsv(HEADER, [row("1:1", "a1"), row(" 3:1 ", "c1")])}`;
+  const merged = `﻿${tsv(HEADER, [row("2:1", "b1new")])}`;
+  assert(
+    JSON.stringify(missingOutOfRangeIds(master, merged, { start: 2, end: 2 })) === JSON.stringify(["a1", "c1"]),
+    "BOM and whitespace-padded references are tolerated",
+  );
+}
 
 console.log("All exportChapterMerge tests passed.");
