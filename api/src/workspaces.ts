@@ -698,6 +698,51 @@ export function resolveWorkspace(env: Env, slug: string | null): Workspace {
   return list[0];
 }
 
+// Rate-limit for the unknown-slug registry recheck below: at most one re-read
+// per window per isolate, keyed on the shared-DB object (stable for the
+// isolate's lifetime, same key primeWorkspaces/registryState use). The
+// timestamp is stamped BEFORE the await so concurrent unknown-slug requests in
+// the same isolate collapse to a single registry read.
+const unknownSlugRecheck = new WeakMap<object, number>();
+const UNKNOWN_SLUG_RECHECK_MS = 10_000;
+
+// Request-path resolver that closes the warm-stale cross-tenant hole (issue
+// #418). resolveWorkspace() answers a slug this isolate's registry cache lacks
+// by returning list[0] — a DIFFERENT tenant's D1. But the registry is primed
+// once per isolate and never expires, so a workspace claimed on a sibling
+// isolate (manual pool claim, or auto-claim at another admin's login) is
+// invisible to an already-warm isolate until it recycles. When the request
+// names a slug we don't have, re-read the registry ONCE per rate-limit window
+// and re-resolve before falling back. A genuinely-dead slug still lands on
+// list[0] exactly as today (no behavior change for legitimately-retired
+// cookies); only the reachable warm-stale case is repaired.
+//
+// The top-level fetch handler (index.ts) uses this instead of resolveWorkspace.
+export async function resolveWorkspaceFresh(env: Env, slug: string | null): Promise<Workspace> {
+  const list = listWorkspaces(env);
+  if (!slug) return list[0];
+
+  const found = list.find((w) => w.slug === slug);
+  if (found) return found;
+
+  // Unknown slug. The registry may have grown on another isolate since we
+  // primed; recheck once per window rather than immediately serving list[0].
+  const db = sharedDb(env);
+  if (db) {
+    const now = Date.now();
+    const last = unknownSlugRecheck.get(db as object) ?? 0;
+    if (now - last >= UNKNOWN_SLUG_RECHECK_MS) {
+      unknownSlugRecheck.set(db as object, now); // stamp before await (see note)
+      await invalidateAndReprime(env);
+      const fresh = listWorkspaces(env).find((w) => w.slug === slug);
+      if (fresh) return fresh;
+    }
+  }
+  // Still unknown (dead slug, or already rechecked this window): fall back to
+  // the first workspace, unchanged from resolveWorkspace().
+  return listWorkspaces(env)[0];
+}
+
 // Swaps in the workspace's D1 binding as DB, resolves SHARED_DB to the
 // ORIGINAL default DB binding (must be read before DB is overwritten below),
 // and stamps VIEWER_ORG / WORKSPACE_SLUG / DCS_EXPORT_OWNER for this request.
