@@ -106,6 +106,7 @@ import {
 } from "./contextExportResults.ts";
 import type { TermImport } from "./translationMemoryLib.ts";
 import { workspaceEnv, resolveWorkspace, primeWorkspaces } from "./workspaces.ts";
+import { formatChapterRange, mergeTsvChapterRange, type ChapterRange } from "./exportChapterMerge.ts";
 
 export interface ExportParams {
   // Workspace slug this run belongs to. Workflows don't inherit the
@@ -136,6 +137,12 @@ export interface ExportParams {
   contextOnly?: boolean;
   // Admin override for the context-pack semantic shrink guard.
   shrinkOverride?: boolean;
+  // Chapter-scoped export ("MRK 13-14 tn"): restrict the render to this
+  // inclusive chapter range and MERGE it into master's whole-book file
+  // instead of replacing the whole file (exportChapterMerge.ts). Set only
+  // alongside `book` + `resource` (tn/tq/twl only) — enforced by the route
+  // (exports.ts), not re-validated here.
+  chapters?: ChapterRange;
 }
 
 export interface StepResult {
@@ -377,7 +384,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           const result = await step.do(
             stepName,
             { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
-            async () => this.exportOne(book, resource, instanceId, dcsAllowed),
+            async () => this.exportOne(book, resource, instanceId, dcsAllowed, params.chapters),
           );
           results.push(result);
         } catch (e) {
@@ -926,7 +933,19 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     resource: Resource,
     instanceId: string,
     dcsAllowed: boolean,
+    chapters?: ChapterRange,
   ): Promise<StepResult> {
+    // Chapter-scoped export: tn/tq/twl only. The route (exports.ts) already
+    // rejects ult/ust with a chapter range at request time; this is a
+    // defensive backstop so a bad caller (or a future route bug) can't reach
+    // the merge path for a resource it was never designed for.
+    if (chapters && resource !== "tn" && resource !== "tq" && resource !== "twl") {
+      throw new Error("chapter_scope_unsupported_resource");
+    }
+    // Chapter label ("13" or "13-14") threaded into every recordSnapshot call
+    // below so a chapter-scoped run's snapshots are distinguishable from a
+    // whole-book run's; null (the default column value) for a whole-book run.
+    const chapterLabel = chapters ? formatChapterRange(chapters) : null;
     // Lane fencing for scripture resources (ULT/UST): check writability from
     // live D1 state (not cached project config) before doing anything.
     const lane = (resource === "ult" || resource === "ust") ? laneForBibleVersion(resource.toUpperCase()) : null;
@@ -987,7 +1006,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     }
 
     try {
-    const built = await this.buildResource(book, resource, scriptureGen);
+    const built = await this.buildResource(book, resource, scriptureGen, chapters);
 
     // After render: lease + generation/config must still match what we rendered.
     if (lane && leaseId) {
@@ -1015,7 +1034,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // can see why the resource is absent (#236's visibility ask, repurposed).
     if (built.rowCount === 0 && built.heldForReview > 0) {
       const reason = `held_for_review:${built.heldForReview}`;
-      await this.recordSnapshot(book, resource, null, null, 0, reason);
+      await this.recordSnapshot(book, resource, null, null, 0, reason, null, null, chapterLabel);
       return {
         book,
         resource,
@@ -1033,7 +1052,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     }
 
     if (built.content === "") {
-      await this.recordSnapshot(book, resource, null, null, built.rowCount, "no_rows");
+      await this.recordSnapshot(book, resource, null, null, built.rowCount, "no_rows", null, null, chapterLabel);
       return {
         book,
         resource,
@@ -1059,16 +1078,86 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     const contributors = await this.contributorsFor(book, resource);
     const branch = buildExportBranch(book, contributors);
 
-    // R2 is the local-only backup. Writing here first means a failed DCS
-    // commit still leaves a recoverable artifact.
     const projectCfg = await getProjectConfig(this.env);
     const projectTarget = resourceTargetsFor(projectCfg)[resource];
     // Scripture lanes use active_config.export when set; export:null means
     // D1-only (R2 snapshot still written, no DCS commit). Non-scripture keeps
     // the project-config target.
     const filename = projectTarget.path(book);
+    // Computed here (before the R2 write) rather than after it, so the
+    // chapter-merge step below — which needs to know where to fetch master
+    // from — can run before R2 gets its backup copy. Values are identical to
+    // what this used to compute post-R2-write; moving it earlier changes
+    // nothing for any existing (non-chapter) path.
+    const dcsOwner = lane && laneExport
+      ? laneExport.owner
+      : exportOwnerFor(this.env, projectCfg);
+    const dcsRepo = lane && laneExport ? laneExport.repo : projectTarget.repo;
+
+    // Chapter-scoped export: MERGE the chapter range's render into master's
+    // existing whole-book file instead of pushing the range alone (which
+    // would replace the whole file with just those chapters). Only reachable
+    // for tn/tq/twl (checked at the top of this method); replaces the
+    // whole-file shrink guard below for this path with a scoped one — see
+    // exportChapterMerge.ts. `contentToCommit` is what gets written to R2,
+    // committed to DCS, and re-committed on conflict recovery; it stays
+    // `built.content` (the range-only render) for a dry run / no-token run,
+    // since nothing is actually pushed to compare against master.
+    let contentToCommit = built.content;
+    if (chapters && dcsAllowed) {
+      const masterGate = await this.fetchResourceMasterGate(book, resource, dcsOwner, dcsRepo, "master");
+      if (masterGate.kind === "unreadable" || masterGate.kind === "no_file") {
+        // no_file = dcsResourceFile has no path for this resource, so we can't
+        // know what master holds; a chapter render must never be pushed as if
+        // it were the whole book, so fail closed (the whole-file path allows
+        // no_file because it replaces the file regardless).
+        const reason = masterGate.kind === "no_file" ? "chapter_merge:no_master_path" : "shrink_guard:master_unreadable";
+        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+        return {
+          book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
+      }
+      const masterText = masterGate.kind === "content" ? masterGate.text : null;
+      let merge: ReturnType<typeof mergeTsvChapterRange>;
+      try {
+        merge = mergeTsvChapterRange(masterText, built.content, chapters);
+      } catch (e) {
+        // A merge failure (header mismatch, an out-of-range rendered row, a
+        // duplicate ID) means either master or the range render is in a state
+        // we must not push over — a terminal skip for this step, not a
+        // thrown/retried error (retrying would just fail identically).
+        const msg = e instanceof Error ? e.message : String(e);
+        const reason = `chapter_merge:${msg}`;
+        console.error("export chapter-merge failed", { book, resource, chapters, error: msg });
+        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+        return {
+          book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
+      }
+      if (exportTsvShrinkRefused(merge.renderedRows, merge.masterRowsInRange)) {
+        const detail = `chapter_shrink_${merge.masterRowsInRange - merge.renderedRows}_of_${merge.masterRowsInRange}`;
+        await this.recordChapterShrinkSkipAlert(book, resource, chapters, merge.renderedRows, merge.masterRowsInRange);
+        const reason = `shrink_guard:${detail}`;
+        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+        return {
+          book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
+      }
+      contentToCommit = merge.content;
+    }
+
+    // R2 is the local-only backup. Writing here first means a failed DCS
+    // commit still leaves a recoverable artifact. For a chapter-scoped export
+    // this stores the MERGED whole-book content — what was actually pushed —
+    // not the range-only render.
     const r2Key = `exports/${instanceId}/${book}/${resource}/${filename}`;
-    await this.env.BLOBS.put(r2Key, built.content, {
+    await this.env.BLOBS.put(r2Key, contentToCommit, {
       httpMetadata: { contentType: filename.endsWith(".usfm") ? "text/plain" : "text/tab-separated-values" },
     });
 
@@ -1080,6 +1169,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     let prError: string | null = null;
 
     // Lane with export:null → local-only; never push to a project-default repo.
+    // (chapters is always null on this branch — lane resources are ult/ust,
+    // which never carry a chapter range; see the guard at the top.)
     if (lane && laneExport === null) {
       await this.recordSnapshot(book, resource, null, null, built.rowCount, "lane_export_disabled");
       return {
@@ -1088,11 +1179,6 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         dcsSkippedReason: "lane_export_disabled", prNumber: null, prReason: null,
       };
     }
-
-    const dcsOwner = lane && laneExport
-      ? laneExport.owner
-      : exportOwnerFor(this.env, projectCfg);
-    const dcsRepo = lane && laneExport ? laneExport.repo : projectTarget.repo;
 
     // Freshness gate — the single guard against clobbering master. The export
     // renders from D1; if master moved past what D1 last synced (the
@@ -1116,7 +1202,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     if (!fresh.ok) {
       await this.recordStaleSkipAlert(book, resource, fresh.masterSha, fresh.watermark);
       const reason = `stale_master:${fresh.detail}`;
-      await this.recordSnapshot(book, resource, null, null, built.rowCount, reason);
+      await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
       return {
         book,
         resource,
@@ -1137,7 +1223,10 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // Only when we'd actually commit (dcsAllowed) and only for TSV resources,
     // whose row==line model makes the count exact. This is what would have
     // stopped the twl_PSA clobber (4880 rows shipped over master's 7776).
-    if (dcsAllowed && (resource === "tn" || resource === "tq" || resource === "twl")) {
+    // A chapter-scoped export already ran its own scoped version of this guard
+    // above (comparing the range's rendered/master row counts, not the whole
+    // file) — skip the whole-file comparison here for that path.
+    if (dcsAllowed && !chapters && (resource === "tn" || resource === "tq" || resource === "twl")) {
       const guard = await this.checkTsvShrink(
         book, resource, built.rowCount, dcsOwner, dcsRepo, "master",
       );
@@ -1232,7 +1321,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           ? () => this.assertFencingOrThrow(lane, fencingToken)
           : undefined,
       };
-      const message = `bible-editor export: ${book} ${resource} → ${branch} (${instanceId})`;
+      const message = `bible-editor export: ${book} ${resource}${chapterLabel ? ` ch${chapterLabel}` : ""} → ${branch} (${instanceId})`;
 
       // Fencing token must still hold before the file commit — the one mutation
       // we must never do with a stale token (it would push over a just-activated
@@ -1240,7 +1329,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       // nothing was committed.
       await this.assertFencingOrThrow(lane, fencingToken);
 
-      const commit = await commitToDcs(dcsCfg, filename, built.content, message);
+      const commit = await commitToDcs(dcsCfg, filename, contentToCommit, message);
       if (!commit.branchTouched) {
         // Rendered content matches master — nothing to merge. Close any open PR
         // lingering from an earlier night so empty (0-diff) PRs don't pile up.
@@ -1296,8 +1385,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
           const pr = await ensureDcsPr(
             dcsCfg,
-            `bible-editor: ${book} ${resource} → master`,
-            `Auto-opened by the bible-editor nightly export so the DCS validate-and-merge workflow can process \`${branch}\`. Holds the latest ${resource.toUpperCase()} edits for ${book}.`,
+            `bible-editor: ${book} ${resource}${chapterLabel ? ` ch${chapterLabel}` : ""} → master`,
+            `Auto-opened by the bible-editor nightly export so the DCS validate-and-merge workflow can process \`${branch}\`. Holds the latest ${resource.toUpperCase()} edits for ${book}${chapterLabel ? ` (chapters ${chapterLabel})` : ""}.`,
           );
           prNumber = pr.number;
           prReason = pr.reason;
@@ -1323,7 +1412,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
                   }
                   await this.assertFencingOrThrow(lane, fencingToken);
                   const recovered = await this.recoverConflictedBranch(
-                    book, resource, owner, dcsRepo, branch, dcsCfg, filename, built.content, message,
+                    book, resource, owner, dcsRepo, branch, dcsCfg, filename, contentToCommit, message,
                     lane, fencingToken,
                   );
                   if (recovered) {
@@ -1355,7 +1444,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       }
     }
 
-    await this.recordSnapshot(book, resource, branch, dcsCommitSha, built.rowCount, dcsSkippedReason, prNumber, prError);
+    await this.recordSnapshot(book, resource, branch, dcsCommitSha, built.rowCount, dcsSkippedReason, prNumber, prError, chapterLabel);
 
     return {
       book,
@@ -1599,9 +1688,17 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     book: string,
     resource: Resource,
     scriptureGen: number,
+    // Chapter-scoped export: restrict the render to this inclusive chapter
+    // range (tn/tq/twl only — ult/ust never pass this). `chapter` is stored
+    // as 0 for the "front" pseudo-reference (see importParsers.ts refParts),
+    // so a range starting at 1 or above naturally excludes front:* rows —
+    // consistent with exportChapterMerge.ts's chapterOfReference.
+    chapters?: ChapterRange,
   ): Promise<{ content: string; rowCount: number; heldForReview: number; sortOrderUpdates: Array<{ id: string; sort_order: number }> }> {
     const db = this.env.DB;
     if (resource === "tn" || resource === "tq") {
+      const chapterClause = chapters ? " AND chapter BETWEEN ?2 AND ?3" : "";
+      const bindArgs: unknown[] = chapters ? [book, chapters.start, chapters.end] : [book];
       // trashed_at IS NULL (tn only) excludes notes pending deletion. The
       // nightly cron promotes trash -> deleted_at before this Workflow's steps
       // read, but this guard also covers anything trashed mid-run (after
@@ -1609,17 +1706,17 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       const rs = resource === "tn"
         ? await db
             .prepare(
-              `SELECT * FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL
+              `SELECT * FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL AND trashed_at IS NULL${chapterClause}
                ORDER BY chapter, verse, sort_order ASC NULLS LAST, id`,
             )
-            .bind(book)
+            .bind(...bindArgs)
             .all<TnRow>()
         : await db
             .prepare(
-              `SELECT * FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL
+              `SELECT * FROM tq_rows WHERE book = ?1 AND deleted_at IS NULL${chapterClause}
                ORDER BY chapter, verse, sort_order ASC NULLS LAST, id`,
             )
-            .bind(book)
+            .bind(...bindArgs)
             .all<TqRow>();
       const fields = resource === "tn" ? (["note", "tags"] as const) : (["question", "response"] as const);
       // Provenance-aware export gate (publishGate.ts, ux-simplification §1.4):
@@ -1655,19 +1752,30 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       return { content, rowCount: gated.length, heldForReview, sortOrderUpdates: [] };
     }
     if (resource === "twl") {
+      const chapterClause = chapters ? " AND chapter BETWEEN ?2 AND ?3" : "";
+      const bindArgs: unknown[] = chapters ? [book, chapters.start, chapters.end] : [book];
       const rs = await db
         .prepare(
-          `SELECT * FROM twl_rows WHERE book = ?1 AND deleted_at IS NULL
+          `SELECT * FROM twl_rows WHERE book = ?1 AND deleted_at IS NULL${chapterClause}
            ORDER BY chapter, verse, sort_order ASC NULLS LAST, id`,
         )
-        .bind(book)
+        .bind(...bindArgs)
         .all<TwlRow>();
+      // Restrict the ULT verses used for ordering to the same chapter range —
+      // twl_rows outside the range aren't rendered, so ordering context from
+      // other chapters would be unused anyway, but scoping the query keeps
+      // sortOrderUpdates (derived below from these same rows) naturally
+      // confined to the range too.
+      const ultChapterClause = chapters ? " AND chapter BETWEEN ?4 AND ?5" : "";
+      const ultBindArgs: unknown[] = chapters
+        ? [book, "ULT", scriptureGen, chapters.start, chapters.end]
+        : [book, "ULT", scriptureGen];
       const ultVerses = await db
         .prepare(
-          `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3
+          `SELECT * FROM verses WHERE book = ?1 AND bible_version = ?2 AND source_generation = ?3${ultChapterClause}
            ORDER BY chapter, verse`,
         )
-        .bind(book, "ULT", scriptureGen)
+        .bind(...ultBindArgs)
         .all<VerseRow>();
       if (rs.results.length === 0) {
         return { content: "", rowCount: 0, heldForReview: 0, sortOrderUpdates: [] };
@@ -1924,12 +2032,16 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     skippedReason: string | null,
     prNumber: number | null = null,
     prError: string | null = null,
+    // Chapter label ("13" or "13-14") for a chapter-scoped export; null (the
+    // default) for a whole-book export — every existing call site is
+    // unaffected.
+    chapters: string | null = null,
   ): Promise<void> {
     await this.env.DB.prepare(
-      `INSERT INTO export_snapshots (book, resource, branch, commit_sha, rows_exported, error, pr_number, pr_error)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+      `INSERT INTO export_snapshots (book, resource, branch, commit_sha, rows_exported, error, pr_number, pr_error, chapters)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
     )
-      .bind(book, resource, branch, commitSha, rowsExported, skippedReason, prNumber, prError)
+      .bind(book, resource, branch, commitSha, rowsExported, skippedReason, prNumber, prError, chapters)
       .run();
   }
 
@@ -1959,6 +2071,30 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   // master, which a D1 partial from the SAME correlated truncation could then
   // wave through as "no shrink"), so a short read lands on the fail-closed
   // "unreadable" branch below instead of being compared as content.
+  // Shared fetch+gate for both the whole-file and chapter-scoped TSV shrink
+  // guards: resolve the resource's DCS file path for this project config, then
+  // fetch and classify the destination master read (masterFetchGate). Pulled
+  // out of checkTsvShrink so the chapter-scoped merge path (exportOne) reads
+  // master through the exact same completeness-verified fetch instead of a
+  // second, potentially-diverging copy.
+  private async fetchResourceMasterGate(
+    book: string,
+    resource: Resource,
+    destOwner: string,
+    destRepo: string,
+    baseRef: string,
+  ): Promise<
+    | { kind: "no_file" }
+    | { kind: "bootstrap" }
+    | { kind: "unreadable" }
+    | { kind: "content"; text: string }
+  > {
+    const cfg = await getProjectConfig(this.env);
+    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
+    if (!file) return { kind: "no_file" };
+    return masterFetchGate(await fetchDcsMasterText(this.env, destOwner, destRepo, file.path, baseRef));
+  }
+
   private async checkTsvShrink(
     book: string,
     resource: Resource,
@@ -1967,12 +2103,8 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     destRepo: string,
     baseRef = "master",
   ): Promise<{ ok: boolean; detail: string; masterRows: number | null }> {
-    const cfg = await getProjectConfig(this.env);
-    const file = dcsResourceFile(cfg, book, resource as ReimportResource);
-    if (!file) return { ok: true, detail: "no_file", masterRows: null };
-    const gate = masterFetchGate(
-      await fetchDcsMasterText(this.env, destOwner, destRepo, file.path, baseRef),
-    );
+    const gate = await this.fetchResourceMasterGate(book, resource, destOwner, destRepo, baseRef);
+    if (gate.kind === "no_file") return { ok: true, detail: "no_file", masterRows: null };
     // First export of a new org/book: master has no file yet, so there is
     // nothing to shrink — allow the commit (#235). Any non-404 failure stays
     // fail-closed below.
@@ -2202,6 +2334,26 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       `but master has ${masterRows ?? "?"} (${detail}). This looks like an incomplete D1 load (truncated fetch), ` +
       `not a real deletion — refusing to shrink master. Re-sync ${book} ${resource.toUpperCase()} from master, ` +
       `verify the row count, then re-export.`;
+    await this.writeAlert(source, message, await exportOwnerUrl(this.env));
+  }
+
+  // Chapter-scoped analogue of recordShrinkSkipAlert: the range's rendered row
+  // count vs. master's row count IN THAT RANGE (not the whole book), for a
+  // chapter-scoped manual export (exportChapterMerge.ts mergeTsvChapterRange).
+  private async recordChapterShrinkSkipAlert(
+    book: string,
+    resource: Resource,
+    chapters: ChapterRange,
+    renderedRows: number,
+    masterRowsInRange: number,
+  ): Promise<void> {
+    const range = formatChapterRange(chapters);
+    const source = `export_shrink:${book}:${resource}:ch${range}`;
+    const message =
+      `Benjamin — chapter export BLOCKED ${book} ${resource.toUpperCase()} ch${range}: the range render has ` +
+      `${renderedRows} rows but master has ${masterRowsInRange} in that range. This looks like an incomplete ` +
+      `D1 load (truncated fetch), not a real deletion — refusing to shrink master. Re-sync ${book} ` +
+      `${resource.toUpperCase()} from master, verify the row count, then re-export ch${range}.`;
     await this.writeAlert(source, message, await exportOwnerUrl(this.env));
   }
 
