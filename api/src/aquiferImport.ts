@@ -26,6 +26,7 @@ import { getProjectConfig } from "./projectConfig.ts";
 import { makeVerseSortOrder, parseTsv, refParts } from "./importParsers";
 import { aquiferJsonUrl, aquiferLangFor } from "./aquiferSources.ts";
 import { convertAquiferBook, nfc, type EnRow } from "./aquiferConvert.ts";
+import { parseChapterScope, chapterInScope } from "./aquiferScope.ts";
 
 export const AQUIFER_SOURCE = "aquifer"; // edit_log.source tag (keeps the AI chip off)
 const CHUNK = 40;
@@ -87,6 +88,12 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
   const book = (c.req.param("book") ?? "").toUpperCase();
   if (!BOOK_NUMBERS[book]) return c.json({ error: "unknown_book", book }, 400);
 
+  // Optional chapter scope (issue #310): `?chapters=9,12` (or `9-12`, or a mix)
+  // pulls only those chapters and leaves the rest of the book — its rows AND its
+  // whole-book provenance stamp — untouched. `null` = no scope given = whole
+  // book, i.e. every existing caller is unaffected.
+  const scope = parseChapterScope(c.req.query("chapters"));
+
   const cfg = await getProjectConfig(env);
   if (!cfg.translationSource) {
     return c.json({ error: "not_a_translation_project", detail: "the English root project cannot pull drafts" }, 400);
@@ -140,7 +147,9 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
     })).filter((r) => r.ID);
     const enNoteById = new Map(enRows.map((r) => [r.ID, r.Note]));
 
-    const { notes, report } = convertAquiferBook(aqItems as Parameters<typeof convertAquiferBook>[0], enRows);
+    const { notes: allNotes, report } = convertAquiferBook(aqItems as Parameters<typeof convertAquiferBook>[0], enRows);
+    // Restrict the merge to the requested chapters (no-op when scope is null).
+    const notes = scope ? allNotes.filter((n) => chapterInScope(refParts(n.ref)[0], scope)) : allNotes;
 
     const existing = await env.DB.prepare(
       `SELECT id, ref_raw, quote, occurrence, note, translation_state FROM tn_rows WHERE book = ?1 AND deleted_at IS NULL`,
@@ -172,7 +181,12 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
       } else if (st === "ai_draft") {
         replaceableByKey.set(k, row.id);
       } else if (isTranslatedNote(row.note, cfg.languageCode, enNoteById.get(row.id))) {
-        approveIds.push(row.id);
+        // Only bulk-approve rows in the requested chapters — a scoped pull must
+        // not flip out-of-scope rows to validated (issue #310). Out-of-scope
+        // notes are never merged anyway (the merge loop iterates scoped `notes`),
+        // so leaving them out of protectedKeys too would be harmless; we still
+        // protect them to keep the key set an honest whole-book picture.
+        if (chapterInScope(refParts(row.ref_raw)[0], scope)) approveIds.push(row.id);
         protectedKeys.add(k);
       } else {
         replaceableByKey.set(k, row.id);
@@ -252,15 +266,31 @@ export async function aquiferDrafts(c: Context<{ Bindings: Env; Variables: { use
     }
 
     // 3. Mark tn provenance so the DCS reimport skips tn for this book.
-    stmts.push(
-      env.DB.prepare(`UPDATE book_imports SET tn_source = ?2 WHERE book = ?1`).bind(book, `${AQUIFER_SOURCE}:${aqLang}`),
-    );
+    //
+    // WHOLE-book pulls only. A chapter-scoped pull must NOT re-assert whole-book
+    // Aquifer provenance: that would make the nightly DCS reimport skip tn for
+    // chapters this run never touched, freezing them at their current state
+    // instead of tracking upstream (issue #310). Scoped runs leave the existing
+    // tn_source (whatever it was) unchanged.
+    if (!scope) {
+      stmts.push(
+        env.DB.prepare(`UPDATE book_imports SET tn_source = ?2 WHERE book = ?1`).bind(book, `${AQUIFER_SOURCE}:${aqLang}`),
+      );
+    }
 
     for (let i = 0; i < stmts.length; i += CHUNK) {
       await env.DB.batch(stmts.slice(i, i + CHUNK));
     }
 
-    return c.json({ ok: true, book, aqLang, approved: approveIds.length, ...counts, report });
+    return c.json({
+      ok: true,
+      book,
+      aqLang,
+      chapters: scope ? [...scope].sort((a, b) => a - b) : null,
+      approved: approveIds.length,
+      ...counts,
+      report,
+    });
   } finally {
     await env.DB.prepare(`DELETE FROM book_import_locks WHERE book = ?1`).bind(book).run();
   }
