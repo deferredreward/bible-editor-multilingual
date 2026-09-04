@@ -1223,7 +1223,20 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // sibling branch from an earlier chapter run is never deleted out from
     // under unmerged work).
     if (chapters && dcsAllowed) {
-      branch = await this.reuseChapterBranch(book, resource, dcsOwner, dcsRepo, branch);
+      try {
+        branch = await this.reuseChapterBranch(book, resource, dcsOwner, dcsRepo, branch);
+      } catch (e) {
+        const reason = e instanceof Error && e.message.startsWith("chapter_merge:")
+          ? e.message
+          : "chapter_merge:branch_lookup_failed";
+        await this.alertChapterMergeSkipIfNeeded(book, resource, chapterLabel, reason);
+        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
+        return {
+          book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
+          branch: null, dcsCommitSha: null, dcsChanged: false,
+          dcsSkippedReason: reason, prNumber: null, prReason: null,
+        };
+      }
     }
 
     // Shared PR title/body builders for THIS (book, resource, chapters,
@@ -2554,10 +2567,15 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       });
       return prior.branch;
     } catch (e) {
-      console.error("chapter export: branch-reuse lookup failed; using the contributor-derived branch", {
+      // Fail closed, like the branch-exists checks in the merge and
+      // update-first steps: falling back to the contributor-derived name here
+      // could start a fresh branch from master while a live -bec- branch still
+      // holds unmerged sibling chapters, stranding them. The caller turns this
+      // into a terminal chapter_merge:branch_lookup_failed skip.
+      console.error("chapter export: branch-reuse lookup failed; refusing to guess a branch", {
         book, resource, error: e instanceof Error ? e.message : String(e),
       });
-      return defaultBranch;
+      throw new Error("chapter_merge:branch_lookup_failed");
     }
   }
 
