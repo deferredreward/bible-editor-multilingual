@@ -864,7 +864,8 @@ async function getDcsFileBase64(
 //   a lingering open PR needs its diff collapsed even though master matches).
 // - When changed (or forced): reset the branch onto master, GET to discover
 //   the existing SHA on the branch (404 = new file), no-op if the branch file
-//   already matches, else PUT/POST.
+//   already matches, else PUT/POST. opts.preserveBranch skips the reset (see
+//   below) — everything else in this list still applies.
 // - opts.expectedSha is a CAS guard for callers that computed `content` by
 //   merging against a specific base-file read (the chapter-scoped export —
 //   exportChapterMerge.ts, issue: sequential chapter runs racing master).
@@ -872,6 +873,15 @@ async function getDcsFileBase64(
 //   all"), the branch file's sha must still match it after the reset/lookup
 //   above, or something else landed on the branch since that read and this
 //   write must NOT clobber it — see DcsCommitResult.staleBase.
+// - opts.preserveBranch (chapter-scoped export only): call
+//   ensureExportBranchExists instead of resetExportBranchToMaster — create
+//   the branch from master if it's missing, but NEVER move an existing one.
+//   A chapter-mode branch can already carry an earlier chapter run's rows
+//   (outside the range this call is merging); resetting it onto master would
+//   silently drop those rows before the CAS lookup below even runs, and the
+//   ensuing staleBase mismatch just re-commits the new range alone — the
+//   earlier chapter's rows are gone for good. Whole-book callers never pass
+//   this and are unaffected.
 // - Returns the new content SHA + the resulting commit SHA so the caller can
 //   record both for traceability.
 export async function commitToDcs(
@@ -879,7 +889,7 @@ export async function commitToDcs(
   path: string,
   content: string,
   message: string,
-  opts?: { forceBranch?: boolean; expectedSha?: string | null },
+  opts?: { forceBranch?: boolean; expectedSha?: string | null; preserveBranch?: boolean },
 ): Promise<DcsCommitResult> {
   const headers: Record<string, string> = {
     Authorization: `token ${config.token}`,
@@ -898,8 +908,15 @@ export async function commitToDcs(
   }
 
   // Re-base the export branch onto current master before reading/committing, so
-  // the resulting PR is a clean child of master, not a stale 3-way merge.
-  await resetExportBranchToMaster(config);
+  // the resulting PR is a clean child of master, not a stale 3-way merge —
+  // UNLESS the caller passed preserveBranch (chapter-scoped export reusing a
+  // branch that must not be moved; see the doc comment above), in which case
+  // only ensure the branch exists, creating it from master when it's missing.
+  if (opts?.preserveBranch) {
+    await ensureExportBranchExists(config);
+  } else {
+    await resetExportBranchToMaster(config);
+  }
 
   // Lookup existing SHA for this path on this branch.
   const branchFile = await getDcsFileBase64(base, headers, config.branch);

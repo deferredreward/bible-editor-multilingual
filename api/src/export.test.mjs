@@ -554,6 +554,114 @@ function utf8Base64(s) {
   }
 }
 
+// --- commitToDcs opts.preserveBranch: never reset a reused chapter-export
+// branch onto master (Finding 1 — resetting a branch that already carries an
+// earlier chapter run's rows dropped them before the CAS write landed the
+// new range). preserveBranch swaps resetExportBranchToMaster for
+// ensureExportBranchExists: an existing branch is left exactly where it is
+// (no PATCH git/refs/heads/...), and a missing branch is still created from
+// master so the first chapter commit has somewhere to land.
+{
+  const originalFetch = globalThis.fetch;
+  const cfg = { baseUrl: "https://dcs.example", token: "t", owner: "o", repo: "r", branch: "ZEC-be-x" };
+  const okJson = (obj, status = 200) =>
+    new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
+  try {
+    // (a) branch already exists and its file's blob sha differs from
+    //     master's — preserveBranch must not move it: no PATCH git/refs, and
+    //     the write proceeds as a PUT against the branch's own sha.
+    {
+      const calls = [];
+      let putBody = null;
+      globalThis.fetch = async (url, init = {}) => {
+        const u = String(url);
+        const m = init.method ?? "GET";
+        calls.push({ u, m });
+        if (u.includes("/git/refs/heads/") && m === "PATCH") {
+          throw new Error("preserveBranch must not PATCH git/refs to reset the branch onto master");
+        }
+        if (u.includes("/branches/") && m === "GET") return okJson({ name: "ZEC-be-x" });
+        if (u.includes("/contents/") && m === "GET") {
+          if (u.includes("ref=master")) {
+            return okJson({ sha: "master-blob", encoding: "base64", content: utf8Base64("master content") });
+          }
+          return okJson({ sha: "branch-blob-sha", encoding: "base64", content: utf8Base64("branch content (ch13)") });
+        }
+        if (u.includes("/contents/") && m === "PUT") {
+          putBody = JSON.parse(String(init.body));
+          return okJson({ content: { sha: "new-sha" }, commit: { sha: "commit-sha" } });
+        }
+        throw new Error(`unexpected ${m} ${u}`);
+      };
+      const r = await commitToDcs(cfg, "tn_ZEC.tsv", "branch content (ch13) + ch14 merged", "msg", {
+        preserveBranch: true,
+        expectedSha: "branch-blob-sha",
+      });
+      assert(
+        !calls.some((c) => c.u.includes("/git/refs/heads/") && c.m === "PATCH"),
+        "preserveBranch issues no PATCH git/refs/heads/... request",
+      );
+      assert(!r.staleBase, "matching expectedSha on the preserved branch does not report staleBase");
+      assert(putBody !== null, "preserveBranch still issues a PUT against the existing branch");
+      assert(putBody.sha === "branch-blob-sha", "PUT carries the preserved branch's own blob sha");
+    }
+
+    // (b) branch does not exist yet — preserveBranch still creates it from
+    //     master (via ensureExportBranchExists), but only through POST
+    //     /branches, never a PATCH git/refs reset.
+    {
+      const calls = [];
+      let createBody = null;
+      let postContentBody = null;
+      let branchPolls = 0;
+      globalThis.fetch = async (url, init = {}) => {
+        const u = String(url);
+        const m = init.method ?? "GET";
+        calls.push({ u, m });
+        if (u.includes("/git/refs/heads/") && m === "PATCH") {
+          throw new Error("preserveBranch must not PATCH git/refs to reset/create the branch");
+        }
+        if (u.endsWith("/branches") && m === "POST") {
+          createBody = JSON.parse(String(init.body));
+          return okJson({});
+        }
+        if (u.includes("/branches/") && m === "GET") {
+          branchPolls++;
+          // Missing before the create, visible after it.
+          return branchPolls === 1 ? okJson({}, 404) : okJson({ name: "ZEC-be-x" });
+        }
+        if (u.includes("/contents/") && m === "GET") {
+          // No file at master or on the freshly-created branch — first-ever
+          // chapter commit for this book.
+          return okJson({}, 404);
+        }
+        if (u.includes("/contents/") && m === "POST") {
+          postContentBody = JSON.parse(String(init.body));
+          return okJson({ content: { sha: "new-sha" }, commit: { sha: "commit-sha" } });
+        }
+        throw new Error(`unexpected ${m} ${u}`);
+      };
+      const r = await commitToDcs(cfg, "tn_ZEC.tsv", "ch14 content", "msg", {
+        preserveBranch: true,
+        expectedSha: null,
+      });
+      assert(
+        calls.some((c) => c.u.endsWith("/branches") && c.m === "POST"),
+        "a missing branch is created via POST /branches",
+      );
+      assert(
+        !calls.some((c) => c.u.includes("/git/refs/heads/") && c.m === "PATCH"),
+        "creating the missing branch issues no PATCH git/refs/heads/... request",
+      );
+      assert(createBody?.new_branch_name === "ZEC-be-x", "branch is created with the configured branch name");
+      assert(!r.staleBase, "expectedSha:null matches the new file's absence on the fresh branch");
+      assert(postContentBody !== null, "the commit itself is a POST (new file)");
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 // --- corrupt content_json fails export instead of emitting a partial book ---
 {
   const bad = {

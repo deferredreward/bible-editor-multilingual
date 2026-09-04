@@ -1136,7 +1136,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     let contentToCommit = built.content;
     let chapterExpectedSha: string | null = null;
     if (chapters && dcsAllowed) {
-      const merged = await this.mergeChapterAgainstBase(book, resource, built, chapters, dcsOwner, dcsRepo, branch);
+      const merged = await this.mergeAndGuardChapterRange(
+        book, resource, built, chapters, chapterLabel, dcsOwner, dcsRepo, branch, shrinkOverride,
+      );
       if (!merged.ok) {
         await this.recordSnapshot(book, resource, null, null, built.rowCount, merged.reason, null, null, chapterLabel);
         return {
@@ -1144,23 +1146,6 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           branch: null, dcsCommitSha: null, dcsChanged: false,
           dcsSkippedReason: merged.reason, prNumber: null, prReason: null,
         };
-      }
-      const refused = chapterShrinkRefused(merged.merge.renderedRows, merged.merge.masterRowsInRange);
-      if (refused && !shrinkOverride) {
-        const detail = `chapter_shrink_${merged.merge.masterRowsInRange - merged.merge.renderedRows}_of_${merged.merge.masterRowsInRange}`;
-        await this.recordChapterShrinkSkipAlert(book, resource, chapters, merged.merge.renderedRows, merged.merge.masterRowsInRange);
-        const reason = `shrink_guard:${detail}`;
-        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
-        return {
-          book, resource, rowCount: built.rowCount, bytes: built.content.length, r2Key: null,
-          branch: null, dcsCommitSha: null, dcsChanged: false,
-          dcsSkippedReason: reason, prNumber: null, prReason: null,
-        };
-      }
-      if (refused && shrinkOverride) {
-        console.log("chapter export: range shrink guard overridden by admin (shrinkOverride)", {
-          book, resource, chapters: chapterLabel,
-        });
       }
       contentToCommit = merged.content;
       chapterExpectedSha = merged.expectedSha;
@@ -1456,13 +1441,17 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
                     // master, so `contentToCommit` (merged against the OLD
                     // branch base) is stale — re-merge against the new base
                     // (which mergeChapterAgainstBase resolves to master, since
-                    // the just-recreated branch equals it) before recommitting.
+                    // the just-recreated branch equals it) and re-apply the
+                    // range shrink guard before recommitting (Finding 2: this
+                    // used to skip the guard entirely).
                     chapters
                       ? async () => {
-                          const remerged = await this.mergeChapterAgainstBase(
-                            book, resource, built, chapters, dcsOwner, dcsRepo, branch,
+                          const remerged = await this.mergeAndGuardChapterRange(
+                            book, resource, built, chapters, chapterLabel, dcsOwner, dcsRepo, branch, shrinkOverride,
                           );
-                          return remerged.ok ? { content: remerged.content, expectedSha: remerged.expectedSha } : null;
+                          return remerged.ok
+                            ? { content: remerged.content, expectedSha: remerged.expectedSha }
+                            : { error: remerged.reason };
                         }
                       : undefined,
                   );
@@ -2019,10 +2008,13 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
   // of master, so `content` — merged against the OLD (now-deleted) branch's
   // base — is stale and must not be recommitted as-is. When provided, it is
   // called AFTER the recreate to get a base-consistent {content, expectedSha}
-  // (it re-reads master, since the fresh branch equals master, and re-merges);
-  // a null result or a staleBase commit is treated as recovery failure, same
-  // as any other conflict-recovery error. Whole-book callers pass nothing and
-  // behave exactly as before.
+  // (it re-reads master, since the fresh branch equals master, re-merges, AND
+  // re-applies the range shrink guard via mergeAndGuardChapterRange); an
+  // `{error}` result or a staleBase commit is treated as recovery failure,
+  // same as any other conflict-recovery error, and the error string (e.g. a
+  // shrink-guard refusal detail) is recorded on the alert rather than a
+  // generic "remerge_failed" — a guard refusal here must stay visible as one.
+  // Whole-book callers pass nothing and behave exactly as before.
   private async recoverConflictedBranch(
     book: string,
     resource: Resource,
@@ -2035,7 +2027,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     message: string,
     lane: LaneKey | null = null,
     fencingToken: string | null = null,
-    remerge?: () => Promise<{ content: string; expectedSha: string | null } | null>,
+    remerge?: () => Promise<{ content: string; expectedSha: string | null } | { error: string }>,
   ): Promise<{ prNumber: number | null; prReason: string; commitSha: string | null } | null> {
     const adminToken = this.env.DCS_TOKEN;
     if (!adminToken) {
@@ -2063,8 +2055,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       let expectedSha: string | null | undefined;
       if (remerge) {
         const merged = await remerge();
-        if (!merged) {
-          await this.recordPrConflictAlert(book, resource, repo, branch, "remerge_failed");
+        if ("error" in merged) {
+          // Surface the real reason (e.g. a shrink-guard refusal) rather than
+          // a generic failure — Finding 2: this remerge used to skip the
+          // range shrink guard entirely, so a guard refusal here is new
+          // behavior, not a regression, and must be visible as such.
+          await this.recordPrConflictAlert(book, resource, repo, branch, merged.error.slice(0, 120));
           return null;
         }
         recommitContent = merged.content;
@@ -2073,7 +2069,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       // Branch is now master HEAD. Re-commit the rendered D1 file (forceBranch:
       // we know it differs from master — that's what conflicted) → one commit,
       // child of master. The delete auto-closed the old PR, so ensureDcsPr mints
-      // a fresh one whose diff is exactly the D1 delta.
+      // a fresh one whose diff is exactly the D1 delta. preserveBranch alongside
+      // forceBranch (chapter mode only): the branch was JUST recreated from
+      // master above, so there is nothing to preserve FROM, but it keeps this
+      // call from re-resetting a branch that a sibling chapter run may already
+      // be racing to commit onto (the CAS below is what actually guards that).
       await this.assertFencingOrThrow(lane, fencingToken);
       const recommit = await commitToDcs(
         {
@@ -2085,7 +2085,9 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
         filename,
         recommitContent,
         message,
-        remerge ? { forceBranch: true, expectedSha: expectedSha ?? null } : { forceBranch: true },
+        remerge
+          ? { forceBranch: true, preserveBranch: true, expectedSha: expectedSha ?? null }
+          : { forceBranch: true },
       );
       if (remerge && recommit.staleBase) {
         await this.recordPrConflictAlert(book, resource, repo, branch, "stale_after_recreate");
@@ -2319,6 +2321,44 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     }
   }
 
+  // mergeChapterAgainstBase + the range shrink guard (chapterShrinkRefused),
+  // as ONE step (Finding 2). Every chapter-scoped merge must apply the guard
+  // before its content is handed to a commit — this used to be duplicated
+  // inline at three call sites (exportOne's initial merge, commitChapterRange's
+  // staleBase retry, and recoverConflictedBranch's post-rebuild remerge), and
+  // the third copy was missing entirely: a conflict-recovery rebuild could
+  // recommit a shrunk range even with shrinkOverride false. All three now call
+  // this instead.
+  private async mergeAndGuardChapterRange(
+    book: string,
+    resource: Resource,
+    built: { content: string },
+    chapters: ChapterRange,
+    chapterLabel: string | null,
+    dcsOwner: string,
+    dcsRepo: string,
+    branch: string,
+    shrinkOverride: boolean,
+  ): Promise<
+    | { ok: true; content: string; expectedSha: string | null; merge: ReturnType<typeof mergeTsvChapterRange> }
+    | { ok: false; reason: string }
+  > {
+    const merged = await this.mergeChapterAgainstBase(book, resource, built, chapters, dcsOwner, dcsRepo, branch);
+    if (!merged.ok) return merged;
+    const refused = chapterShrinkRefused(merged.merge.renderedRows, merged.merge.masterRowsInRange);
+    if (refused && !shrinkOverride) {
+      const detail = `chapter_shrink_${merged.merge.masterRowsInRange - merged.merge.renderedRows}_of_${merged.merge.masterRowsInRange}`;
+      await this.recordChapterShrinkSkipAlert(book, resource, chapters, merged.merge.renderedRows, merged.merge.masterRowsInRange);
+      return { ok: false, reason: `shrink_guard:${detail}` };
+    }
+    if (refused && shrinkOverride) {
+      console.log("chapter export: range shrink guard overridden by admin (shrinkOverride)", {
+        book, resource, chapters: chapterLabel,
+      });
+    }
+    return merged;
+  }
+
   // Commit a chapter-scoped merge with staleBase retry (F2c). Attempts up to
   // 3 times: commit with the current content/expectedSha; if commitToDcs
   // reports staleBase (the base moved since we read it), re-read the base
@@ -2353,7 +2393,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       },
     });
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const commit = await commitToDcs(dcsCfg, filename, content, message, { expectedSha });
+      // preserveBranch: this branch may already carry an earlier chapter
+      // run's rows outside this range (see reuseOpenPrBranch) — never reset
+      // it onto master here (Finding 1); commitToDcs still creates it from
+      // master if it's genuinely missing.
+      const commit = await commitToDcs(dcsCfg, filename, content, message, { expectedSha, preserveBranch: true });
       if (!commit.staleBase) return { commit, content };
       if (attempt >= maxAttempts) {
         const reason = "chapter_merge:base_moved";
@@ -2366,23 +2410,12 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
       console.warn("chapter export: base moved (staleBase); re-reading and re-merging", {
         book, resource, chapters: chapterLabel, attempt,
       });
-      const remerged = await this.mergeChapterAgainstBase(book, resource, built, chapters, dcsOwner, dcsRepo, branch);
+      const remerged = await this.mergeAndGuardChapterRange(
+        book, resource, built, chapters, chapterLabel, dcsOwner, dcsRepo, branch, shrinkOverride,
+      );
       if (!remerged.ok) {
         await this.recordSnapshot(book, resource, null, null, built.rowCount, remerged.reason, null, null, chapterLabel);
         return terminal(remerged.reason);
-      }
-      const refused = chapterShrinkRefused(remerged.merge.renderedRows, remerged.merge.masterRowsInRange);
-      if (refused && !shrinkOverride) {
-        const detail = `chapter_shrink_${remerged.merge.masterRowsInRange - remerged.merge.renderedRows}_of_${remerged.merge.masterRowsInRange}`;
-        await this.recordChapterShrinkSkipAlert(book, resource, chapters, remerged.merge.renderedRows, remerged.merge.masterRowsInRange);
-        const reason = `shrink_guard:${detail}`;
-        await this.recordSnapshot(book, resource, null, null, built.rowCount, reason, null, null, chapterLabel);
-        return terminal(reason);
-      }
-      if (refused && shrinkOverride) {
-        console.log("chapter export: range shrink guard overridden by admin (shrinkOverride) on retry", {
-          book, resource, chapters: chapterLabel, attempt,
-        });
       }
       content = remerged.content;
       expectedSha = remerged.expectedSha;
