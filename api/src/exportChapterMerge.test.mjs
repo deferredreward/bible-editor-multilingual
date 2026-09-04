@@ -304,4 +304,40 @@ console.log("header-only render (zero rows in range) removes master's in-range r
   assert(result.renderedRows === 0, "renderedRows is 0 for a header-only render");
 }
 
+// --- F6: leading UTF-8 BOM on master is stripped before merging ---
+console.log("BOM on master text merges cleanly");
+{
+  const master = `﻿${tsv(HEADER, [row("1:1", "a1"), row("2:1", "b1")])}`;
+  const rendered = tsv(HEADER, [row("2:1", "b1new")]);
+  const result = mergeTsvChapterRange(master, rendered, { start: 2, end: 2 });
+  const expected = tsv(HEADER, [row("1:1", "a1"), row("2:1", "b1new")]);
+  assert(result.content === expected, "a BOM-prefixed master merges as if the BOM were absent");
+}
+
+// --- F6: leading UTF-8 BOM on rendered text is stripped before merging ---
+console.log("BOM on rendered text merges cleanly");
+{
+  const master = tsv(HEADER, [row("1:1", "a1"), row("2:1", "b1")]);
+  const rendered = `﻿${tsv(HEADER, [row("2:1", "b1new")])}`;
+  const result = mergeTsvChapterRange(master, rendered, { start: 2, end: 2 });
+  const expected = tsv(HEADER, [row("1:1", "a1"), row("2:1", "b1new")]);
+  assert(result.content === expected, "a BOM-prefixed rendered blob merges as if the BOM were absent");
+}
+
+// --- F6: a Reference cell with leading/trailing whitespace is still "in range" ---
+console.log("Reference with leading/trailing spaces is treated as in range");
+{
+  const master = tsv(HEADER, [row("1:1", "a1"), row(" 2:1 ", "b1"), row("3:1", "c1")]);
+  const rendered = tsv(HEADER, [row("2:1", "b1new")]);
+  const result = mergeTsvChapterRange(master, rendered, { start: 2, end: 2 });
+  const expected = tsv(HEADER, [row("1:1", "a1"), row("2:1", "b1new"), row("3:1", "c1")]);
+  assert(result.content === expected, "the padded chapter-2 row is recognized as in-range and replaced");
+  assert(result.masterRowsInRange === 1, "the padded row counts toward masterRowsInRange");
+}
+
+// --- F6: chapterShrinkRefused boundary — refuse AT exactly 50% loss ---
+console.log("chapterShrinkRefused: exact 50% boundary");
+assert(chapterShrinkRefused(10, 20) === true, "20 existing, 10 rendered (exactly 50% lost) is refused");
+assert(chapterShrinkRefused(11, 20) === false, "20 existing, 11 rendered (45% lost) passes");
+
 console.log("All exportChapterMerge tests passed.");

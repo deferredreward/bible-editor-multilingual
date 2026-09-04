@@ -50,15 +50,24 @@ export function parseChapterRangeLabel(s: string): ChapterRange | null {
 }
 
 function isInRange(refRaw: string, range: ChapterRange): boolean {
-  const ch = chapterOfReference(refRaw);
+  const ch = chapterOfReference(refRaw.trim());
   return ch != null && ch >= range.start && ch <= range.end;
+}
+
+// A leading UTF-8 BOM (U+FEFF), when the file was saved/fetched with one, is
+// invisible in any editor but would otherwise land on the header line's first
+// cell — breaking the header-match check (F6) and (were it ever a Reference
+// cell) chapter parsing. Strip it before splitting; never touches anything
+// else in the text.
+function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
 // Normalize CRLF -> LF, split on "\n", drop the trailing empty element (a
 // well-formed TSV ends with exactly one newline), then drop any other blank
 // lines. Never touches cell content.
 function splitDataLines(text: string): string[] {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const lines = stripBom(text).replace(/\r\n/g, "\n").split("\n");
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines.filter((l) => l.length > 0);
 }
@@ -74,7 +83,7 @@ export function chapterShrinkRefused(rendered: number, existing: number): boolea
   if (existing <= 0) return false; // nothing in the range to protect
   const lost = existing - rendered;
   if (lost <= 0) return false; // no shrink (incl. growth) — fine
-  return lost / existing > 0.5 || (lost > 25 && lost / existing > 0.05);
+  return lost / existing >= 0.5 || (lost > 25 && lost / existing > 0.05);
 }
 
 export function mergeTsvChapterRange(
@@ -126,7 +135,7 @@ export function mergeTsvChapterRange(
         continue;
       }
       if (fallbackAt === -1) {
-        const ch = chapterOfReference(ref);
+        const ch = chapterOfReference(ref.trim());
         if (ch != null && ch > range.end) fallbackAt = kept.length;
       }
       kept.push(line);
