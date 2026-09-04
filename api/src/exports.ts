@@ -42,6 +42,15 @@ const RunBody = z.object({
   // below. chapterEnd defaults to chapterStart (a single-chapter run).
   chapterStart: z.number().int().min(1).max(200).optional(),
   chapterEnd: z.number().int().min(1).max(200).optional(),
+  // Door43 write mode for a chapter-scoped run. "merge" (default): today's
+  // behaviour — the pre-export DCS→D1 sync runs first, then the range render
+  // is merged into the base file. "overwrite": skip the pre-export sync for
+  // this run AND bypass the freshness gate for this (book, resource), so the
+  // editor's rows for the range replace whatever Door43 holds for those
+  // chapters — including hand edits made on Door43 since the last sync. Rows
+  // outside the range still come from the base file via the merge, unchanged.
+  // Requires a chapter scope — see the cross-field check below.
+  mode: z.enum(["merge", "overwrite"]).optional(),
 });
 
 exports.post("/run", requireAdmin, async (c) => {
@@ -80,6 +89,9 @@ exports.post("/run", requireAdmin, async (c) => {
   } else if (parsed.data.chapterEnd != null) {
     return c.json({ error: "invalid_chapter_range" }, 400);
   }
+  if (parsed.data.mode === "overwrite" && !chapters) {
+    return c.json({ error: "overwrite_requires_chapter_scope" }, 400);
+  }
 
   const params = {
     book: parsed.data.book?.toUpperCase(),
@@ -89,6 +101,8 @@ exports.post("/run", requireAdmin, async (c) => {
     contextOnly: parsed.data.contextOnly,
     shrinkOverride: parsed.data.shrinkOverride,
     chapters,
+    // Only ever true alongside `chapters` — enforced above.
+    overwrite: parsed.data.mode === "overwrite",
     workspace: c.env.WORKSPACE_SLUG,
   };
   // Deterministic id (second precision) so a double-submitted manual run

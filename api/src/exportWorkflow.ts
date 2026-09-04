@@ -145,6 +145,14 @@ export interface ExportParams {
   // alongside `book` + `resource` (tn/tq/twl only) — enforced by the route
   // (exports.ts), not re-validated here.
   chapters?: ChapterRange;
+  // Explicit Door43 write mode for a chapter-scoped run: true = "overwrite"
+  // (skip the pre-export DCS→D1 sync, and bypass exportOne's freshness gate
+  // for this (book, resource) so the range render replaces whatever Door43
+  // holds for those chapters, including hand edits made there since the last
+  // sync); false/absent = "merge", today's behaviour. Only ever true
+  // alongside `chapters` — enforced by the route (exports.ts), not
+  // re-validated here except for the defensive throw in exportOne.
+  overwrite?: boolean;
 }
 
 export interface StepResult {
@@ -307,7 +315,17 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     //     wrapped in try/catch so a single book's failure can't abort the whole
     //     export instance — same shape as the post-export reimport loop. Gated
     //     on dcsAllowed: a dry run / no-token run shouldn't mutate D1.
-    if (dcsAllowed || params.reimportOnly) {
+    //
+    //     Chapter-scoped "overwrite" mode skips this sync entirely (by admin
+    //     choice): the whole point is that the editor's rows for the range
+    //     win over whatever Door43 holds, including out-of-band edits made
+    //     there since the last sync — pulling those edits into D1 first would
+    //     just have exportOne's chapter merge carry them back in.
+    if (params.overwrite) {
+      console.log("export pre-export sync skipped by admin choice (overwrite mode)", {
+        book: params.book, resource: params.resource, chapters: params.chapters,
+      });
+    } else if (dcsAllowed || params.reimportOnly) {
       for (const book of books) {
         try {
           // Chunked + SHA-gated + diff-aware reimport — steps through chapters so
@@ -386,7 +404,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           const result = await step.do(
             stepName,
             { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
-            async () => this.exportOne(book, resource, instanceId, dcsAllowed, params.chapters, !!params.shrinkOverride),
+            async () => this.exportOne(book, resource, instanceId, dcsAllowed, params.chapters, !!params.shrinkOverride, !!params.overwrite),
           );
           results.push(result);
         } catch (e) {
@@ -941,6 +959,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // including every row in the range, is intended. Unused outside chapter
     // mode; every whole-book call site leaves it at the default.
     shrinkOverride = false,
+    // Chapter-scoped "overwrite" write mode: bypass the freshness gate below
+    // for this (book, resource) so the range render replaces whatever Door43
+    // holds for those chapters, including hand edits made there since the
+    // last sync. Distinct from shrinkOverride — overwrite does NOT imply
+    // shrinkOverride; the range/whole-file shrink guards still apply. Only
+    // ever true alongside `chapters` (enforced by the route); every other
+    // call site leaves it at the default.
+    overwrite = false,
   ): Promise<StepResult> {
     // Chapter-scoped export: tn/tq/twl only. The route (exports.ts) already
     // rejects ult/ust with a chapter range at request time; this is a
@@ -948,6 +974,14 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // the merge path for a resource it was never designed for.
     if (chapters && resource !== "tn" && resource !== "tq" && resource !== "twl") {
       throw new Error("chapter_scope_unsupported_resource");
+    }
+    // overwrite is meaningless (and dangerous) outside chapter scope — a
+    // whole-book overwrite would mean "skip the freshness gate entirely",
+    // which is not what this mode is for. Defensive backstop; the route
+    // (exports.ts) already rejects `mode: "overwrite"` without a chapter
+    // range at request time.
+    if (overwrite && !chapters) {
+      throw new Error("overwrite_requires_chapter_scope");
     }
     // Chapter label ("13" or "13-14") threaded into every recordSnapshot call
     // below so a chapter-scoped run's snapshots are distinguishable from a
@@ -1190,14 +1224,29 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
     // silent revert. A fresh book with no watermark has nothing to clobber.
     // Only meaningful when we'd actually commit (dcsAllowed); a dry run renders
     // to R2 only and can't clobber anything.
-    const fresh = dcsAllowed
-      ? await this.checkMasterFreshness(book, resource, {
-          owner: dcsOwner,
-          repo: dcsRepo,
-          baseRef: laneExport?.baseRef ?? "master",
-          lane,
-        })
-      : { ok: true as const, detail: "dry", masterSha: null, watermark: null };
+    //
+    // Chapter-scoped "overwrite" mode bypasses this gate by admin choice: the
+    // whole point of overwrite is that the editor's rows for the range should
+    // replace whatever Door43 holds for those chapters, including hand edits
+    // made there since the last sync — the exact case this gate exists to
+    // block in merge mode. (chapters is tn/tq/twl-only, so this can never
+    // race the lane-fencing/generation logic above.)
+    let fresh: { ok: boolean; detail: string; masterSha: string | null; watermark: string | null };
+    if (overwrite) {
+      console.log("chapter export: freshness gate bypassed (overwrite mode)", {
+        book, resource, chapters: chapterLabel,
+      });
+      fresh = { ok: true, detail: "overwrite", masterSha: null, watermark: null };
+    } else if (dcsAllowed) {
+      fresh = await this.checkMasterFreshness(book, resource, {
+        owner: dcsOwner,
+        repo: dcsRepo,
+        baseRef: laneExport?.baseRef ?? "master",
+        lane,
+      });
+    } else {
+      fresh = { ok: true, detail: "dry", masterSha: null, watermark: null };
+    }
     if (!fresh.ok) {
       await this.recordStaleSkipAlert(book, resource, fresh.masterSha, fresh.watermark);
       const reason = `stale_master:${fresh.detail}`;
@@ -1320,7 +1369,7 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
           ? () => this.assertFencingOrThrow(lane, fencingToken)
           : undefined,
       };
-      const message = `bible-editor export: ${book} ${resource}${chapterLabel ? ` ch${chapterLabel}` : ""} → ${branch} (${instanceId})`;
+      const message = `bible-editor export: ${book} ${resource}${chapterLabel ? ` ch${chapterLabel}` : ""}${overwrite ? " (overwrite)" : ""} → ${branch} (${instanceId})`;
 
       // Fencing token must still hold before the file commit — the one mutation
       // we must never do with a stale token (it would push over a just-activated
@@ -1410,8 +1459,11 @@ export class ExportWorkflow extends WorkflowEntrypoint<Env, ExportParams> {
 
           const pr = await ensureDcsPr(
             dcsCfg,
-            `bible-editor: ${book} ${resource}${chapterLabel ? ` ch${chapterLabel}` : ""} → master`,
-            `Auto-opened by the bible-editor nightly export so the DCS validate-and-merge workflow can process \`${branch}\`. Holds the latest ${resource.toUpperCase()} edits for ${book}${chapterLabel ? ` (chapters ${chapterLabel})` : ""}.`,
+            `bible-editor: ${book} ${resource}${chapterLabel ? ` ch${chapterLabel}` : ""}${overwrite ? " (overwrite)" : ""} → master`,
+            `Auto-opened by the bible-editor nightly export so the DCS validate-and-merge workflow can process \`${branch}\`. Holds the latest ${resource.toUpperCase()} edits for ${book}${chapterLabel ? ` (chapters ${chapterLabel})` : ""}.` +
+              (overwrite
+                ? ` This run used overwrite mode: any Door43 edits inside chapters ${chapterLabel} made since the last sync were intentionally replaced by the editor's rows.`
+                : ""),
           );
           prNumber = pr.number;
           prReason = pr.reason;
