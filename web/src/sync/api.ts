@@ -2248,6 +2248,7 @@ export const api = {
       resource?: ExportRunResource;
       chapterStart?: number;
       chapterEnd?: number;
+      mode?: "merge" | "overwrite";
     },
     signal?: AbortSignal,
   ) => {
@@ -2257,12 +2258,14 @@ export const api = {
       resource?: ExportRunResource;
       chapterStart?: number;
       chapterEnd?: number;
+      mode?: "merge" | "overwrite";
     } = {};
     if (opts?.shrinkOverride !== undefined) body.shrinkOverride = opts.shrinkOverride;
     if (opts?.book) body.book = opts.book;
     if (opts?.resource) body.resource = opts.resource;
     if (opts?.chapterStart !== undefined) body.chapterStart = opts.chapterStart;
     if (opts?.chapterEnd !== undefined) body.chapterEnd = opts.chapterEnd;
+    if (opts?.mode !== undefined) body.mode = opts.mode;
     return request<{ id: string; status: string }>(`/api/exports/run`, {
       method: "POST",
       body: JSON.stringify(body),

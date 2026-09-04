@@ -123,8 +123,11 @@ import {
   DialogContent,
   DialogTitle,
   FormControlLabel,
+  FormLabel,
   Link,
   MenuItem,
+  Radio,
+  RadioGroup,
   Snackbar,
   Switch,
   Table,
@@ -413,6 +416,7 @@ function snapshotTargetLabel(book: string, resource: string, contextLabel: strin
 // ── export scope (resource + chapter range) ──────────────────────────────────
 
 type ExportRunResourceOption = "all" | ExportRunResource;
+type ExportRunMode = "merge" | "overwrite";
 const EXPORT_RESOURCE_OPTIONS: ExportRunResourceOption[] = ["all", "tn", "tq", "twl", "ult", "ust"];
 // Chapter scoping is a server-side restriction (api/src/exports.ts) — only
 // these three resources are per-verse rows a chapter range can slice.
@@ -443,6 +447,8 @@ function ExportScopeFields({
   onChapterInputChange,
   shrinkOverride,
   onShrinkOverrideChange,
+  mode,
+  onModeChange,
   disabled,
 }: {
   book: string;
@@ -452,6 +458,8 @@ function ExportScopeFields({
   onChapterInputChange: (v: string) => void;
   shrinkOverride: boolean;
   onShrinkOverrideChange: (v: boolean) => void;
+  mode: ExportRunMode;
+  onModeChange: (v: ExportRunMode) => void;
   disabled: boolean;
 }) {
   const { t } = useTranslation();
@@ -510,17 +518,56 @@ function ExportScopeFields({
         sx={{ mt: 2 }}
       />
       {chapterAllowed && chapterProvided && (
-        <FormControlLabel
-          sx={{ mt: 1 }}
-          control={
-            <Checkbox
-              checked={shrinkOverride}
+        <>
+          <FormLabel component="legend" sx={{ mt: 1.5, fontSize: "0.8125rem" }}>
+            {t("adminPages.workflow.exportModeLabel")}
+          </FormLabel>
+          <RadioGroup
+            value={mode}
+            onChange={(e) => onModeChange(e.target.value as ExportRunMode)}
+            sx={{ mt: 0.25 }}
+          >
+            <FormControlLabel
+              value="merge"
               disabled={disabled}
-              onChange={(e) => onShrinkOverrideChange(e.target.checked)}
+              control={<Radio size="small" />}
+              label={
+                <Box>
+                  <Typography variant="body2">{t("adminPages.workflow.exportModeMergeLabel")}</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                    {t("adminPages.workflow.exportModeMergeHelp")}
+                  </Typography>
+                </Box>
+              }
+              sx={{ alignItems: "flex-start", mt: 0.5 }}
             />
-          }
-          label={<Typography variant="body2">{t("adminPages.workflow.chapterScopeShrinkOverrideLabel")}</Typography>}
-        />
+            <FormControlLabel
+              value="overwrite"
+              disabled={disabled}
+              control={<Radio size="small" />}
+              label={
+                <Box>
+                  <Typography variant="body2">{t("adminPages.workflow.exportModeOverwriteLabel")}</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                    {t("adminPages.workflow.exportModeOverwriteHelp")}
+                  </Typography>
+                </Box>
+              }
+              sx={{ alignItems: "flex-start", mt: 0.5 }}
+            />
+          </RadioGroup>
+          <FormControlLabel
+            sx={{ mt: 1 }}
+            control={
+              <Checkbox
+                checked={shrinkOverride}
+                disabled={disabled}
+                onChange={(e) => onShrinkOverrideChange(e.target.checked)}
+              />
+            }
+            label={<Typography variant="body2">{t("adminPages.workflow.chapterScopeShrinkOverrideLabel")}</Typography>}
+          />
+        </>
       )}
     </>
   );
@@ -577,6 +624,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
   const [exportResource, setExportResource] = useState<ExportRunResourceOption>("all");
   const [exportChapterInput, setExportChapterInput] = useState("");
   const [exportShrinkOverride, setExportShrinkOverride] = useState(false);
+  const [exportMode, setExportMode] = useState<ExportRunMode>("merge");
 
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -748,6 +796,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
     setExportResource("all");
     setExportChapterInput("");
     setExportShrinkOverride(false);
+    setExportMode("merge");
     setConfirmRun(true);
     // Refetch on every open: a failed or stale list would otherwise stick
     // until remount (imports elsewhere add books while this screen is up).
@@ -781,6 +830,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
     if (!(next !== "all" && CHAPTER_SCOPABLE_RESOURCES.has(exportResource))) {
       setExportChapterInput("");
       setExportShrinkOverride(false);
+      setExportMode("merge");
     }
   };
 
@@ -789,12 +839,16 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
     if (!(exportBook !== "all" && CHAPTER_SCOPABLE_RESOURCES.has(next))) {
       setExportChapterInput("");
       setExportShrinkOverride(false);
+      setExportMode("merge");
     }
   };
 
   const handleExportChapterInputChange = (v: string) => {
     setExportChapterInput(v);
-    if (v.trim() === "") setExportShrinkOverride(false);
+    if (v.trim() === "") {
+      setExportShrinkOverride(false);
+      setExportMode("merge");
+    }
   };
 
   const handleRunConfirmed = async () => {
@@ -806,6 +860,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
         chapterStart?: number;
         chapterEnd?: number;
         shrinkOverride?: boolean;
+        mode?: ExportRunMode;
       } = {};
       if (exportBook !== "all") opts.book = exportBook;
       if (exportResource !== "all") opts.resource = exportResource;
@@ -813,6 +868,7 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
         opts.chapterStart = exportChapterScope.scope.chapterStart;
         opts.chapterEnd = exportChapterScope.scope.chapterEnd;
         if (exportShrinkOverride) opts.shrinkOverride = true;
+        opts.mode = exportMode;
       }
       const res = await api.exportsRun(Object.keys(opts).length > 0 ? opts : undefined);
       setRunInfo(res);
@@ -829,9 +885,11 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
               ? t("adminPages.workflow.msgChapterScopeUnsupportedResource")
               : body?.error === "invalid_chapter_range"
                 ? t("adminPages.workflow.msgInvalidChapterRange")
-                : e instanceof ApiError
-                  ? t("adminPages.workflow.msgExportStartFailedHttp", { status: e.status })
-                  : t("adminPages.workflow.msgExportStartFailed"),
+                : body?.error === "overwrite_requires_chapter_scope"
+                  ? t("adminPages.workflow.msgOverwriteRequiresChapterScope")
+                  : e instanceof ApiError
+                    ? t("adminPages.workflow.msgExportStartFailedHttp", { status: e.status })
+                    : t("adminPages.workflow.msgExportStartFailed"),
       );
     } finally {
       setRunBusy(false);
@@ -1470,13 +1528,17 @@ export default function AdminWorkflowScreen({ role, me }: AdminWorkflowScreenPro
             onChapterInputChange={handleExportChapterInputChange}
             shrinkOverride={exportShrinkOverride}
             onShrinkOverrideChange={setExportShrinkOverride}
+            mode={exportMode}
+            onModeChange={setExportMode}
             disabled={runBusy}
           />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmRun(false)}>{t("adminPages.workflow.notNow")}</Button>
           <Button variant="contained" disabled={runBusy || chapterScopeBlocked} onClick={() => void handleRunConfirmed()}>
-            {t("adminPages.workflow.runExportButton")}
+            {chapterScopeAllowed && exportChapterProvided && exportMode === "overwrite"
+              ? t("adminPages.workflow.runExportButtonOverwrite")
+              : t("adminPages.workflow.runExportButton")}
           </Button>
         </DialogActions>
       </Dialog>
