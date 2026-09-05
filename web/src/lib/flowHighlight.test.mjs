@@ -151,31 +151,31 @@ test("occurrence -1 marks every instance", () => {
 test("verse with no zaln milestones falls back to plain text", () => {
   const bare = [w("Jesus", "1", "1"), x(" "), w("answered", "1", "1"), x(".")];
   const segs = flowLaneSegments(bare, "Jesus answered.", "וַיַּעַן", 1);
-  assert.deepEqual(segs, [{ text: "Jesus answered.", marked: false }]);
+  assert.deepEqual(segs, [{ kind: "text", text: "Jesus answered.", marked: false }]);
 });
 
 test("no verse tree at all falls back to plain text", () => {
   assert.deepEqual(flowLaneSegments(null, "Jesus answered.", "וַיַּעַן", 1), [
-    { text: "Jesus answered.", marked: false },
+    { kind: "text", text: "Jesus answered.", marked: false },
   ]);
   assert.deepEqual(flowLaneSegments([], "Jesus answered.", "וַיַּעַן", 1), [
-    { text: "Jesus answered.", marked: false },
+    { kind: "text", text: "Jesus answered.", marked: false },
   ]);
 });
 
 test("no quote leaves the lane exactly as before (plain text, no marks)", () => {
   assert.deepEqual(flowLaneSegments(MRK_13_2_ULT_VO, MRK_13_2_ULT_PLAIN, null, 1), [
-    { text: MRK_13_2_ULT_PLAIN, marked: false },
+    { kind: "text", text: MRK_13_2_ULT_PLAIN, marked: false },
   ]);
   assert.deepEqual(flowLaneSegments(MRK_13_2_ULT_VO, MRK_13_2_ULT_PLAIN, "", 1), [
-    { text: MRK_13_2_ULT_PLAIN, marked: false },
+    { kind: "text", text: MRK_13_2_ULT_PLAIN, marked: false },
   ]);
 });
 
 test("a quote that does not resolve in this lane falls back to plain text", () => {
   assert.deepEqual(
     flowLaneSegments(MRK_13_2_ULT_VO, MRK_13_2_ULT_PLAIN, "ουδεποτε", 1, MRK_13_2_UGNT_VO),
-    [{ text: MRK_13_2_ULT_PLAIN, marked: false }],
+    [{ kind: "text", text: MRK_13_2_ULT_PLAIN, marked: false }],
   );
 });
 
@@ -252,9 +252,11 @@ test("combined span marks one token per resolving verse, not the shared surface 
   );
 });
 
-test("the verse boundary is an unmarked segment naming the next verse (#351)", () => {
+test("the verse boundary is a discriminated marker segment naming the next verse (#351/#387)", () => {
   // A discontinuous ref ("13:26,28") renders two non-adjacent verses; without a
-  // marker they read as one sentence with the skipped verse invisible.
+  // marker they read as one sentence with the skipped verse invisible. The
+  // marker carries a `kind: "verseMarker"` discriminator so the lane can render
+  // it as styled chrome (#387) rather than as plain scripture text.
   const segs = flowLaneSegmentsAcross(
     [
       { verse: 26, verseObjects: SPAN_V26_VO, plainText: SPAN_V26_PLAIN, sourceVerseObjects: null },
@@ -263,10 +265,21 @@ test("the verse boundary is an unmarked segment naming the next verse (#351)", (
     "ἐγώ",
     1,
   );
-  const boundary = segs.find((s) => s.text === verseBoundaryText(28));
-  assert.ok(boundary, "a segment carries the boundary marker for verse 28");
+  const boundary = segs.find((s) => s.kind === "verseMarker");
+  assert.ok(boundary, "a segment carries the boundary marker between the verses");
+  assert.equal(boundary.verse, 28, "the marker names the verse that follows the gap");
   assert.equal(boundary.marked, false, "the boundary marker is never highlighted");
-  assert.ok(joined(segs).includes("28"), "the skipped-verse gap is visible in the text");
+  assert.equal(
+    boundary.text,
+    verseBoundaryText(28),
+    "keeps the plain-text form so the concatenated segment stream still reproduces the joined plain text",
+  );
+  // Every other segment stays a plain text run.
+  assert.ok(
+    segs.filter((s) => s.kind === "verseMarker").length === 1,
+    "exactly one boundary between two slices",
+  );
+  assert.ok(joined(segs).includes("28"), "the skipped-verse gap is visible in the text stream");
 });
 
 test("a single slice carries no boundary marker", () => {

@@ -1947,6 +1947,7 @@
   "flowScripture": {
     "target": "Target",
     "title": "Scripture",
+    "verseBoundary": "Verse {{verse}}",
     "backToPackage": "Back to {{book}} package",
     "subTranslation": "{{book}} {{chapter}} · {{source}} to {{target}}",
     "subPlain": "{{book}} {{chapter}} · {{target}}",
