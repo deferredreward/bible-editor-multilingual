@@ -329,7 +329,14 @@ export function Shell({
       // (see api/src/rows.ts), which the version guard above drops. The review
       // chip is drawn from a separate fetch (useBookLint), so nudge it via the
       // same debounced refetch the outbox listener below uses.
-      scheduleLintRefetch();
+      //
+      // Only TN upserts can change the lint set: the book-lint endpoint reads
+      // TN + ULT/UST rows only (api/src/bookImport.ts), and ULT/UST are verses
+      // handled by onVerseUpdate, not here. So gate on TN — a TQ/TWL broadcast
+      // would otherwise trigger a book-wide fetch+parse that can never move the
+      // report. This mirrors the outbox listener below (t.rowKind === "tn"), and
+      // the review-flag clear noted above is TN-only, so it still refetches.
+      if (kind === "tn") scheduleLintRefetch();
     },
     onDelete: (kind, id) => applyLocalRowDelete(kind, id),
     onVerseUpdate: (verse) => {
