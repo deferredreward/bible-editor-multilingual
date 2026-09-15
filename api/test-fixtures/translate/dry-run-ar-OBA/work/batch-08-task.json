@@ -1,0 +1,11 @@
+{
+  "task": "translate-tn-batch",
+  "book": "OBA",
+  "targetLang": "ar",
+  "targetLangName": "Arabic",
+  "direction": "rtl",
+  "rowCount": 15,
+  "batchFile": "C:\\Users\\benja\\Documents\\GitHub\\bp-bot\\translate-pipeline\\dry-run-ar-OBA\\work\\batch-08.tsv",
+  "packFile": "C:\\Users\\benja\\Documents\\GitHub\\bp-bot\\translate-pipeline\\dry-run-ar-OBA\\work\\batch-08-pack.md",
+  "outputFile": "C:\\Users\\benja\\Documents\\GitHub\\bp-bot\\translate-pipeline\\dry-run-ar-OBA\\work\\batch-08-out.tsv"
+}
