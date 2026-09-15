@@ -85,7 +85,10 @@ function QuoteBlock({
 }) {
   return (
     <Box
-      dir={original && rtl ? "rtl" : undefined}
+      // Pin direction so quotes never inherit the UI chrome's dir (rtl under an
+      // Arabic UI): the original follows its script (Hebrew rtl / Greek ltr),
+      // while target-lane and note text follow their own content (issue #449).
+      dir={original ? (rtl ? "rtl" : "ltr") : "auto"}
       sx={{
         fontFamily: original ? ORIGINAL_FONT_STACK : SCRIPTURE_FONT_STACK,
         fontSize: original ? "1.375rem" : "0.97rem",
@@ -185,7 +188,9 @@ function NoteBody({ text }: { text: string | null }) {
   }
   const lines = text.replace(/\\n/g, "\n").split("\n");
   return (
-    <Box sx={{ fontSize: "0.86rem", lineHeight: 1.6, textAlign: "start" }}>
+    // dir="auto" follows the note's own language (Arabic notes lay out RTL)
+    // rather than inheriting the UI chrome's direction (issue #449).
+    <Box dir="auto" sx={{ fontSize: "0.86rem", lineHeight: 1.6, textAlign: "start" }}>
       {lines.map((line, i) =>
         line.trim() ? (
           <Typography key={i} variant="body2" sx={{ marginBlockEnd: 1 }}>
@@ -244,7 +249,7 @@ function ResourceRowButton({
       >
         {item.tag}
       </Box>
-      <Box component="span" sx={{ color: "text.secondary" }}>
+      <Box component="span" dir="auto" sx={{ color: "text.secondary" }}>
         {item.summary || "—"}
       </Box>
     </Box>
