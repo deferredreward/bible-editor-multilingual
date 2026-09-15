@@ -10,6 +10,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import Anthropic from "@anthropic-ai/sdk";
 import * as llm from "./llm.ts";
 import * as core from "./core.ts";
 import { parseTnTsv, sliceChapterRows } from "./tsvCodec.ts";
@@ -230,9 +231,11 @@ const THROWN = [
 
 for (const [code, retryable, shape] of THROWN) {
   test(`a transport error classified ${code} surfaces retryable=${retryable} and never carries the key`, async () => {
+    let thrown = null;
     const { calls, transport } = stubTransport(() => {
       const e = new Error(`${shape.message || shape.error?.error?.message} for key ${KEY}`);
       Object.assign(e, shape, { message: e.message });
+      thrown = e;
       throw e;
     });
     await assert.rejects(
@@ -245,7 +248,10 @@ for (const [code, retryable, shape] of THROWN) {
         assert.equal(err.provider, "claude");
         assert.ok(err.message.startsWith(`claude ${code}: `), err.message);
         assert.ok(!err.message.includes(KEY), `key leaked: ${err.message}`);
-        assert.ok(!String(err.cause?.message ?? "").includes("[redacted]") || true); // cause is kept for logs; message is what gets persisted
+        assert.ok(err.message.includes("[redacted]"), `scrubbed marker present: ${err.message}`);
+        assert.equal(err.cause, thrown, "the raw provider error is kept as cause (not persisted by the Workflow)");
+        assert.equal(err.status, shape.status ?? undefined);
+        assert.equal(err.llmCalls, undefined, "no billed call to account for when the transport itself failed");
         if (code === "rate_limited") assert.equal(err.retryAfterSeconds, 9);
         return true;
       },
@@ -301,28 +307,63 @@ test("a truncating stop reason becomes output_too_long, per provider table", () 
   assert.deepEqual(llm.TRUNCATED_STOP_REASONS, { claude: ["max_tokens"], openai: ["max_output_tokens"], xai: ["length"], gemini: ["MAX_TOKENS"] });
 });
 
-test("output_too_long with reasoning enabled retries once with thinking dropped (request-shape change, no wait)", async () => {
+test("output_too_long with reasoning enabled retries once at LOW effort, not with thinking omitted (F1)", async () => {
+  // Deviation from translate-llm.js: omitting `thinking` on Opus 5 / Sonnet 5
+  // runs adaptive at default effort high, so the bot's "retry without
+  // reasoning" retried with MORE thinking. The retry keeps adaptive and lowers
+  // effort to low; the discarded draft's usage is still accounted for.
   const { calls, transport } = stubTransport((args, n) => {
     if (n === 1) {
       assert.equal(args.thinking, "medium");
-      return { text: wrapped("partial"), usage: { inputTokens: 1, outputTokens: 1 }, stopReason: "max_tokens" };
+      return { text: wrapped("partial"), usage: { inputTokens: 1000, outputTokens: 32000 }, stopReason: "max_tokens" };
     }
     return ok(`${HEADER}\n${ROW}`);
   });
-  const { output, call } = await llm.runOne(deps({ transport }), { skill: "translate-tn", taskJson: "{}", packMarkdown: "", sourceText: "" });
+  const { output, call, discardedCalls } = await llm.runOne(deps({ transport }), { skill: "translate-tn", taskJson: "{}", packMarkdown: "", sourceText: "" });
   assert.equal(calls.length, 2);
-  assert.equal(calls[1].thinking, "none");
+  assert.equal(calls[1].thinking, llm.TRUNCATION_RETRY_THINKING);
+  assert.equal(llm.TRUNCATION_RETRY_THINKING, "low");
   assert.equal(output, `${HEADER}\n${ROW}\n`);
   assert.equal(call.model, "claude-sonnet-5");
+  assert.equal(discardedCalls.length, 1);
+  assert.deepEqual(discardedCalls[0].usage, { inputTokens: 1000, outputTokens: 32000 });
+  assert.equal(discardedCalls[0].costUsd, 1000 / 1e6 * 3 + 32000 / 1e6 * 15);
 });
 
-test("output_too_long with no reasoning enabled fails after one truncation (non-retryable)", async () => {
+test("output_too_long: no low-effort retry when the draft already ran at low or without thinking (F1)", async () => {
+  for (const thinking of ["low", "none", null]) {
+    const { calls, transport } = stubTransport(() => ({ text: wrapped("partial"), usage: { inputTokens: 1, outputTokens: 1 }, stopReason: "max_tokens" }));
+    await assert.rejects(
+      llm.runOne(deps({ transport, thinking }), { skill: "translate-tn", taskJson: "{}", packMarkdown: "", sourceText: "" }),
+      (err) => err.code === "output_too_long" && err.retryable === false && /32000 tokens/.test(err.message) && err.llmCalls.length === 1,
+      String(thinking),
+    );
+    assert.equal(calls.length, 1, `thinking=${thinking}: same request would only truncate again`);
+  }
+});
+
+test("output_too_long: no retry for Haiku 4.5 (no adaptive thinking to lower)", async () => {
   const { calls, transport } = stubTransport(() => ({ text: wrapped("partial"), usage: { inputTokens: 1, outputTokens: 1 }, stopReason: "max_tokens" }));
   await assert.rejects(
-    llm.runOne(deps({ transport, thinking: "none" }), { skill: "translate-tn", taskJson: "{}", packMarkdown: "", sourceText: "" }),
-    (err) => err.code === "output_too_long" && err.retryable === false && /32000 tokens/.test(err.message),
+    llm.runOne(deps({ transport, model: "claude-haiku-4-5" }), { skill: "translate-tn", taskJson: "{}", packMarkdown: "", sourceText: "" }),
+    (err) => err.code === "output_too_long",
   );
   assert.equal(calls.length, 1);
+});
+
+test("output_too_long after the low-effort retry reports BOTH billed calls (F3)", async () => {
+  const { calls, transport } = stubTransport(() => ({ text: wrapped("partial"), usage: { inputTokens: 100, outputTokens: 32000 }, stopReason: "max_tokens" }));
+  await assert.rejects(
+    llm.runOne(deps({ transport }), { skill: "translate-tn", taskJson: "{}", packMarkdown: "", sourceText: "" }),
+    (err) => {
+      assert.equal(err.code, "output_too_long");
+      assert.equal(err.llmCalls.length, 2);
+      assert.equal(err.llmCalls[0].usage.outputTokens + err.llmCalls[1].usage.outputTokens, 64000);
+      assert.equal(err.llmCalls[1].model, "claude-sonnet-5");
+      return true;
+    },
+  );
+  assert.equal(calls.length, 2);
 });
 
 test("a reply with no extractable output becomes empty_output (non-retryable)", async () => {
@@ -454,7 +495,7 @@ test("claude adapter omits thinking/effort for Haiku 4.5 and with thinking 'none
   assert.deepEqual(seen[3].output_config, { effort: "medium" }, "unknown level falls back to medium like the bot");
 });
 
-test("claude adapter: a stop_reason of max_tokens surfaces as output_too_long after the thinking-drop retry", async () => {
+test("claude adapter: a stop_reason of max_tokens surfaces as output_too_long after a retry at adaptive + effort low (F1)", async () => {
   const seen = [];
   const client = { messages: { stream(params) { seen.push(params); return { finalMessage: async () => ({ content: [{ type: "text", text: wrapped("partial") }], usage: { input_tokens: 1, output_tokens: 32000 }, stop_reason: "max_tokens" }) }; } } };
   const transport = llm.makeClaudeTransport(() => client);
@@ -463,7 +504,123 @@ test("claude adapter: a stop_reason of max_tokens surfaces as output_too_long af
     (err) => err.code === "output_too_long",
   );
   assert.equal(seen.length, 2);
-  assert.ok("thinking" in seen[0] && !("thinking" in seen[1]));
+  assert.deepEqual(seen[0].thinking, { type: "adaptive" });
+  assert.deepEqual(seen[0].output_config, { effort: "medium" });
+  assert.deepEqual(seen[1].thinking, { type: "adaptive" }, "retry keeps adaptive thinking (omitting it would mean default effort high)");
+  assert.deepEqual(seen[1].output_config, { effort: "low" }, "retry lowers effort instead of disabling thinking");
+});
+
+// ---------------------------------------------------------------------------
+// Real SDK error objects through the adapter's classification path (F2/F8)
+// ---------------------------------------------------------------------------
+
+function failingClient(err) {
+  return { messages: { stream() { throw err; } } };
+}
+function streamRejectingClient(err) {
+  return { messages: { stream() { return { finalMessage: async () => { throw err; } }; } } };
+}
+const runViaClient = (client, over = {}) => llm.runOne(deps({ transport: llm.makeClaudeTransport(() => client), ...over }), { skill: "translate-tn", taskJson: "{}", packMarkdown: "", sourceText: "" });
+
+test("SDK RateLimitError (429 + Retry-After) → rate_limited, retryable, retryAfterSeconds read from Headers", async () => {
+  const body = { type: "error", error: { type: "rate_limit_error", message: "This request would exceed your rate limit" } };
+  const err = new Anthropic.RateLimitError(429, body, "429 rate limit", new Headers({ "retry-after": "12" }));
+  assert.ok(err instanceof Anthropic.APIError);
+  await assert.rejects(runViaClient(failingClient(err)), (e) => {
+    assert.equal(e.code, "rate_limited");
+    assert.equal(e.retryable, true);
+    assert.equal(e.status, 429);
+    assert.equal(e.retryAfterSeconds, 12);
+    assert.equal(e.cause, err);
+    return true;
+  });
+});
+
+test("SDK APIUserAbortError → timeout, retryable", async () => {
+  await assert.rejects(runViaClient(streamRejectingClient(new Anthropic.APIUserAbortError())), (e) => e.code === "timeout" && e.retryable === true);
+});
+
+test("SDK AuthenticationError / NotFoundError / InternalServerError → invalid_key / model_not_found / provider_overloaded", async () => {
+  const mk = (Cls, status, type, message) => new Cls(status, { type: "error", error: { type, message } }, message, new Headers());
+  await assert.rejects(runViaClient(failingClient(mk(Anthropic.AuthenticationError, 401, "authentication_error", "invalid x-api-key"))), (e) => e.code === "invalid_key" && !e.retryable);
+  await assert.rejects(runViaClient(failingClient(mk(Anthropic.NotFoundError, 404, "not_found_error", "model: claude-sonnet-5"))), (e) => e.code === "model_not_found" && !e.retryable);
+  await assert.rejects(runViaClient(failingClient(mk(Anthropic.InternalServerError, 529, "overloaded_error", "Overloaded"))), (e) => e.code === "provider_overloaded" && e.retryable);
+  await assert.rejects(runViaClient(failingClient(mk(Anthropic.InternalServerError, 500, "api_error", "Internal server error"))), (e) => e.code === "provider_overloaded" && e.retryable && e.status === 500);
+});
+
+test("HTTP 413 request_too_large → context_too_long (F2)", async () => {
+  const err = Anthropic.APIError.generate(413, { type: "error", error: { type: "request_too_large", message: "Request exceeds the maximum size" } }, "413", new Headers());
+  assert.equal(err.status, 413);
+  await assert.rejects(runViaClient(failingClient(err)), (e) => e.code === "context_too_long" && e.retryable === false && e.status === 413);
+  assert.equal(llm.classifyProviderError({ status: 413, message: "request too large" }).code, "context_too_long");
+});
+
+test("mid-stream drop: MessageStream-wrapped AnthropicError with the undici code two causes deep → network_error, retryable (F2)", async () => {
+  // MessageStream.js:53-55 wraps a foreign error as AnthropicError(message) with cause = the raw TypeError,
+  // and undici parks its code on THAT error's cause: err.cause.cause.code.
+  const raw = new TypeError("fetch failed", { cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }) });
+  const wrapped = new Anthropic.AnthropicError(raw.message);
+  wrapped.cause = raw;
+  await assert.rejects(runViaClient(streamRejectingClient(wrapped)), (e) => {
+    assert.equal(e.code, "network_error");
+    assert.equal(e.retryable, true);
+    assert.equal(e.status, undefined);
+    assert.ok(e.message.includes("fetch failed") && e.message.includes("other side closed"), e.message);
+    return true;
+  });
+  assert.equal(llm.classifyProviderError({ message: "x", cause: { cause: { cause: { code: "ECONNRESET" } } } }).code, "network_error");
+});
+
+test("mid-stream drop: code-less workerd / SDK-reader messages → network_error, retryable (F2)", async () => {
+  for (const msg of [
+    "Network connection lost.",
+    "terminated",
+    "stream ended without producing a Message with role=assistant",
+    "request ended without sending any chunks",
+  ]) {
+    const err = new Anthropic.AnthropicError(msg);
+    await assert.rejects(runViaClient(streamRejectingClient(err)), (e) => e.code === "network_error" && e.retryable === true, msg);
+    assert.equal(llm.classifyProviderError(err).code, "network_error", msg);
+  }
+  // With a status the same words are NOT reinterpreted as a network drop.
+  assert.equal(llm.classifyProviderError({ status: 400, message: "terminated" }).code, "provider_error");
+  // An SDK APIConnectionError carries its cause; still network.
+  const conn = new Anthropic.APIConnectionError({ message: "Connection error.", cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }) });
+  assert.equal(llm.classifyProviderError(conn).code, "network_error");
+  assert.equal(llm.classifyProviderError(new Anthropic.APIConnectionTimeoutError()).code, "timeout");
+});
+
+// ---------------------------------------------------------------------------
+// Discarded-call accounting (F3)
+// ---------------------------------------------------------------------------
+
+test("runBatch counts the discarded truncated draft in llmCalls and calls, separately from attempts (F3)", async () => {
+  const batch = makeBatch();
+  const { calls, transport } = stubTransport((args, n) => (n === 1
+    ? { text: wrapped("partial"), usage: { inputTokens: 700, outputTokens: 32000 }, stopReason: "max_tokens" }
+    : { text: wrapped(`${HEADER}\n${ROW}`), usage: { inputTokens: 700, outputTokens: 300 }, stopReason: "end_turn" }));
+  const res = await llm.runBatch(deps({ transport }), batch, { resource, skill: "translate-tn" });
+  assert.equal(res.attempts, 1, "one validated draft/repair pass");
+  assert.equal(res.calls, 2, "two billed provider calls");
+  assert.equal(calls.length, 2);
+  assert.equal(res.llmCalls.length, 2);
+  assert.deepEqual(res.llmCalls.map((c) => c.usage.outputTokens), [32000, 300]);
+  const usage = llm.newLlmUsage("claude", "claude-sonnet-5");
+  for (const c of res.llmCalls) llm.addLlmCall(usage, c);
+  assert.equal(usage.calls, 2);
+  assert.equal(usage.outputTokens, 32300);
+  assert.ok(Math.abs(usage.estimatedCostUsd - ((1400 / 1e6) * 3 + (32300 / 1e6) * 15)) < 1e-9, String(usage.estimatedCostUsd));
+});
+
+test("checks_failed and empty_output carry every billed call on the error (F3)", async () => {
+  const batch = makeBatch();
+  const { transport } = stubTransport(() => ok(`${HEADER}\n1:1\tzz99\t\t\tx\t1\tترجمة`));
+  await assert.rejects(llm.runBatch(deps({ transport }), batch, { resource, skill: "translate-tn" }), (err) => err.code === "checks_failed" && err.llmCalls.length === 2);
+  const empty = stubTransport(() => ({ text: `${llm.BEGIN_OUTPUT}\n\n${llm.END_OUTPUT}`, usage: { inputTokens: 5, outputTokens: 1 }, stopReason: "end_turn" }));
+  await assert.rejects(llm.runBatch(deps({ transport: empty.transport }), batch, { resource, skill: "translate-tn" }), (err) => err.code === "empty_output" && err.llmCalls.length === 1 && err.llmCalls[0].usage.inputTokens === 5);
+  // A transport failure on the repair pass still reports the first (billed) draft.
+  const flaky = stubTransport((args, n) => { if (n === 1) return ok(`${HEADER}\n1:1\tzz99\t\t\tx\t1\tترجمة`); const e = new Error("Overloaded"); e.status = 529; throw e; });
+  await assert.rejects(llm.runBatch(deps({ transport: flaky.transport }), batch, { resource, skill: "translate-tn" }), (err) => err.code === "provider_overloaded" && err.retryable && err.llmCalls.length === 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -475,6 +632,7 @@ test("runBatch returns validated rows on a clean first draft (attempts=1)", asyn
   const { calls, transport } = stubTransport(() => ok(`${HEADER}\n${ROW}`));
   const res = await llm.runBatch(deps({ transport }), batch, { resource, skill: "translate-tn" });
   assert.equal(res.attempts, 1);
+  assert.equal(res.calls, 1);
   assert.ok(res.checks.ok);
   assert.equal(res.rows.length, 1);
   assert.equal(res.rows[0].Note, "ترجمة");

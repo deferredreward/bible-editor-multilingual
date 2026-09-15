@@ -78,12 +78,18 @@ export class TranslateProviderError extends Error {
   retryable: boolean;
   status?: number | null;
   retryAfterSeconds?: number | null;
+  /** Raw transport results that were paid for before the failure (priced into `llmCalls` by runOne). */
+  transportResults?: TransportResult[];
+  /** Priced calls made before the failure, so the report still accounts for spent tokens. */
+  llmCalls?: LlmCall[];
 
   constructor(
     code: ProviderErrorCode,
     provider: string,
     message: string,
-    { status, retryAfterSeconds, cause }: { status?: number | null; retryAfterSeconds?: number | null; cause?: unknown } = {},
+    { status, retryAfterSeconds, cause, transportResults }: {
+      status?: number | null; retryAfterSeconds?: number | null; cause?: unknown; transportResults?: TransportResult[];
+    } = {},
   ) {
     super(message, cause !== undefined ? { cause } : undefined);
     this.name = "TranslateProviderError";
@@ -93,6 +99,7 @@ export class TranslateProviderError extends Error {
     this.retryable = isRetryableCode(code);
     if (status != null) this.status = status;
     if (retryAfterSeconds != null) this.retryAfterSeconds = retryAfterSeconds;
+    if (transportResults && transportResults.length) this.transportResults = transportResults;
   }
 }
 
@@ -219,26 +226,51 @@ export function extractOutput(text: unknown): string {
 
 type AnyErr = Record<string, any> | null | undefined;
 
+// The error plus its `cause` chain (bounded). The SDK's MessageStream re-wraps
+// any non-Anthropic failure as AnthropicError(message) with `.cause` = the raw
+// error (MessageStream.js:53-55), and undici/workerd put their codes one level
+// deeper still (cause.cause.code) — so a two-level look-up misses them.
+function causeChain(err: AnyErr): Record<string, any>[] {
+  const out: Record<string, any>[] = [];
+  let cur: unknown = err;
+  for (let i = 0; cur && typeof cur === "object" && i < 6; i++) {
+    out.push(cur as Record<string, any>);
+    cur = (cur as Record<string, any>).cause;
+  }
+  return out;
+}
+
 function errorText(err: AnyErr): string {
   if (!err) return "";
   const parts = [
     err.message,
-    err.cause?.message,
+    ...causeChain(err).slice(1).map((c) => c.message),
     err.error?.message,
     err.error?.error?.message,
     err.response?.data?.error?.message,
   ];
-  return parts.filter(Boolean).join(" | ");
+  return parts.filter((p) => typeof p === "string" && p).join(" | ");
 }
 
 // Connection-level failures (DNS, reset, refused, broken pipe, undici's own
-// UND_ERR_* codes) surface via err.code or the wrapped err.cause.code — never
-// as an HTTP status — so they need their own check rather than riding the
+// UND_ERR_* codes) surface via `.code` somewhere on the cause chain — never as
+// an HTTP status — so they need their own check rather than riding the
 // status/text heuristics below.
 const NETWORK_ERROR_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EAI_AGAIN", "EPIPE"]);
 function isNetworkErrorCode(code: unknown): boolean {
   return typeof code === "string" && (NETWORK_ERROR_CODES.has(code) || code.startsWith("UND_ERR_"));
 }
+function networkCodeOf(err: AnyErr): string {
+  for (const c of causeChain(err)) {
+    if (isNetworkErrorCode(c.code)) return c.code;
+  }
+  return "";
+}
+// workerd reports a dropped socket without any code ("Network connection
+// lost."), undici says "fetch failed" / "terminated", and the SDK's stream
+// reader says "stream ended without producing a Message" when the connection
+// drops mid-stream. All status-less, all worth a retry.
+const NETWORK_TEXT_RE = /network connection lost|\bterminated\b|fetch failed|stream ended|request ended without sending/i;
 
 function errorType(err: AnyErr): string {
   return String(err?.error?.error?.type || err?.error?.type || err?.code || err?.error?.code || "");
@@ -305,11 +337,14 @@ export function classifyProviderError(err: unknown): Classification {
       || /overloaded|unavailable|internal server error|server_error/i.test(tag)) {
     return { code: "provider_overloaded", status, retryAfterSeconds: parseRetryAfter(e) };
   }
-  if (status === 400 && /context|token limit|too long|too many tokens|maximum.{0,20}tokens|exceeds/i.test(tag)) {
+  // 413 request_too_large is the transport-level form of "prompt too big".
+  if (status === 413 || (status === 400 && /context|token limit|too long|too many tokens|maximum.{0,20}tokens|exceeds/i.test(tag))) {
     return { code: "context_too_long", status };
   }
-  const networkCode = (typeof e.code === "string" && e.code) || (typeof e.cause?.code === "string" && e.cause.code) || "";
-  if (isNetworkErrorCode(networkCode)) {
+  if (isNetworkErrorCode(networkCodeOf(e))) {
+    return { code: "network_error", status };
+  }
+  if (status == null && NETWORK_TEXT_RE.test(tag)) {
     return { code: "network_error", status };
   }
   return { code: "provider_error", status };
@@ -320,7 +355,7 @@ function providerError(
   code: ProviderErrorCode,
   message: unknown,
   apiKey: string | null | undefined,
-  extra: { status?: number | null; retryAfterSeconds?: number | null; cause?: unknown } = {},
+  extra: { status?: number | null; retryAfterSeconds?: number | null; cause?: unknown; transportResults?: TransportResult[] } = {},
 ): TranslateProviderError {
   const scrubbed = scrubSecrets(String(message == null ? "" : message), apiKey ? [apiKey] : []);
   return new TranslateProviderError(code, provider, `${provider} ${code}: ${scrubbed.slice(0, 200)}`, extra);
@@ -436,19 +471,40 @@ export const TRUNCATED_STOP_REASONS: Record<string, readonly string[]> = {
   gemini: ["MAX_TOKENS"],
 };
 
+/** The level a truncated draft is retried at (see callProvider). */
+export const TRUNCATION_RETRY_THINKING = "low";
+
+export type CallOutcome = TransportResult & {
+  /** Results that were paid for but superseded (the truncated first draft). */
+  discarded: TransportResult[];
+};
+
 /**
  * One provider call with classification. No backoff here: a retryable failure
  * is thrown as TranslateProviderError{retryable:true} for the Workflow step to
- * retry. A truncated reply with thinking enabled is re-run once with thinking
- * dropped (a request-shape change, not a wait) before failing output_too_long.
+ * retry. A truncated reply with thinking enabled is re-run once at LOW effort
+ * (a request-shape change, not a wait) before failing output_too_long.
+ *
+ * Deliberate deviation from translate-llm.js:512-518, which retried with
+ * `thinking = 'none'` and then OMITTED the thinking/output_config params. Per
+ * the claude-api skill, omitting `thinking` on Claude Opus 5 / Sonnet 5 runs
+ * adaptive thinking at the default effort `high` — i.e. the bot's "retry
+ * without reasoning" retried a truncated medium draft with MORE thinking under
+ * the same 32000-token cap. The skill also warns that `{type:"disabled"}` on
+ * Opus 5 is rejected at effort xhigh/max and has two failure modes (tool calls
+ * written into visible text, leaked thinking tags), recommending low/medium
+ * effort instead. So the retry keeps adaptive thinking and lowers effort to
+ * `low`. No retry when the model has no adaptive thinking (Haiku 4.5) or the
+ * draft already ran at `low`/none — the same request would only truncate again.
  */
 export async function callProvider(
   transport: Transport,
   { provider, model, system, user, thinking, apiKey, timeoutMs }: Omit<TransportRequest, "timeoutMs" | "signal"> & { timeoutMs?: number | null },
-): Promise<TransportResult> {
+): Promise<CallOutcome> {
   const budget = Math.min(Number(timeoutMs) || MAX_TIMEOUT_MS, MAX_TIMEOUT_MS);
   let effectiveThinking = thinking;
-  let retriedWithoutReasoning = false;
+  let retriedAtLowEffort = false;
+  const discarded: TransportResult[] = [];
 
   for (;;) {
     const controller = new AbortController();
@@ -465,19 +521,23 @@ export async function callProvider(
       const aborted = controller.signal.aborted;
       const { code, status, retryAfterSeconds } = aborted ? { code: "timeout" as const, status: null, retryAfterSeconds: null } : classifyProviderError(err);
       const message = aborted ? `no response within ${Math.round(budget / 1000)}s` : errorText(err as AnyErr) || String(err);
-      throw providerError(provider, code, message, apiKey, { status, retryAfterSeconds, cause: err });
+      throw providerError(provider, code, message, apiKey, { status, retryAfterSeconds, cause: err, transportResults: discarded });
     }
     clearTimeout(timer);
 
     if ((TRUNCATED_STOP_REASONS[provider] || []).includes(result.stopReason)) {
-      if (!retriedWithoutReasoning && effectiveThinking && effectiveThinking !== "none") {
-        retriedWithoutReasoning = true;
-        effectiveThinking = "none";
+      const currentEffort = effort(effectiveThinking);
+      const canLower = supportsAdaptiveThinking(model) && currentEffort !== null && currentEffort !== TRUNCATION_RETRY_THINKING;
+      if (!retriedAtLowEffort && canLower) {
+        discarded.push(result);
+        retriedAtLowEffort = true;
+        effectiveThinking = TRUNCATION_RETRY_THINKING;
         continue;
       }
-      throw providerError(provider, "output_too_long", `output truncated at ${MAX_OUTPUT_TOKENS} tokens (stop reason ${result.stopReason})`, apiKey);
+      throw providerError(provider, "output_too_long", `output truncated at ${MAX_OUTPUT_TOKENS} tokens (stop reason ${result.stopReason})`, apiKey,
+        { transportResults: [...discarded, result] });
     }
-    return result;
+    return { ...result, discarded };
   }
 }
 
@@ -527,11 +587,21 @@ export type LlmDeps = {
   transport?: Transport;
 };
 
+export type RunOneResult = {
+  /** The output with a trailing newline, exactly as the bot wrote it. */
+  output: string;
+  /** The call that produced `output`. */
+  call: LlmCall;
+  /** Paid-for calls superseded on the way (a truncated draft retried at low effort). */
+  discardedCalls: LlmCall[];
+};
+
 /**
  * One completion → extracted output text (bot: runOne, minus the file write).
- * Returns the output with a trailing newline, exactly as the bot wrote it.
+ * Every provider call that was billed is reported, either in the result or on
+ * the thrown TranslateProviderError's `llmCalls`, so cost never under-counts.
  */
-export async function runOne(deps: LlmDeps, input: PromptInput): Promise<{ output: string; call: LlmCall }> {
+export async function runOne(deps: LlmDeps, input: PromptInput): Promise<RunOneResult> {
   const { provider, apiKey } = deps;
   // The SDK falls back to ANTHROPIC_API_KEY from the environment; the Worker
   // must never bill anything but the org's own key.
@@ -543,19 +613,30 @@ export async function runOne(deps: LlmDeps, input: PromptInput): Promise<{ outpu
     throw providerError(provider, "model_not_found", (err as Error).message, apiKey);
   }
   const transport = deps.transport || transportFor(provider);
+  const price = (r: TransportResult): LlmCall => ({ usage: r.usage, costUsd: estimateCost(provider, model, r.usage as TokenUsage), model });
 
   const { system, user } = buildTranslatePrompt(input);
-  const result = await callProvider(transport, {
-    provider, model, system, user, thinking: deps.thinking, apiKey, timeoutMs: deps.timeoutMs,
-  });
+  let outcome: CallOutcome;
+  try {
+    outcome = await callProvider(transport, {
+      provider, model, system, user, thinking: deps.thinking, apiKey, timeoutMs: deps.timeoutMs,
+    });
+  } catch (err) {
+    if (err instanceof TranslateProviderError && err.transportResults) err.llmCalls = err.transportResults.map(price);
+    throw err;
+  }
 
-  const output = extractOutput(result.text);
+  const output = extractOutput(outcome.text);
   if (!output) {
-    throw providerError(provider, "empty_output", "model returned no output between the sentinel markers", apiKey);
+    const empty = providerError(provider, "empty_output", "model returned no output between the sentinel markers", apiKey,
+      { transportResults: [...outcome.discarded, outcome] });
+    empty.llmCalls = empty.transportResults!.map(price);
+    throw empty;
   }
   return {
     output: output.endsWith("\n") ? output : `${output}\n`,
-    call: { usage: result.usage, costUsd: estimateCost(provider, model, result.usage as TokenUsage), model },
+    call: price(outcome),
+    discardedCalls: outcome.discarded.map(price),
   };
 }
 
@@ -564,7 +645,10 @@ export type RunBatchOptions = { resource: TsvResource; skill: string };
 export type RunBatchResult = {
   rows: TsvRow[];
   checks: CheckResult;
+  /** Draft/repair passes that produced a validated output (1 or 2). */
   attempts: number;
+  /** Billed provider calls, including drafts discarded on truncation; >= attempts. */
+  calls: number;
   /** The validated output file content (batch-NN-out.tsv). */
   outputText: string;
   llmCalls: LlmCall[];
@@ -591,24 +675,33 @@ export async function runBatch(deps: LlmDeps, artifacts: RunBatchInput, { resour
       }\nRewrite ${artifacts.names.outputFile} fixing every violation. Translate ONLY these columns: ${cols}. Every other column must be byte-identical to the source.`
       : "";
 
-    const { output, call } = await runOne(deps, {
-      skill,
-      taskJson: artifacts.taskJson,
-      packMarkdown: artifacts.packMarkdown,
-      sourceText: artifacts.sourceTsv,
-      previousOutput: isRepair ? lastOutput : null,
-      repairNote: isRepair ? repairNote : null,
-    });
-    llmCalls.push(call);
+    let one: RunOneResult;
+    try {
+      one = await runOne(deps, {
+        skill,
+        taskJson: artifacts.taskJson,
+        packMarkdown: artifacts.packMarkdown,
+        sourceText: artifacts.sourceTsv,
+        previousOutput: isRepair ? lastOutput : null,
+        repairNote: isRepair ? repairNote : null,
+      });
+    } catch (err) {
+      // Calls billed by earlier attempts stay visible to the Workflow's accounting.
+      if (err instanceof TranslateProviderError) err.llmCalls = [...llmCalls, ...(err.llmCalls || [])];
+      throw err;
+    }
+    llmCalls.push(...one.discardedCalls, one.call);
 
-    const { rows, checks } = validateBatchOutput(output, artifacts.batchRows, {
+    const { rows, checks } = validateBatchOutput(one.output, artifacts.batchRows, {
       parse: resource.codec.parse, checkOpts: resource.checkOpts,
     });
-    if (checks.ok) return { rows, checks, attempts: attempt, outputText: output, llmCalls };
+    if (checks.ok) return { rows, checks, attempts: attempt, calls: llmCalls.length, outputText: one.output, llmCalls };
     lastChecks = checks;
-    lastOutput = output;
+    lastOutput = one.output;
   }
   const summary = lastChecks!.errors.slice(0, 5).map((e) => `[${e.check}] ${e.rowId}: ${e.message}`).join("; ");
-  throw new TranslateProviderError("checks_failed", deps.provider,
+  const failed = new TranslateProviderError("checks_failed", deps.provider,
     scrubSecrets(`batch ${artifacts.nn} still failing deterministic checks after repair pass: ${summary}`, [deps.apiKey]));
+  failed.llmCalls = llmCalls;
+  throw failed;
 }
