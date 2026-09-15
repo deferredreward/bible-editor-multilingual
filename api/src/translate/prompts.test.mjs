@@ -10,7 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
@@ -19,6 +19,15 @@ import {
 import { RESOURCE_TYPES } from "./resourceTypes.ts";
 
 const SKILLS_DIR = [process.env.BP_SKILLS_DIR, "C:/GH/bp-bot/bp-assistant-skills"].filter(Boolean).find((d) => existsSync(d));
+// The committed blob at the skills repo's origin/main is the source of truth
+// (what the bot deploys). The working tree is NOT: the local checkout is a live
+// repo that sibling sessions switch between branches, and comparing against it
+// once captured an unmerged review branch's wording.
+const SKILLS_REF = process.env.BP_SKILLS_REF || "origin/main";
+
+function committedSkill(skill) {
+  return execFileSync("git", ["-C", SKILLS_DIR, "show", `${SKILLS_REF}:.claude/skills/${skill}/SKILL.md`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
 
 test("every registry skill has a non-empty body with its iron rules", () => {
   for (const rt of Object.values(RESOURCE_TYPES)) {
@@ -68,18 +77,21 @@ test("stripFrontmatter matches the bot algorithm", () => {
   assert.equal(stripFrontmatter("---\nname: x\n---"), "");
 });
 
-test("checked-in bodies match the skills checkout byte-for-byte after LF normalization (skipped without a checkout)", (t) => {
+test("checked-in bodies match the committed skills blobs at origin/main byte-for-byte (skipped without a checkout)", (t) => {
   if (!SKILLS_DIR) {
     t.skip("no bp-assistant-skills checkout (set BP_SKILLS_DIR)");
     return;
   }
+  try {
+    execFileSync("git", ["-C", SKILLS_DIR, "rev-parse", SKILLS_REF], { stdio: "ignore" });
+  } catch {
+    t.skip(`${SKILLS_REF} not resolvable in ${SKILLS_DIR} (not a git checkout, or never fetched)`);
+    return;
+  }
   for (const [skill, body] of Object.entries(SKILL_BODIES)) {
-    const src = path.join(SKILLS_DIR, ".claude", "skills", skill, "SKILL.md");
-    assert.ok(existsSync(src), src);
-    // The skills repo stores LF; a core.autocrlf=true checkout hands back CRLF.
-    // Compare the LF form so this test is line-ending independent, like the generator.
-    const expected = stripFrontmatter(readFileSync(src, "utf8").replace(/\r\n/g, "\n"));
-    assert.equal(body, expected, `${skill} body drifted from ${src} — run node scripts/sync-translate-prompts.mjs`);
+    // LF-normalize like the generator so a CRLF-converting git config cannot matter.
+    const expected = stripFrontmatter(committedSkill(skill).replace(/\r\n/g, "\n"));
+    assert.equal(body, expected, `${skill} body drifted from ${SKILLS_REF} — run node scripts/sync-translate-prompts.mjs (git fetch the skills repo first)`);
     // The generator stamps sha256(body) into the module header; keep it honest.
     const modFile = fileURLToPath(new URL(`./prompts/${{ "translate-tn": "translateTn", "translate-tq": "translateTq", "translate-article": "translateArticle" }[skill]}.ts`, import.meta.url));
     const stamped = /sha256\(body\) = ([0-9a-f]{64})/.exec(readFileSync(modFile, "utf8"))?.[1];
