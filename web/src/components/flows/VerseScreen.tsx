@@ -65,7 +65,7 @@ import { useProjectConfig } from "../../hooks/useProjectConfig";
 import { SCRIPTURE_FONT_STACK } from "../../theme";
 import type { VerseDto } from "../../sync/api";
 import { isHebrewBook } from "../../lib/sourceSearch";
-import { versionLabel } from "../../lib/versionLabels";
+import { versionIsRtl, versionLabel } from "../../lib/versionLabels";
 import { buildVerseIndex, noteOverlapsRange, verseObjectsOf } from "../../lib/verseRange";
 
 export interface VerseScreenProps extends FlowScreenContext {
@@ -150,6 +150,14 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
   const originalLabel = versionLabel(projectConfig, sourceLane);
   const litLabel = versionLabel(projectConfig, "ULT");
   const simLabel = versionLabel(projectConfig, "UST");
+  // Target-lane direction follows the PROJECT's language (versionIsRtl), never
+  // the UI chrome: an English lane must read LTR even under an Arabic UI (whose
+  // document dir is rtl), and an Arabic lane must read RTL. Without an explicit
+  // dir the ULT/UST word rows inherit the page direction and lay out backwards
+  // (issue #449). ULT and UST share the project direction, but keep them
+  // separate for parity with ScriptureColumn.
+  const litRtl = versionIsRtl(projectConfig, "ULT");
+  const simRtl = versionIsRtl(projectConfig, "UST");
 
   const sourceIndex = useMemo(
     () => buildVerseIndex(data?.verses?.[sourceLane]),
@@ -500,6 +508,8 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
             simLabel={simLabel}
             originalLabel={originalLabel}
             rtl={rtl}
+            litRtl={litRtl}
+            simRtl={simRtl}
             selectedPositions={selectedPositions}
             markedPositions={markedPositions}
             litOn={litOn}
@@ -516,6 +526,8 @@ export default function VerseScreen({ role, book, chapter, verse }: VerseScreenP
             simLabel={simLabel}
             resources={resources}
             rtl={rtl}
+            litRtl={litRtl}
+            simRtl={simRtl}
             compact={!isTablet}
             selectedPositions={selectedPositions}
             onSelectWord={selectWord}
@@ -691,6 +703,8 @@ function ReadMode({
   simLabel,
   originalLabel,
   rtl,
+  litRtl,
+  simRtl,
   selectedPositions,
   markedPositions,
   litOn,
@@ -705,6 +719,8 @@ function ReadMode({
   simLabel: string;
   originalLabel: string;
   rtl: boolean;
+  litRtl: boolean;
+  simRtl: boolean;
   selectedPositions: Set<number>;
   markedPositions: Set<number>;
   litOn: Set<string>;
@@ -766,10 +782,10 @@ function ReadMode({
       )}
 
       <LaneLabel>{t("flowVerse.section.literal", { label: litLabel })}</LaneLabel>
-      <Prose lane={lit} on={litOn} onSelectGroup={onSelectGroup} laneName={litLabel} />
+      <Prose lane={lit} on={litOn} onSelectGroup={onSelectGroup} laneName={litLabel} rtl={litRtl} />
 
       <LaneLabel>{t("flowVerse.section.simplified", { label: simLabel })}</LaneLabel>
-      <Prose lane={sim} on={simOn} onSelectGroup={onSelectGroup} laneName={simLabel} />
+      <Prose lane={sim} on={simOn} onSelectGroup={onSelectGroup} laneName={simLabel} rtl={simRtl} />
     </Box>
   );
 }
@@ -778,11 +794,13 @@ function Prose({
   lane,
   on,
   laneName,
+  rtl,
   onSelectGroup,
 }: {
   lane: LaneModel;
   on: Set<string>;
   laneName: string;
+  rtl: boolean;
   onSelectGroup: (lane: LaneModel, groupId: string | null) => void;
 }) {
   const theme = useTheme();
@@ -806,6 +824,7 @@ function Prose({
 
   return (
     <Box
+      dir={rtl ? "rtl" : "ltr"}
       sx={{
         fontFamily: SCRIPTURE_FONT_STACK,
         fontSize: "1.06rem",
@@ -860,6 +879,8 @@ function AuditMode({
   simLabel,
   resources,
   rtl,
+  litRtl,
+  simRtl,
   compact,
   selectedPositions,
   onSelectWord,
@@ -871,6 +892,8 @@ function AuditMode({
   simLabel: string;
   resources: ResourceItem[];
   rtl: boolean;
+  litRtl: boolean;
+  simRtl: boolean;
   compact: boolean;
   selectedPositions: Set<number>;
   onSelectWord: (positions: number[]) => void;
@@ -1011,12 +1034,17 @@ function AuditMode({
                 >
                   {w.text}
                 </Box>
-                <Box component="td" sx={{ ...td, fontFamily: SCRIPTURE_FONT_STACK }}>
+                <Box
+                  component="td"
+                  dir={litRtl ? "rtl" : "ltr"}
+                  sx={{ ...td, fontFamily: SCRIPTURE_FONT_STACK, textAlign: "start" }}
+                >
                   {litCell}
                 </Box>
                 <Box
                   component="td"
-                  sx={{ ...td, fontFamily: SCRIPTURE_FONT_STACK, color: "text.secondary" }}
+                  dir={simRtl ? "rtl" : "ltr"}
+                  sx={{ ...td, fontFamily: SCRIPTURE_FONT_STACK, textAlign: "start", color: "text.secondary" }}
                 >
                   {simCell}
                 </Box>
@@ -1177,7 +1205,7 @@ function ResourceList({
                       {r.quote.replace(/&/g, " … ")}{" "}
                     </Box>
                   )}
-                  <Box component="span" sx={{ color: "text.secondary" }}>
+                  <Box component="span" dir="auto" sx={{ color: "text.secondary" }}>
                     {r.summary}
                   </Box>
                 </Box>
