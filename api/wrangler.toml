@@ -109,6 +109,13 @@ name = "bptranslate-export-dev"
 binding = "EXPORT_WORKFLOW"
 class_name = "ExportWorkflow"
 
+[[workflows]]
+# Internal translate runner (issue #445, docs/translate-internal-runner.md).
+# Dev-suffixed for the same reason as the export workflow above.
+name = "bible-editor-translate-dev"
+binding = "TRANSLATE_WORKFLOW"
+class_name = "TranslateWorkflow"
+
 # No crons on the default env: they're registered only on production (below)
 # so an accidental dev deploy can't double-fire the nightly export.
 # `wrangler dev --test-scheduled` exposes /__scheduled regardless.
@@ -235,6 +242,11 @@ new_classes = ["ChapterRoom"]
 name = "bptranslate-export"
 binding = "EXPORT_WORKFLOW"
 class_name = "ExportWorkflow"
+
+[[env.production.workflows]]
+name = "bible-editor-translate"
+binding = "TRANSLATE_WORKFLOW"
+class_name = "TranslateWorkflow"
 
 [env.production.triggers]
 # Export cron retimed to 05:30 UTC (was "0 6 * * *") so the -be- branches land
