@@ -36,6 +36,14 @@ test("every registry skill has a non-empty body with its iron rules", () => {
   assert.match(SKILL_BODIES["translate-tn"], /Reference\tID\tTags\tSupportReference\tQuote\tOccurrence\tNote/);
 });
 
+test("no prompt constant contains a carriage return (bot reads LF blobs; a CRLF checkout must not leak in)", () => {
+  for (const [skill, body] of Object.entries(SKILL_BODIES)) {
+    assert.equal((body.match(/\r/g) || []).length, 0, `${skill} body has \\r — regenerate with scripts/sync-translate-prompts.mjs`);
+  }
+  assert.ok(!API_MODE_OVERRIDE.includes("\r"));
+  assert.ok(!systemPromptFor("translate-tq").includes("\r"));
+});
+
 test("skillBody rejects unknown / missing skill names", () => {
   assert.throws(() => skillBody(""), /no skill name/);
   assert.throws(() => skillBody("translate-zulip"), /unknown skill "translate-zulip"/);
@@ -60,7 +68,7 @@ test("stripFrontmatter matches the bot algorithm", () => {
   assert.equal(stripFrontmatter("---\nname: x\n---"), "");
 });
 
-test("checked-in bodies match the skills checkout byte-for-byte (skipped without a checkout)", (t) => {
+test("checked-in bodies match the skills checkout byte-for-byte after LF normalization (skipped without a checkout)", (t) => {
   if (!SKILLS_DIR) {
     t.skip("no bp-assistant-skills checkout (set BP_SKILLS_DIR)");
     return;
@@ -68,7 +76,9 @@ test("checked-in bodies match the skills checkout byte-for-byte (skipped without
   for (const [skill, body] of Object.entries(SKILL_BODIES)) {
     const src = path.join(SKILLS_DIR, ".claude", "skills", skill, "SKILL.md");
     assert.ok(existsSync(src), src);
-    const expected = stripFrontmatter(readFileSync(src, "utf8"));
+    // The skills repo stores LF; a core.autocrlf=true checkout hands back CRLF.
+    // Compare the LF form so this test is line-ending independent, like the generator.
+    const expected = stripFrontmatter(readFileSync(src, "utf8").replace(/\r\n/g, "\n"));
     assert.equal(body, expected, `${skill} body drifted from ${src} — run node scripts/sync-translate-prompts.mjs`);
     // The generator stamps sha256(body) into the module header; keep it honest.
     const modFile = fileURLToPath(new URL(`./prompts/${{ "translate-tn": "translateTn", "translate-tq": "translateTq", "translate-article": "translateArticle" }[skill]}.ts`, import.meta.url));

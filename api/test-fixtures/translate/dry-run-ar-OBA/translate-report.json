@@ -6,7 +6,7 @@
   "endChapter": 1,
   "targetLang": "ar",
   "sourceRef": "unfoldingWord/en_tn@master",
-  "contextRef": "C:/Users/benja/Documents/GitHub/bp-bot/translate-pipeline/fixtures/ar-context-pack",
+  "contextRef": "<local-fixture-dir>/ar-context-pack",
   "contextSha": null,
   "rowCount": 153,
   "batches": [
