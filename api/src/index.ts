@@ -36,6 +36,8 @@ export interface Env {
   BLOBS: R2Bucket;
   CHAPTER_ROOM: DurableObjectNamespace;
   EXPORT_WORKFLOW: Workflow;
+  // Internal translate runner (issue #445; api/src/translateWorkflow.ts).
+  TRANSLATE_WORKFLOW: Workflow;
   // Static SPA bundle, served for any non-/api path on production (wrangler
   // builds this binding automatically when [assets] is configured). The
   // SPA's URL hash routes itself; ASSETS just serves index.html + bundle.
@@ -95,6 +97,14 @@ export interface Env {
   // GET /api/pipeline/:jobId). Defaults to the prod bot at uw-bt-bot.fly.dev
   // when unset.
   PIPELINE_API_BASE?: string;
+  // "internal" runs translate jobs on TRANSLATE_WORKFLOW when the org has a
+  // BYO key for a provider with an in-Worker adapter; anything else (unset,
+  // "proxy") keeps every job on the Fly bot. Consumed by pipelines.ts
+  // dispatch (step 5 of docs/translate-internal-runner.md); default proxy.
+  PIPELINE_MODE?: string;
+  // Comma-separated providers the internal runner may handle (default
+  // "claude"). Others stay proxied until their adapter is smoke-tested.
+  PIPELINE_INTERNAL_PROVIDERS?: string;
   // ── Workspaces (org-per-D1) ────────────────────────────────────────────
   // JSON array of {slug,label,org,binding,exportOwner?} — see workspaces.ts.
   // Unset/empty/malformed means "one implicit workspace on the DB binding
@@ -526,3 +536,4 @@ export default {
 
 export { ChapterRoom } from "./chapterRoom";
 export { ExportWorkflow } from "./exportWorkflow";
+export { TranslateWorkflow } from "./translateWorkflow";
