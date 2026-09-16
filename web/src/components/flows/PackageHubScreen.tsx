@@ -877,6 +877,22 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
               </Typography>
             </Box>
 
+            {/* Verse view (#447): the alignment-joined original/literal/
+                simplified fidelity surface (VerseScreen, #/verse) was built but
+                left unreachable once FlowNav retires (#173) — relink it here.
+                It is verse-scoped, so it opens at 1:1; the screen's own topbar
+                pages between verses from there. */}
+            <Box sx={cellSx}>
+              <SurfaceRow
+                cardSx={cardSx}
+                title={t("flowVerse.hub.verseView")}
+                subText={t("flowVerse.hub.verseViewSub")}
+                onClick={() => {
+                  location.hash = `#/verse/${book}/1/1`;
+                }}
+              />
+            </Box>
+
             <Box sx={cellSx}>
               <SurfaceRow
                 cardSx={cardSx}

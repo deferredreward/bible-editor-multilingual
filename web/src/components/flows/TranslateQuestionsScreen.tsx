@@ -86,6 +86,7 @@ import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
 import SaveIcon from "@mui/icons-material/Save";
+import ViewColumnIcon from "@mui/icons-material/ViewColumn";
 
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
@@ -1566,6 +1567,21 @@ export default function TranslateQuestionsScreen({
                 ? t("flowQuestions.pagerCount", { current: total, total })
                 : t("flowQuestions.pagerCount", { current: Math.min(cursor + 1, total), total })}
             </Typography>
+            {/* Verse view entry point (#447): jump to the alignment-joined
+                verse fidelity surface for the active card's verse. Disabled in
+                the done state, on an empty chapter, or on an intro question
+                (verse 0 has no single verse to open there). */}
+            <IconButton
+              size="small"
+              aria-label={t("flowQuestions.openVerseView")}
+              disabled={!row || row.verse < 1}
+              onClick={() => {
+                if (row && row.verse >= 1) location.hash = `#/verse/${book}/${row.chapter}/${row.verse}`;
+              }}
+              sx={{ flex: "none" }}
+            >
+              <ViewColumnIcon fontSize="small" />
+            </IconButton>
             {/* compact prev/next — the same cursor and disabled logic as the
                 bottom Previous/Next buttons */}
             <Stack direction="row" spacing={0.25} sx={{ flex: "none" }}>

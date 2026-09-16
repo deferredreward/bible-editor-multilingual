@@ -99,6 +99,7 @@ import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CheckIcon from "@mui/icons-material/Check";
 import SaveIcon from "@mui/icons-material/Save";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import ViewColumnIcon from "@mui/icons-material/ViewColumn";
 
 import { LockBanner } from "./FlowBanners";
 import { FlowStatusChip, type FlowStatusKind } from "./FlowStatusChip";
@@ -2167,6 +2168,23 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
             >
               {headerCount}
             </Typography>
+            {/* Verse view entry point (#447): jump to the alignment-joined
+                original/literal/simplified fidelity surface for the active
+                card's verse. Disabled when no card is in focus (done state or
+                an empty chapter), or on an intro/general note (verse 0 has no
+                single verse to open there) — same guard as the questions
+                screen, since VerseScreen has no verse-0 destination. */}
+            <IconButton
+              size="small"
+              aria-label={t("flowTranslate.openVerseView")}
+              disabled={!row || row.verse < 1}
+              onClick={() => {
+                if (row && row.verse >= 1) location.hash = `#/verse/${book}/${row.chapter}/${row.verse}`;
+              }}
+              sx={{ flex: "none" }}
+            >
+              <ViewColumnIcon fontSize="small" />
+            </IconButton>
             {/* compact prev/next — same cursor and disabled logic as the card
                 stack's Prev/Next; chevrons flip under RTL (the scripture
                 screen's scaleX pattern). 2026-08-10 markup round. */}
