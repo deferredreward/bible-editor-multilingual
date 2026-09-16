@@ -2170,16 +2170,16 @@ export default function TranslateNotesScreen({ book, chapter, verse, rowId }: Tr
             </Typography>
             {/* Verse view entry point (#447): jump to the alignment-joined
                 original/literal/simplified fidelity surface for the active
-                card's verse. Disabled when no card is in focus (done state or
-                an empty chapter), or on an intro/general note (verse 0 has no
-                single verse to open there) — same guard as the questions
-                screen, since VerseScreen has no verse-0 destination. */}
+                card's verse. Disabled only when no card is in focus (done
+                state or an empty chapter); on an intro/general note (chapter or
+                verse 0) it clamps to verse 1 of that chapter rather than
+                no-opping (#453) — same behavior as the questions screen. */}
             <IconButton
               size="small"
               aria-label={t("flowTranslate.openVerseView")}
-              disabled={!row || row.verse < 1}
+              disabled={!row}
               onClick={() => {
-                if (row && row.verse >= 1) location.hash = `#/verse/${book}/${row.chapter}/${row.verse}`;
+                if (row) location.hash = `#/verse/${book}/${Math.max(1, row.chapter)}/${Math.max(1, row.verse)}`;
               }}
               sx={{ flex: "none" }}
             >

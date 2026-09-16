@@ -118,6 +118,13 @@ import { FlowStatusChip } from "./FlowStatusChip";
 
 export interface PackageHubScreenProps extends FlowScreenContext {
   book: string;
+  /**
+   * Live in-session position (preferred over the stale `me.last*` boot
+   * snapshot), mirrored from BooksScreen. The verse-view row opens the last
+   * worked verse when it falls in this book; `null`/undefined or a different
+   * book falls back to 1:1 (#453).
+   */
+  lastPosition?: { book: string; chapter: number; verse: number } | null;
 }
 
 // Same one-column reading measure as TranslateNotesScreen (its line 98).
@@ -579,7 +586,7 @@ function LifecycleCard({ book, name, chapters, admin, wide, cardSx }: LifecycleC
   );
 }
 
-export default function PackageHubScreen({ book, role }: PackageHubScreenProps) {
+export default function PackageHubScreen({ book, role, lastPosition }: PackageHubScreenProps) {
   const theme = useTheme();
   const { t } = useTranslation();
   const { skip } = theme.palette.flows;
@@ -880,15 +887,20 @@ export default function PackageHubScreen({ book, role }: PackageHubScreenProps) 
             {/* Verse view (#447): the alignment-joined original/literal/
                 simplified fidelity surface (VerseScreen, #/verse) was built but
                 left unreachable once FlowNav retires (#173) — relink it here.
-                It is verse-scoped, so it opens at 1:1; the screen's own topbar
-                pages between verses from there. */}
+                It opens at the last worked verse in this book when known
+                (#453), else 1:1; the screen's own topbar pages between verses
+                from there. */}
             <Box sx={cellSx}>
               <SurfaceRow
                 cardSx={cardSx}
                 title={t("flowVerse.hub.verseView")}
                 subText={t("flowVerse.hub.verseViewSub")}
                 onClick={() => {
-                  location.hash = `#/verse/${book}/1/1`;
+                  const at =
+                    lastPosition && lastPosition.book === book
+                      ? { chapter: Math.max(1, lastPosition.chapter), verse: Math.max(1, lastPosition.verse) }
+                      : { chapter: 1, verse: 1 };
+                  location.hash = `#/verse/${book}/${at.chapter}/${at.verse}`;
                 }}
               />
             </Box>

@@ -952,7 +952,18 @@ export function App() {
             ) : loc.view === "questions" ? (
               <TranslateQuestionsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} chapter={loc.chapter} verse={loc.verse ?? undefined} rowId={loc.rowId ?? undefined} />
             ) : loc.view === "package" ? (
-              <PackageHubScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} />
+              <PackageHubScreen
+                role={auth.role}
+                me={auth.me}
+                onNavigate={navigate}
+                book={loc.book}
+                lastPosition={
+                  livePosition ??
+                  (auth.me?.lastBook && auth.me.lastChapter != null && auth.me.lastVerse != null
+                    ? { book: auth.me.lastBook, chapter: auth.me.lastChapter, verse: auth.me.lastVerse }
+                    : null)
+                }
+              />
             ) : loc.view === "translateWords" ? (
               <TranslateWordsScreen role={auth.role} me={auth.me} onNavigate={navigate} book={loc.book} />
             ) : loc.view === "translateScripture" ? (
