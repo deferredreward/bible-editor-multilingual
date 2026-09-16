@@ -21,7 +21,8 @@
 //     and plain infrastructure errors propagate as-is so the step retries.
 
 import type { Workspace } from "../workspaces.ts";
-import { resolveWorkspace } from "../workspaces.ts";
+import { resolveWorkspace, resolveWorkspaceFresh } from "../workspaces.ts";
+import { shrinkRefused } from "../articleExport.ts";
 import { getAiProviderConfig, resolveDispatchAi } from "../aiProvider.ts";
 import { decryptApiKey } from "../aiKeyCrypto.ts";
 import { resolveParams, type TranslateParams } from "./params.ts";
@@ -102,6 +103,14 @@ export type TranslateWorkflowParams = {
   sourceSimplifiedRef: string;
   targetOrg: string;
   repoName: string;
+  /**
+   * Deliberately create the target book when it does not exist on DCS yet.
+   * Absent/false, merge-report refuses to write an out/ file for a job that
+   * translates only part of the book onto a 404 (see mergeReportStep) — a
+   * wrongly defaulted targetOrg/repoName 404s exactly like a genuine first
+   * translation, and the difference is only knowable from the caller's intent.
+   */
+  createIfAbsent?: boolean;
   /** Provider + model only. The key is re-read from ai_provider_config inside each batch step. */
   provider: string;
   model: string;
@@ -177,12 +186,31 @@ export function classifyStepError(err: unknown): StepFailure {
   const tagged = KIND_TAG.exec(rawMessage);
   if (tagged) {
     const kind = tagged[1];
-    return { errorKind: kind, message: redactSecretPatterns(rawMessage.slice(tagged[0].length)), retryable: isRetryableCode(kind) };
+    // internal_error is the untagged default's kind and IS retryable (see the
+    // doc comment); a tagged one — written by retryableStepError below — must
+    // classify the same way, or a re-classified retry would flip to fatal.
+    const retryable = isRetryableCode(kind) || kind === "internal_error";
+    return { errorKind: kind, message: redactSecretPatterns(rawMessage.slice(tagged[0].length)), retryable };
   }
   if (typeof e.code === "string" && (isRetryableCode(e.code) || typeof e.retryable === "boolean")) {
     return { errorKind: e.code, message: redactSecretPatterns(rawMessage), retryable: e.retryable === true || isRetryableCode(e.code) };
   }
   return { errorKind: "internal_error", message: redactSecretPatterns(rawMessage), retryable: true };
+}
+
+/**
+ * The error the Workflow layer rethrows for a RETRYABLE step failure
+ * (translateWorkflow.guarded). Two jobs:
+ *   1. Carry the `[kind] ` tag. Only the NonRetryableError path used to write
+ *      it, so a rate_limited / timeout failure that exhausted its retries
+ *      reached run()'s catch as a bare Error and recorded internal_error,
+ *      losing the one field an operator needs.
+ *   2. Hand the engine a freshly built Error. The original may be a provider
+ *      object whose stack, cause chain and extra properties (transportResults,
+ *      llmCalls) Cloudflare persists at rest between attempts.
+ */
+export function retryableStepError(failure: StepFailure): Error {
+  return new Error(`[${failure.errorKind}] ${failure.message}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -202,6 +230,30 @@ export function resolveWorkflowWorkspace(env: Parameters<typeof resolveWorkspace
   const ws = resolveWorkspace(env, slug);
   if (ws.slug !== slug) throw new TranslateStepError("workspace_unknown", `params.workspace "${slug}" is not a known workspace on this deployment`);
   return ws;
+}
+
+/**
+ * What run() actually calls. Same guard, minus the warm-stale false negative
+ * issue #418/#419 fixed for the request path: the registry is primed ONCE per
+ * isolate and never expires, so an org claimed on a sibling isolate is unknown
+ * to an already-warm one — and here "unknown" is a permanent, non-retryable
+ * refusal, so a legitimate new org's every run would fail until the isolate
+ * recycled. Re-read the registry once (rate-limited inside
+ * resolveWorkspaceFresh) before refusing. A genuinely unknown slug still
+ * refuses, which is the cross-tenant guard itself: resolveWorkspace answers it
+ * with list[0], another tenant's D1.
+ */
+export async function resolveWorkflowWorkspaceFresh(
+  env: Parameters<typeof resolveWorkspaceFresh>[0],
+  params: { workspace?: string | null } | null | undefined,
+): Promise<Workspace> {
+  try {
+    return resolveWorkflowWorkspace(env, params);
+  } catch (err) {
+    if (!(err instanceof TranslateStepError) || err.errorKind !== "workspace_unknown") throw err;
+    await resolveWorkspaceFresh(env, params!.workspace!); // re-primes the isolate's registry
+    return resolveWorkflowWorkspace(env, params); // rethrows workspace_unknown if still absent
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -272,7 +324,16 @@ async function readBatches(deps: StepDeps, jobId: string, batchCount: number, re
 // Step 1: guard-and-source
 // ---------------------------------------------------------------------------
 
-export type GuardAndSourceResult = { batchCount: number; rowCount: number };
+export type GuardAndSourceResult = {
+  batchCount: number;
+  rowCount: number;
+  /**
+   * Every row of the source book was selected, so the merge can create an
+   * absent target file without leaving a partial book behind (merge-report's
+   * base guard).
+   */
+  coversWholeBook: boolean;
+};
 
 export async function guardAndSourceStep(deps: StepDeps, params: TranslateWorkflowParams): Promise<GuardAndSourceResult> {
   await assertJobLive(deps, params.jobId);
@@ -301,7 +362,7 @@ export async function guardAndSourceStep(deps: StepDeps, params: TranslateWorkfl
   }
   await progress(deps, params.jobId, p,
     `source: ${rows.length} row(s) from ${p.sourceRef}${p.mergeMode === "by-id" ? " (by-id subset)" : ""} — ${batches.length} batch(es)`);
-  return { batchCount: batches.length, rowCount: rows.length };
+  return { batchCount: batches.length, rowCount: rows.length, coversWholeBook: rows.length === allRows.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -320,8 +381,11 @@ export async function contextStep(deps: StepDeps, params: TranslateWorkflowParam
 
   const pack = await loadContextPack(p.contextRef, { allowEmpty: !p.contextRefExplicit, fetchImpl: deps.fetchImpl });
 
-  // Never fatal (translate-pipeline.js:411-424): a missing target Bible just
-  // means the pack carries no scripture section.
+  // A missing target Bible is a 404 and comes back from buildScripturePack as
+  // "absent" — still never fatal (translate-pipeline.js:411-424). But a
+  // TRANSPORT failure is not absence: the old blanket catch turned one DCS
+  // hiccup into a permanently persisted context-free pack that every batch of
+  // the run is then billed against. Let the step's retry budget handle it.
   let scripture = null;
   try {
     scripture = await buildScripturePack({
@@ -331,8 +395,8 @@ export async function contextStep(deps: StepDeps, params: TranslateWorkflowParam
       targetLiteralRef: p.targetLiteralRef,
       targetSimplifiedRef: p.targetSimplifiedRef,
     }, { fetchImpl: deps.fetchImpl });
-  } catch {
-    scripture = null;
+  } catch (err) {
+    throw new TranslateStepError("scripture_fetch_failed", err instanceof Error ? err.message : String(err), { retryable: true, cause: err });
   }
 
   const perBatch: PerBatchContext[] = [];
@@ -376,15 +440,35 @@ export type BatchStepResult = {
   reused: boolean;
 };
 
-/** Scrub the key out of an error's message chain in place, then return it for rethrow. */
-function scrubError(err: unknown, apiKey: string): unknown {
-  let e: unknown = err;
-  for (let depth = 0; e instanceof Error && depth < 5; depth++) {
-    e.message = scrubSecrets(e.message, [apiKey]);
-    e = (e as { cause?: unknown }).cause;
+/**
+ * REBUILD — never mutate — the error leaving the decrypted key's scope.
+ *
+ * Scrubbing `e.message` in place is not enough: V8 materializes `.stack` at
+ * construction, so an error whose message embedded the key still carries it in
+ * `.stack`, and the Workflow engine persists the thrown object between
+ * attempts. A TranslateProviderError also carries `transportResults` (raw
+ * provider request/response records) and `llmCalls` on non-message properties.
+ * So: classify the original, then throw a freshly built error with a scrubbed
+ * message, no cause chain and no extra properties — nothing but strings,
+ * numbers and booleans we put there ourselves.
+ *
+ * An error that is NOT a TranslateProviderError came out of the LLM path
+ * unclassified — i.e. a bug in our own adapter code, possibly AFTER the model
+ * answered and the org was billed. Retrying that buys two more billed calls for
+ * the same crash, so it is non-retryable.
+ */
+export function sanitizeBatchError(err: unknown, apiKey: string): Error {
+  const scrub = (s: string) => scrubSecrets(s, [apiKey]);
+  if (err instanceof TranslateProviderError) {
+    return new TranslateProviderError(err.code, err.provider, scrub(err.message), {
+      status: err.status ?? null,
+      retryAfterSeconds: err.retryAfterSeconds ?? null,
+    });
   }
-  if (err instanceof Error) return err;
-  return new Error(scrubSecrets(String(err), [apiKey]));
+  if (err instanceof TranslateStepError) {
+    return new TranslateStepError(err.errorKind, scrub(err.message.replace(KIND_TAG, "")), { retryable: err.retryable });
+  }
+  return new TranslateStepError("internal_error_after_call", scrub(err instanceof Error ? err.message : String(err)), { retryable: false });
 }
 
 export async function batchStep(deps: StepDeps, params: TranslateWorkflowParams, index: number, batchCount: number): Promise<BatchStepResult> {
@@ -446,7 +530,7 @@ export async function batchStep(deps: StepDeps, params: TranslateWorkflowParams,
       { resource, skill: p.skill },
     );
   } catch (err) {
-    throw scrubError(err, apiKey);
+    throw sanitizeBatchError(err, apiKey);
   }
 
   await putText(deps.blobs, keys.output, result.outputText);
@@ -479,10 +563,14 @@ export type MergeReportResult = {
 export async function mergeReportStep(
   deps: StepDeps,
   params: TranslateWorkflowParams,
-  batchCount: number,
+  source: GuardAndSourceResult,
   context: ContextResult,
   batchResults: readonly BatchStepResult[],
 ): Promise<MergeReportResult> {
+  // Cancel re-check, as at step 1 and every batch step: a job cancelled during
+  // the last batch must not still write out/ and a done manifest.
+  await assertJobLive(deps, params.jobId);
+  const batchCount = source.batchCount;
   const p = paramsToTranslateParams(params);
   const resource = tsvResource(p.resourceType);
   const book = p.book!;
@@ -505,8 +593,25 @@ export async function mergeReportStep(
   }
 
   // Merge into the whole-book target file (:477-486).
+  //
+  // Merge-base guards, modelled on exportWorkflow's masterFetchGate + shrink
+  // guard (STATE.md records the real incident: a stale/partial base silently
+  // reverted published work). fetchResourceFile returns null ONLY on a clean
+  // 404 and now rejects a short read, so an absent base really means "no such
+  // file" — but a wrongly defaulted targetOrg/repoName (params.ts targetOrg =
+  // `${lang}_gl`, repoName = `${lang}_${type}`) 404s identically, and merging a
+  // chapter range onto nothing writes an out/ file holding ONLY that range,
+  // which step 5 then imports as the whole book.
   const targetRepoRef = `${p.targetOrg}/${p.repoName}@master`;
   const existingBookText = await fetchResourceFile(targetRepoRef, resource.file(book), { fetchImpl: deps.fetchImpl });
+  if (existingBookText == null && p.mergeMode === "range" && !(params.createIfAbsent === true || source.coversWholeBook)) {
+    // by-id is excluded: updateRowsById refuses an absent base itself, with a
+    // message about the rows it cannot find.
+    throw new TranslateStepError("target_book_absent",
+      `${targetRepoRef} has no ${resource.file(book)}, and this job translated ${source.rowCount} of the book's rows `
+      + `(${p.startChapter}-${p.endChapter}) — refusing to publish a partial book. Check targetOrg/repoName, `
+      + `or set createIfAbsent to bootstrap the file deliberately.`);
+  }
   let bookText: string;
   try {
     bookText = p.mergeMode === "by-id"
@@ -516,6 +621,22 @@ export async function mergeReportStep(
       });
   } catch (err) {
     throw new TranslateStepError("merge_failed", err instanceof Error ? err.message : String(err));
+  }
+
+  // Shrink guard (export.ts exportTsvShrinkRefused's shared policy, same
+  // numbers): the merge replaces the translated range wholesale, so a base that
+  // holds far more rows in that range than this run produced — a truncated
+  // source fetch, a stale selection, a by-hand row set — would silently delete
+  // them from the published book. Rows, not bytes, are the unit: a translation
+  // legitimately differs in byte length from its source script.
+  if (existingBookText != null) {
+    const baseRows = resource.codec.parse(existingBookText).length;
+    const mergedRows = resource.codec.parse(bookText).length;
+    if (shrinkRefused(mergedRows, baseRows)) {
+      throw new TranslateStepError("merge_shrink_refused",
+        `merging ${targetRows.length} translated row(s) into ${targetRepoRef} ${resource.file(book)} would leave `
+        + `${mergedRows} rows where the fetched base has ${baseRows} — refusing (truncated base or wrong selection).`);
+    }
   }
 
   const llm = newLlmUsage(params.provider, params.model);

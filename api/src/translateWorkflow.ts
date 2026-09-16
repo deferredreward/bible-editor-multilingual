@@ -34,7 +34,8 @@ import {
   guardAndSourceStep,
   mergeReportStep,
   recordFailure,
-  resolveWorkflowWorkspace,
+  resolveWorkflowWorkspaceFresh,
+  retryableStepError,
   type BatchStepResult,
   type StepDeps,
   type TranslateWorkflowParams,
@@ -56,15 +57,25 @@ const BATCH_RETRY = { retries: { limit: 2, delay: "30 seconds", backoff: "expone
  * the engine fails the instance instead of spending the retry budget (and, for
  * batch steps, more of the org's money) on a request that cannot succeed. The
  * `[kind] ` prefix survives the engine's rethrow into run() so record-failure
- * can still name the kind (workflowSteps.classifyStepError).
+ * can still name the kind (workflowSteps.classifyStepError) — it is written on
+ * BOTH paths, because a rate_limited failure that exhausts its retries needs
+ * its kind recorded just as much as a deterministic one does.
+ *
+ * NO second constructor argument to NonRetryableError. Its runtime class is
+ * `constructor(message, name = "NonRetryableError") { super(message); this.name = name; }`
+ * and the Workflows engine decides fatality with
+ * `err.name === "NonRetryableError" || err.message.startsWith("NonRetryableError")`.
+ * Passing the kind as the name therefore made the engine treat every
+ * deterministic failure as an ordinary error and RETRY it — re-billing the org
+ * for a request that cannot succeed. The kind rides in the message instead.
  */
 async function guarded<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
     const c = classifyStepError(err);
-    if (c.retryable) throw err;
-    throw new NonRetryableError(`[${c.errorKind}] ${c.message}`, c.errorKind);
+    if (c.retryable) throw retryableStepError(c);
+    throw new NonRetryableError(`[${c.errorKind}] ${c.message}`);
   }
 }
 
@@ -83,6 +94,20 @@ export class TranslateWorkflow extends WorkflowEntrypoint<Env, TranslateWorkflow
   async run(event: WorkflowEvent<TranslateWorkflowParams>, step: WorkflowStep): Promise<TranslateWorkflowResult> {
     const params = event.payload;
 
+    // deps is built BEFORE the workspace resolve so a refusal there can still
+    // be recorded. It used to throw with no deps in scope, which left
+    // wf_status_json NULL and the row sitting in 'running' until the
+    // stale-dispatch sweep expired it. Until the re-point below, db/blobs are
+    // the RAW (default) bindings: writeWfStatus is an UPDATE keyed by job_id, so
+    // against the wrong tenant's D1 it simply changes no rows.
+    const deps: StepDeps = {
+      db: this.env.DB,
+      blobs: this.env.BLOBS,
+      workspaceSlug: "",
+      wrappingKey: this.env.AI_KEY_WRAPPING_KEY,
+      startedAt: new Date(event.timestamp).toISOString(),
+    };
+
     // Workflows don't inherit the per-request env clone that index.ts's fetch
     // wrapper builds, so this.env is the RAW Worker env — this.env.DB would be
     // the default binding regardless of which org queued the run. Re-point it
@@ -93,20 +118,20 @@ export class TranslateWorkflow extends WorkflowEntrypoint<Env, TranslateWorkflow
     await primeWorkspaces(this.env);
     let ws;
     try {
-      ws = resolveWorkflowWorkspace(this.env, params);
+      ws = await resolveWorkflowWorkspaceFresh(this.env, params);
     } catch (err) {
       const c = classifyStepError(err);
-      throw new NonRetryableError(`[${c.errorKind}] ${c.message}`, c.errorKind);
+      try {
+        await recordFailure(deps, params, err);
+      } catch {
+        /* best-effort, exactly like the record-failure step below */
+      }
+      throw new NonRetryableError(`[${c.errorKind}] ${c.message}`);
     }
     (this as unknown as { env: Env }).env = workspaceEnv(this.env, ws);
-
-    const deps: StepDeps = {
-      db: this.env.DB,
-      blobs: this.env.BLOBS,
-      workspaceSlug: this.env.WORKSPACE_SLUG ?? ws.slug,
-      wrappingKey: this.env.AI_KEY_WRAPPING_KEY,
-      startedAt: new Date(event.timestamp).toISOString(),
-    };
+    deps.db = this.env.DB;
+    deps.blobs = this.env.BLOBS;
+    deps.workspaceSlug = this.env.WORKSPACE_SLUG ?? ws.slug;
 
     try {
       const src = await step.do("guard-and-source", INFRA_RETRY, () => guarded(() => guardAndSourceStep(deps, params)));
@@ -118,7 +143,7 @@ export class TranslateWorkflow extends WorkflowEntrypoint<Env, TranslateWorkflow
         results.push(await step.do(`batch-${batchNn(i)}`, BATCH_RETRY, () => guarded(() => batchStep(deps, params, i, src.batchCount))));
       }
 
-      const merged = await step.do("merge-report", INFRA_RETRY, () => guarded(() => mergeReportStep(deps, params, src.batchCount, ctx, results)));
+      const merged = await step.do("merge-report", INFRA_RETRY, () => guarded(() => mergeReportStep(deps, params, src, ctx, results)));
 
       return {
         jobId: params.jobId,

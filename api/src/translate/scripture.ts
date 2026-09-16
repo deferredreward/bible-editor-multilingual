@@ -7,9 +7,12 @@
 // editor already maintains for its own DCS fetches, instead of a fourth copy.
 //
 // Fetches the four USFM books (source ULT/UST, target literal/simplified) and
-// builds per-verse plain-text maps keyed "chapter:verse". Target repos that
-// don't exist yet (404 or fetch failure) degrade to "absent" — this must
-// never fail the run.
+// builds per-verse plain-text maps keyed "chapter:verse". A repo or book that
+// does not exist (a clean 404) degrades to "absent" — a target Bible that has
+// not been started yet must never fail the run. A TRANSPORT failure (5xx,
+// network, truncated read) is NOT absence: swallowing it would persist a
+// context-free pack that every batch of the run is then billed against, so it
+// propagates and the context step retries.
 
 import { BOOK_NUMBERS } from "../dcsSources.ts";
 import { fetchResourceFile, type ScripturePack, type ScriptureVersion } from "./core.ts";
@@ -53,11 +56,7 @@ function repoOf(ref: string | null | undefined): string | null | undefined {
 /** Fetch USFM for a ref; returns null if the ref is falsy, 404s, or the fetch throws. */
 async function fetchUsfm(ref: string | null | undefined, book: string, { fetchImpl }: { fetchImpl?: FetchLike } = {}): Promise<string | null> {
   if (!ref) return null;
-  try {
-    return await fetchResourceFile(ref, `${BOOK_NUMBERS[book.toUpperCase()]}-${book.toUpperCase()}.usfm`, { fetchImpl });
-  } catch {
-    return null;
-  }
+  return await fetchResourceFile(ref, `${BOOK_NUMBERS[book.toUpperCase()]}-${book.toUpperCase()}.usfm`, { fetchImpl });
 }
 
 // --- USFM helpers (bp-assistant api-runner/verse-data.js:118-141, 180-197) ---
@@ -136,12 +135,19 @@ export async function buildScripturePack(
 ): Promise<ScripturePack> {
   const refs = collectVerseRefs(rows);
 
-  const [sourceLiteralUsfm, sourceSimplifiedUsfm, targetLiteralUsfm, targetSimplifiedUsfm] = await Promise.all([
+  // allSettled, not all: the four fetches run concurrently and a transport
+  // failure now propagates (see the header note). Promise.all would reject on
+  // the first one and leave the siblings' rejections unhandled.
+  const settled = await Promise.allSettled([
     fetchUsfm(sourceLiteralRef, book, { fetchImpl }),
     fetchUsfm(sourceSimplifiedRef, book, { fetchImpl }),
     fetchUsfm(targetLiteralRef, book, { fetchImpl }),
     fetchUsfm(targetSimplifiedRef, book, { fetchImpl }),
   ]);
+  const rejected = settled.find((s) => s.status === "rejected");
+  if (rejected) throw (rejected as PromiseRejectedResult).reason;
+  const [sourceLiteralUsfm, sourceSimplifiedUsfm, targetLiteralUsfm, targetSimplifiedUsfm] =
+    settled.map((s) => (s as PromiseFulfilledResult<string | null>).value);
 
   const versions: ScriptureVersion[] = [];
   if (sourceLiteralUsfm) {

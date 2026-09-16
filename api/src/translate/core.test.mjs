@@ -235,3 +235,37 @@ test("buildTranslateReport carries the bot's shape with the editor's generatedBy
   assert.ok(!("llm" in noLlm));
   assert.equal(noLlm.generatedBy, "bp-assistant/translate");
 });
+
+test("fetchResourceFile rejects a short read against the declared Content-Length", async () => {
+  const res = (body, contentLength) => ({
+    status: 200,
+    ok: true,
+    text: async () => body,
+    headers: contentLength === undefined ? null : { get: (k) => (k.toLowerCase() === "content-length" ? contentLength : null) },
+  });
+  const ref = "unfoldingWord/en_tn@master";
+  const whole = "Reference\tID\n1:1\ta1\n";
+  const bytes = String(new TextEncoder().encode(whole).length);
+
+  // Complete body → returned as-is.
+  assert.equal(await core.fetchResourceFile(ref, "tn_OBA.tsv", { fetchImpl: async () => res(whole, bytes) }), whole);
+  // No declared length (the HAB blind spot) → unverifiable here, still returned.
+  assert.equal(await core.fetchResourceFile(ref, "tn_OBA.tsv", { fetchImpl: async () => res(whole, undefined) }), whole);
+  // A longer-than-declared body is not a truncation (transfer encodings).
+  assert.equal(await core.fetchResourceFile(ref, "tn_OBA.tsv", { fetchImpl: async () => res(whole, "3") }), whole);
+  // Non-numeric header → ignored rather than fatal.
+  assert.equal(await core.fetchResourceFile(ref, "tn_OBA.tsv", { fetchImpl: async () => res(whole, "chunked") }), whole);
+
+  // Short body vs declared length → the twl_PSA data-loss signature. Never content.
+  await assert.rejects(
+    () => core.fetchResourceFile(ref, "tn_OBA.tsv", { fetchImpl: async () => res("Reference\tID\n", "99999") }),
+    /truncated body \(13 of 99999 declared bytes\)/,
+  );
+  // Byte length, not char length: multi-byte content must not read as short.
+  const arabic = "Reference\tID\tNote\n1:1\ta1\tترجمة\n";
+  const arabicBytes = String(new TextEncoder().encode(arabic).length);
+  assert.equal(await core.fetchResourceFile(ref, "tn_OBA.tsv", { fetchImpl: async () => res(arabic, arabicBytes) }), arabic);
+
+  // 404 is still absence, not truncation.
+  assert.equal(await core.fetchResourceFile(ref, "tn_OBA.tsv", { fetchImpl: async () => ({ status: 404, ok: false, headers: null, text: async () => "" }) }), null);
+});

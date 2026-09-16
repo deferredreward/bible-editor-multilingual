@@ -51,6 +51,26 @@ export function fixturePackFiles({ templateStatus = "active", format = 1 } = {})
   };
 }
 
+/**
+ * In-memory BlobStore for the suites (the R2 subset storage.ts's helpers use).
+ * Test-only by design: it used to live in storage.ts and shipped in the Worker
+ * bundle. `map` is exposed so a test can assert on the exact keys written.
+ */
+export function memoryBlobStore(seed = {}) {
+  const map = new Map(Object.entries(seed));
+  return {
+    map,
+    async get(key) {
+      if (!map.has(key)) return null;
+      const text = map.get(key);
+      return { text: async () => text };
+    },
+    async put(key, value) {
+      map.set(key, value);
+    },
+  };
+}
+
 export function fakeRawFetch(files) {
   return async (url) => {
     const m = /\/raw\/(?:branch|commit)\/[^/]+\/(.+)$/.exec(url);
