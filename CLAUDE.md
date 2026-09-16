@@ -58,7 +58,11 @@ gh pr view --json state,mergedAt 2>/dev/null
 
 If the PR for the current branch was already merged, **do not push to the same branch**. Rebase onto main, create a new branch, and open a fresh PR. This happens regularly: a PR is merged, the user tests on local main, requests a tweak, and a new PR is needed for the follow-up change.
 
-**This checkout has both `origin` (`deferredreward/bible-editor-multilingual`, this fork) and `upstream` (`unfoldingWord/bible-editor`) remotes.** `gh pr create` / `gh pr view` / `gh pr close` without an explicit `--repo` can resolve against `upstream` instead of `origin` and open or act on a PR in the wrong repo. Before any `gh pr *` command, confirm the target with `gh repo view --json nameWithOwner` (or pass `--repo deferredreward/bible-editor-multilingual` explicitly) — don't assume `gh`'s default matches where the branch was pushed.
+**This checkout has exactly one git remote: `origin` = `unfoldingWord-box3/BPtranslate`.** (The repo moved there from `deferredreward/bible-editor-multilingual` on 2026-09-16; old URLs redirect.) It is still a GitHub **fork** of `unfoldingWord/bible-editor`, and stays one deliberately — detaching the fork network would drop every issue and PR. Upstream is a **read-only source we cherry-pick from; it must never receive a PR from this repo.** Because the fork relationship still exists, `gh pr create` / `gh pr view` / `gh pr close` / `gh issue *` without an explicit `--repo` can resolve against the parent and open or act on something in the wrong repo.
+
+**Pass `--repo unfoldingWord-box3/BPtranslate` explicitly on every `gh pr *` and `gh issue *` command.** If you need to check what `gh` would otherwise pick, run `gh repo view --json nameWithOwner` first — don't assume its default matches where the branch was pushed. Never accept a PR URL under `github.com/unfoldingWord/bible-editor` for this workspace.
+
+There is **no `upstream` git remote**, and don't add a push-capable one. Upstream syncs fetch the URL directly — `git fetch https://github.com/unfoldingWord/bible-editor main` — then cherry-pick; see `docs/upstream-sync-*.md` for the triage pattern and the running record.
 
 ## Committing
 

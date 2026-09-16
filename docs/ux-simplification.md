@@ -1,7 +1,7 @@
 # UX simplification: book lifecycle + app-wide click economy
 
 > **Status: DESIGN DOC for review — scoping, not final UX.** Deliverable for
-> issue [#290](https://github.com/deferredreward/bible-editor-multilingual/issues/290),
+> issue [#290](https://github.com/unfoldingWord-box3/BPtranslate/issues/290),
 > extended per the follow-up ask to step back and audit **every** click sequence
 > at **every** screen size. Part 1 delivers #290's book-lifecycle scoping;
 > Part 2 is the app-wide audit; Part 3 is the PR-sized breakdown for both.
