@@ -112,7 +112,7 @@ class_name = "ExportWorkflow"
 [[workflows]]
 # Internal translate runner (issue #445, docs/translate-internal-runner.md).
 # Dev-suffixed for the same reason as the export workflow above.
-name = "bible-editor-translate-dev"
+name = "bptranslate-translate-dev"
 binding = "TRANSLATE_WORKFLOW"
 class_name = "TranslateWorkflow"
 
@@ -244,7 +244,7 @@ binding = "EXPORT_WORKFLOW"
 class_name = "ExportWorkflow"
 
 [[env.production.workflows]]
-name = "bible-editor-translate"
+name = "bptranslate-translate"
 binding = "TRANSLATE_WORKFLOW"
 class_name = "TranslateWorkflow"
 
