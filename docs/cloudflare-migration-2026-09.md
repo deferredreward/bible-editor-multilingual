@@ -250,6 +250,36 @@ both `bsoj` and `mltest`. `DEV_AUTH_ENABLED` is `true` on the default env so
 `/api/auth/dev` would also work, but the point of this step is the real OAuth
 round-trip.
 
+### 6a. What does NOT travel with the data: each editor's browser state
+
+The D1 export carries every saved edit. It does not carry anything a translator's
+browser is holding, and none of that can be migrated, because all of it is keyed
+to the origin — the hostname. A new hostname is a new origin, so on first visit
+the new host starts empty for every user:
+
+- **The outbox** (`web/src/sync/outbox.ts`, IndexedDB). Saved edits that have not
+  yet reached the server queue here and drain in the background. Anything still
+  queued at cutover stays queued **on the old origin**, against the old worker.
+- **Note drafts** (`web/src/sync/drafts.ts`, IndexedDB). Typed-but-not-saved note
+  text, the thing the "N unsaved" reminder counts. Same story.
+- **The session.** Auth is HttpOnly cookies (`api/src/auth.ts`), host-scoped, so
+  everyone signs in again and authorises the new Door43 application once.
+- Per-viewer conveniences in `localStorage` (last workspace, view preferences).
+
+So the rule for the freeze in step 7 is not just "stop editing". It is:
+
+1. Every editor opens the **old** host, saves anything still open, and waits for
+   the sync indicator to report nothing pending. An editor who closes the tab on
+   a queued edit strands it.
+2. Only then export.
+3. After cutover, tell them the first visit to the new host will ask them to sign
+   in and to re-authorise the application. That is expected, not a fault.
+
+Worth checking before the freeze ends: query `pipeline_jobs` for non-terminal
+rows and let them finish or cancel them, since an in-flight AI job is tracked
+server-side and its output would import into the database you are about to stop
+using.
+
 ### 7. Prod data move and cutover
 
 Same shape as step 5, with `--env production` on every command touching the new
