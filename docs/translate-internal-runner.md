@@ -125,14 +125,27 @@ Steps:
    22-batch run. Step count is 2N+3 (25 for OBA's 11 batches), against 1,024
    (Free) / 10,000 (Paid). The decrypted key is still never in a step return.
 
+   The 1 MiB cap is enforced, not assumed: batches are bounded by rows and
+   source characters, and the deterministic checks tolerate arbitrary length
+   growth in a translated column, so a valid output CAN exceed it (demonstrated
+   at 1.2 MB from the recorded 15-row batch-01). `batch-NN` measures its
+   serialized return and, at or over 768 KiB (25% headroom, because the measured
+   JSON is a proxy for the engine's own encoding plus its envelope), writes the
+   output itself under the in-step retries below and returns the same
+   "already in R2" marker a reused output returns. An oversized batch therefore
+   degrades to the pre-split behaviour instead of failing to commit — which
+   would have retried the step and re-bought the batch.
+
    The mid-loop write stays in `batch-NN` because it happens while that step is
-   running: a draft whose checks failed is persisted to `work/batch-NN-draft.tsv`
-   BEFORE the repair call, with its billed calls beside it in
-   `work/batch-NN-draft.json`, and resumed from on the next attempt — the retry
-   buys the repair pass, not the draft again, and the resumed batch still reports
-   the draft's tokens and cost, which the org was billed for whether or not the
-   isolate that spent them survived. That put keeps the in-step retry and the
-   non-retryable `output_persist_failed` failure.
+   running: a draft whose checks failed is persisted to `work/batch-NN-draft.json`
+   BEFORE the repair call — text and billed calls in ONE object, because R2 is
+   atomic per object and atomic across none — and resumed from on the next
+   attempt. The retry buys the repair pass, not the draft again, and the resumed
+   batch still reports the draft's tokens and cost, which the org was billed for
+   whether or not the isolate that spent them survived. A `.tsv` plus a `.json`
+   sidecar could land the draft and lose its price, and the resume then billed
+   the repair pass alone. That put keeps the in-step retry and the non-retryable
+   `output_persist_failed` failure.
 
    The window that stays open — and no arrangement of steps closes it — is an
    isolate dying after the provider's reply arrives and before `batch-NN`'s
@@ -170,7 +183,7 @@ R2 layout mirrors the bot's `work/` so the dry-run compare is a directory diff:
 
 ```
 pipeline-output/<workspaceSlug>/<jobId>/work/batch-NN{.tsv,-pack.md,-task.json,-out.tsv}
-pipeline-output/<workspaceSlug>/<jobId>/work/batch-NN-draft.tsv   # only when a billed draft failed checks
+pipeline-output/<workspaceSlug>/<jobId>/work/batch-NN-draft.json  # only when a billed draft failed checks: {output, calls}
 pipeline-output/<workspaceSlug>/<jobId>/out/<tn_OBA.tsv | bible/kt/god.md …>
 pipeline-output/<workspaceSlug>/<jobId>/out/translate-report-<S>-<E>.json
 ```

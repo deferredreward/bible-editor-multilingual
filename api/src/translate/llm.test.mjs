@@ -829,7 +829,11 @@ ${ROW}`));
   assert.equal(res.llmCalls.length, 2);
   assert.equal(res.llmCalls.reduce((n, c) => n + c.usage.inputTokens, 0), 20);
 
-  // Absent metadata degrades to the old under-count rather than failing.
+  // `resume.calls` is optional at this boundary, and an omitted ledger counts
+  // only what this call bought. That is a defensive default, NOT an accepted
+  // under-count: the Workflow caller stores a draft and its ledger in one R2
+  // object (storage.batchKeys `draft`), so it cannot hand runBatch a resumed
+  // draft whose price it has lost.
   const third = stubTransport(() => ok(`${HEADER}
 ${ROW}`));
   const bare = await llm.runBatch(deps({ transport: third.transport }), batch, {
