@@ -15,6 +15,7 @@
     "tail": "wrangler tail --env production"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.126.0",
     "hono": "^4.12.23",
     "jose": "^5.9.0",
     "js-yaml": "^4.1.0",
