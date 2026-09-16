@@ -19,6 +19,7 @@
 //      read is identical for both runners.
 
 import { resolveParams } from "./params.ts";
+import { isTsvResource } from "./resourceTypes.ts";
 import { parseWfStatus } from "./status.ts";
 import type { TranslateWorkflowParams } from "./workflowSteps.ts";
 import type { DispatchAi } from "../aiProvider.ts";
@@ -50,9 +51,15 @@ export function internalProviders(env: RunnerEnv): Set<string> {
   );
 }
 
+/** The job's resourceType as resolveParams reads it: the stored option, else the 'tn' pilot default. */
+function resourceTypeOf(options: unknown): string {
+  const o = options && typeof options === "object" ? (options as Record<string, unknown>) : {};
+  return typeof o.resourceType === "string" && o.resourceType ? o.resourceType : "tn";
+}
+
 /**
  * Which runner this job dispatches to (design §D.1 / conclusion 6). Internal
- * requires ALL FOUR of:
+ * requires ALL FIVE of:
  *
  *   * PIPELINE_MODE === "internal"       — the deployment opted in
  *   * pipeline_type === "translate"      — generate/notes/tqs have no in-Worker port
@@ -60,6 +67,7 @@ export function internalProviders(env: RunnerEnv): Set<string> {
  *                                          a job on the shared uW subscription must
  *                                          keep running where that subscription is.
  *   * provider ∈ PIPELINE_INTERNAL_PROVIDERS
+ *   * the resource is a TSV family (tn/tq)  — see the gate's own comment below
  *
  * Anything else proxies to Fly exactly as before.
  */
@@ -67,11 +75,27 @@ export function translateRunner(
   env: RunnerEnv,
   job: { pipeline_type: string },
   ai: DispatchAi,
+  options?: unknown,
 ): PipelineRunner {
   if ((env.PIPELINE_MODE ?? "").trim().toLowerCase() !== "internal") return "proxy";
   if (job.pipeline_type !== "translate") return "proxy";
   if (ai.kind !== "configured") return "proxy";
   if (!internalProviders(env).has(ai.provider.trim().toLowerCase())) return "proxy";
+  // REMOVE THIS GATE IN PHASE 2, when article (tw/tA) support lands — design §B
+  // "Articles (tw/ta): same skeleton with resolve-article and article-NN steps;
+  // phase 2", §A "articleResolver … Phase 2 (tw/ta)".
+  //
+  // Until then the internal runner has TSV steps only: guardAndSourceStep
+  // throws resource_not_supported_internal for an article job
+  // (workflowSteps.ts). The Fly bot translates tw/ta TODAY, so routing an
+  // article job internal would convert a working capability into a failed run
+  // the moment PIPELINE_MODE is flipped. Proxy it instead.
+  //
+  // The family comes from resourceTypes.ts rather than a name list here, so
+  // phase 2 flips this in one place. An unrecognized resourceType is not a TSV
+  // resource either, and proxying it lets the bot decide rather than failing an
+  // instance we could not have built params for.
+  if (!isTsvResource(resourceTypeOf(options))) return "proxy";
   return "internal";
 }
 

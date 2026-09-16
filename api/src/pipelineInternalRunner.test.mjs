@@ -277,6 +277,44 @@ test("dispatchNext: every gate-off case still dispatches to the bot, byte-for-by
   }
 });
 
+test("dispatchNext: an article job stays on the bot even with the flag fully on, key intact", async () => {
+  // The internal runner has TSV steps only (guardAndSourceStep throws
+  // resource_not_supported_internal for an article job), while the bot
+  // translates tw/ta today. Every gate but the family one is ON here, so this
+  // proves the family gate alone is what keeps a working capability working.
+  // DELETE THIS TEST WITH THE GATE in phase 2, when article steps land.
+  for (const [resourceType, book, botJobId] of [["tw", "TW", "bot-tw"], ["ta", "TA", "bot-ta"]]) {
+    const sqlite = freshSqlite();
+    sqlite
+      .prepare(
+        `INSERT INTO pipeline_jobs
+           (job_id, user_id, pipeline_type, book, start_chapter, end_chapter,
+            session_key, state, options_json, created_at, updated_at)
+         VALUES ('job-1', 1, 'translate', ?, 0, 0, 'sess-article', 'queued', ?, 100, 100)`,
+      )
+      .run(book, JSON.stringify({ ...TRANSLATE_OPTIONS, resourceType, articleId: "bible/kt/god" }));
+    await seedByoKey(sqlite);
+    const env = freshEnv(sqlite, { PIPELINE_MODE: "internal" });
+
+    await withFetch(
+      async () => new Response(JSON.stringify({ jobId: botJobId, provider: "claude" }), { status: 200 }),
+      async (calls) => {
+        await dispatchNext(env);
+        assert.equal(calls.length, 1, `${resourceType} still POSTs to the bot`);
+        const body = JSON.parse(calls[0].init.body);
+        assert.equal(body.apiKey, API_KEY, `${resourceType}: the BYO key still reaches the bot, so the run is billed to the org`);
+        assert.equal(body.provider, "claude");
+      },
+    );
+
+    assert.equal(env.created.length, 0, `${resourceType}: no Workflow instance was created`);
+    const row = jobRow(sqlite);
+    assert.equal(row.state, "running");
+    assert.equal(row.upstream_job_id, botJobId);
+    assert.equal(row.runner, null, `${resourceType}: the row is left unstamped, i.e. proxy`);
+  }
+});
+
 test("dispatchNext (internal): a create() failure fails the job and frees the slot", async () => {
   const sqlite = freshSqlite();
   seedQueuedTranslateJob(sqlite);

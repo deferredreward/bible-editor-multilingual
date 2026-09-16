@@ -678,7 +678,7 @@ export async function dispatchNext(env: Env): Promise<void> {
   // half differs. The internal branch never touches `upstreamBody` (it was built
   // for the bot's POST and carries the plaintext key, which must not travel) and
   // never reaches the fetch block below.
-  if (translateRunner(env, job, dispatchAi) === "internal") {
+  if (translateRunner(env, job, dispatchAi, options) === "internal") {
     // params.workspace is REQUIRED by the Workflow: it re-points its own env on
     // the first line of run(), because a Workflow does NOT inherit the
     // per-request env clone. "default" is the implicit single-workspace slug

@@ -68,6 +68,25 @@ test("translateRunner: the decision table, one row per gate", () => {
     "proxy",
     "blanking the allow-list disables the internal runner on its own",
   );
+
+  // Gate 5 - resource family. The internal runner has TSV steps only; the bot
+  // translates tw/ta today, so an article job must keep going there or flipping
+  // the flag would turn a working capability into a failed run. REMOVE WITH THE
+  // GATE in phase 2, when article steps land.
+  assert.equal(translateRunner(INTERNAL, TRANSLATE, CONFIGURED, { resourceType: "tn" }), "internal");
+  assert.equal(translateRunner(INTERNAL, TRANSLATE, CONFIGURED, { resourceType: "tq" }), "internal", "tq is TSV too");
+  assert.equal(translateRunner(INTERNAL, TRANSLATE, CONFIGURED, { resourceType: "tw" }), "proxy", "tw is an article family");
+  assert.equal(translateRunner(INTERNAL, TRANSLATE, CONFIGURED, { resourceType: "ta" }), "proxy", "ta is an article family");
+  assert.equal(
+    translateRunner(INTERNAL, TRANSLATE, CONFIGURED, { resourceType: "bogus" }),
+    "proxy",
+    "an unrecognized resourceType is not a TSV resource either - fail closed to the bot",
+  );
+  assert.equal(
+    translateRunner(INTERNAL, TRANSLATE, CONFIGURED, {}),
+    "internal",
+    "an absent resourceType is the tn pilot default, exactly as resolveParams reads it",
+  );
 });
 
 test("internalProviders: unset means the default, set means exactly what is set", () => {
