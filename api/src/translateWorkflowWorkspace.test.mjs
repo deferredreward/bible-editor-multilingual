@@ -181,17 +181,29 @@ console.log("[TranslateWorkflow run() wiring] NonRetryableError is constructed w
   }
 }
 
-console.log("[TranslateWorkflow run() wiring] the workspace refusal path can still record a failure");
+console.log("[TranslateWorkflow run() wiring] the workspace refusal path touches NO tenant database");
 {
+  // This assertion used to say the opposite — deps BEFORE the resolve, so a
+  // refusal could record its failure. That recorded it in the RAW default
+  // tenant's D1: writeWfStatus is an UPDATE keyed by job_id, job ids are
+  // unique only WITHIN a tenant database, and an overlapping id silently
+  // overwrote another org's current_skill / current_status / updated_at /
+  // wf_status_json. A silent failure was traded for a cross-tenant write,
+  // which is the worse of the two. There is no right row to write instead
+  // (workspace_missing names no tenant at all; workspace_unknown names one
+  // this deployment has no binding for), so a refusal writes nothing and the
+  // row is left to pipelines.ts's poll-count / 48h sweeps.
   const src = readFileSync(new URL("./translateWorkflow.ts", import.meta.url), "utf8");
   const depsAt = src.indexOf("const deps: StepDeps");
   const resolveAt = src.indexOf("resolveWorkflowWorkspaceFresh(this.env, params)");
-  assert(depsAt > 0 && resolveAt > 0, "both the deps literal and the resolve call are present");
-  assert(depsAt < resolveAt,
-    "deps must be built BEFORE the workspace resolve — otherwise a refusal throws with no deps in scope, "
-    + "wf_status_json stays NULL and the job sits in 'running' until the sweep expires it");
-  const refusal = src.slice(resolveAt, src.indexOf("workspaceEnv(this.env, ws)"));
-  assert(/recordFailure\(deps, params, err\)/.test(refusal), "the refusal path calls recordFailure before rethrowing");
+  const repointAt = src.indexOf("workspaceEnv(this.env, ws)");
+  assert(depsAt > 0 && resolveAt > 0 && repointAt > 0, "the deps literal, the resolve call and the re-point are all present");
+  assert(resolveAt < repointAt && repointAt < depsAt,
+    "the workspace must be resolved and the env re-pointed BEFORE deps is built — deps carries the D1 and R2 "
+    + "handles that every step writes through, and before the re-point those are the raw default tenant's");
+  const refusal = src.slice(resolveAt, repointAt);
+  assert(!/recordFailure/.test(refusal) && !/writeWfStatus/.test(refusal),
+    "the refusal path must not write a job row: the tenant owning this job id is exactly what it failed to identify");
 }
 
 console.log("translateWorkflowWorkspace: all assertions passed");

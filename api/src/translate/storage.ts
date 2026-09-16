@@ -79,9 +79,17 @@ export function batchFileNames(nn: string): BatchFileNames {
   };
 }
 
-export type BatchKeys = { source: string; pack: string; task: string; output: string };
+export type BatchKeys = { source: string; pack: string; task: string; output: string; draft: string };
 
-/** R2 keys of one batch's four work/ artifacts. */
+/**
+ * R2 keys of one batch's work/ artifacts.
+ *
+ * `draft` is the one key with no counterpart in the bot's work directory: it
+ * holds a BILLED draft whose deterministic checks failed, written before the
+ * repair call so a step retry resumes at the repair pass instead of buying the
+ * draft again (workflowSteps.batchStep). It is written only on that path, so a
+ * clean run's work/ prefix still matches the bot's file for file.
+ */
 export function batchKeys(workspaceSlug: string, jobId: string, nn: string): BatchKeys {
   const names = batchFileNames(nn);
   return {
@@ -89,6 +97,7 @@ export function batchKeys(workspaceSlug: string, jobId: string, nn: string): Bat
     pack: workKey(workspaceSlug, jobId, names.packFile),
     task: workKey(workspaceSlug, jobId, names.taskFile),
     output: workKey(workspaceSlug, jobId, names.outputFile),
+    draft: workKey(workspaceSlug, jobId, `batch-${nn}-draft.tsv`),
   };
 }
 

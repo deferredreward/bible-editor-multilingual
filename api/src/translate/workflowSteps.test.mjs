@@ -652,3 +652,103 @@ test("context step: a DCS transport failure on the scripture pack retries instea
   assert.equal(ctx.hasContent, true);
   assert.ok(s.blobs.map.get("pipeline-output/bsoj/job-1/work/batch-01-pack.md").length > 0);
 });
+
+// --- double-spend windows around a billed provider call ----------------------
+//
+// A batch step that has already paid the provider is the one place where a
+// plain "let the step retry" costs real money. These three pin the three
+// mitigations: the R2 put of a billed output is retried in-step and then fails
+// NON-retryably; a billed draft is persisted before the repair call and resumed
+// from on the next attempt; and a stored draft that validates is promoted
+// instead of being re-bought.
+
+/** The recorded reply for exactly the rows this prompt asked about, optionally short. */
+function replayReply(user, { drop = 0 } = {}) {
+  const src = /-----BEGIN SOURCE CONTENT-----\n([\s\S]*?)\n-----END SOURCE CONTENT-----/.exec(user);
+  assert.ok(src, "prompt must inline the source TSV");
+  const ids = src[1].split("\n").slice(1).filter(Boolean).map((l) => l.split("\t")[1]);
+  const kept = drop > 0 ? ids.slice(0, ids.length - drop) : ids;
+  const body = kept.map((id) => { const r = RECORDED.rows.get(id); assert.ok(r, `recorded row for ${id}`); return r; }).join("\n");
+  return { text: wrapped(`${RECORDED.header}\n${body}`), usage: { inputTokens: 5000, outputTokens: 3000 }, stopReason: "end_turn" };
+}
+
+test("a billed output R2 refuses: the put is retried in-step, then fails non-retryably rather than re-buying the call", async () => {
+  const s = await scenario();
+  const src = await steps.guardAndSourceStep(s.deps, PARAMS);
+  await steps.contextStep(s.deps, PARAMS, src.batchCount);
+  const keys = storage.batchKeys(WS, JOB, "01");
+
+  let puts = 0;
+  const deps = {
+    ...s.deps,
+    blobs: {
+      ...s.blobs,
+      async put(key, value, opts) {
+        if (key !== keys.output) return s.blobs.put(key, value, opts);
+        puts += 1;
+        throw new Error("R2 PutObject: 500 internal error");
+      },
+    },
+  };
+
+  const f = await kindOf(() => steps.batchStep(deps, PARAMS, 0, src.batchCount));
+  assert.equal(f.errorKind, "output_persist_failed");
+  // THE regression assertion: retryable here means the engine re-runs the step,
+  // finds no stored output and pays the provider a second time for the batch.
+  assert.equal(f.retryable, false, "a failure after a billed call must not earn a step retry");
+  assert.equal(puts, 3, "the put is retried in-step before the step is given up on");
+  assert.equal(s.replay.calls.length, 1, "exactly one billed call, whatever R2 does");
+});
+
+test("a billed draft survives the step: a transient failure after it resumes at the repair pass instead of re-drafting", async () => {
+  const prompts = [];
+  let phase = 1;
+  const transport = async (req) => {
+    prompts.push(req.user);
+    if (phase === 1) {
+      // Drop a row: `missing-row` is error-severity, so the draft fails checks
+      // and runBatch goes on to the repair pass.
+      phase = 2;
+      return replayReply(req.user, { drop: 1 });
+    }
+    if (phase === 2) {
+      // ...which dies on a provider transient. The draft is already paid for.
+      phase = 3;
+      throw new TranslateProviderError("rate_limited", "claude", "slow down");
+    }
+    return replayReply(req.user);
+  };
+  const s = await scenario({ transport });
+  const src = await steps.guardAndSourceStep(s.deps, PARAMS);
+  await steps.contextStep(s.deps, PARAMS, src.batchCount);
+  const keys = storage.batchKeys(WS, JOB, "01");
+
+  const f = await kindOf(() => steps.batchStep(s.deps, PARAMS, 0, src.batchCount));
+  assert.equal(f.errorKind, "rate_limited");
+  assert.equal(f.retryable, true, "a provider transient still earns the step its retry");
+  assert.equal(prompts.length, 2, "one draft, then a repair call that never landed");
+  assert.ok(s.blobs.map.has(keys.draft), "the billed draft is durable BEFORE the repair call is made");
+  assert.equal(s.blobs.map.has(keys.output), false, "and nothing validated, so there is no output yet");
+
+  // What the engine does next: re-run the same step.
+  const again = await steps.batchStep(s.deps, PARAMS, 0, src.batchCount);
+  assert.equal(prompts.length, 3, "the retry bought ONE call — without the stored draft it would re-draft AND repair");
+  assert.match(prompts[2], /FAILED deterministic validation/, "the retry entered at the repair pass");
+  assert.equal(again.reused, false);
+  assert.equal(again.calls, 1, "the resumed step bills only the repair pass");
+  assert.equal(again.attempts, 2, "which is pass 2 of 2: the resumed draft was pass 1");
+  assert.equal(s.blobs.map.get(keys.output), fixture(`${DRY}work/batch-01-out.tsv`));
+});
+
+test("a stored draft that validates is promoted to the batch output, never re-bought", async () => {
+  const s = await scenario({ transport: async () => { throw new Error("the provider must not be called"); } });
+  const src = await steps.guardAndSourceStep(s.deps, PARAMS);
+  await steps.contextStep(s.deps, PARAMS, src.batchCount);
+  const keys = storage.batchKeys(WS, JOB, "01");
+  s.blobs.map.set(keys.draft, fixture(`${DRY}work/batch-01-out.tsv`));
+
+  const r = await steps.batchStep(s.deps, PARAMS, 0, src.batchCount);
+  assert.equal(r.reused, true);
+  assert.equal(r.calls, 0);
+  assert.equal(s.blobs.map.get(keys.output), fixture(`${DRY}work/batch-01-out.tsv`));
+});

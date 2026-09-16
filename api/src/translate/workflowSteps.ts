@@ -43,7 +43,7 @@ import {
 } from "./core.ts";
 import { loadContextPack, type FetchLike } from "./contextPack.ts";
 import { buildScripturePack } from "./scripture.ts";
-import { runChecks } from "./checks.ts";
+import { runChecks, type CheckResult } from "./checks.ts";
 import type { TsvRow } from "./tsvCodec.ts";
 import {
   TranslateProviderError,
@@ -440,6 +440,43 @@ export type BatchStepResult = {
   reused: boolean;
 };
 
+// A provider call is money, and everything between the provider's reply and a
+// durable write is a window in which a step retry re-buys it. These three
+// constants bound the only part of that window this code controls: the R2 put.
+// Failing the put NON-retryably is deliberate — a retried step would find no
+// stored output and pay for the batch again, so one loud failure is cheaper
+// than a silent second call.
+const BILLED_PUT_ATTEMPTS = 3;
+const BILLED_PUT_BASE_DELAY_MS = 250;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Persist something the org has ALREADY been billed for. Retries the put
+ * in-step (R2 hiccups are transient and cost nothing to re-try) and, if it
+ * still will not land, fails the step non-retryably: the paid output is lost
+ * either way, and the only choice left is whether to lose it once or to lose it
+ * and buy it again.
+ */
+async function persistBilled(deps: StepDeps, key: string, text: string, what: string): Promise<void> {
+  let last: unknown;
+  for (let attempt = 1; attempt <= BILLED_PUT_ATTEMPTS; attempt++) {
+    try {
+      await putText(deps.blobs, key, text);
+      return;
+    } catch (err) {
+      last = err;
+      if (attempt < BILLED_PUT_ATTEMPTS) await sleep(BILLED_PUT_BASE_DELAY_MS * attempt);
+    }
+  }
+  throw new TranslateStepError(
+    "output_persist_failed",
+    `could not persist ${what} to R2 after ${BILLED_PUT_ATTEMPTS} attempts (${last instanceof Error ? last.message : String(last)}) `
+    + `— failing without a retry so the provider call already paid for is not bought again`,
+    { retryable: false },
+  );
+}
+
 /**
  * REBUILD — never mutate — the error leaving the decrypted key's scope.
  *
@@ -501,6 +538,7 @@ export async function batchStep(deps: StepDeps, params: TranslateWorkflowParams,
   const packMarkdown = await getText(deps.blobs, keys.pack);
   const taskJson = await getText(deps.blobs, keys.task);
   if (packMarkdown == null || taskJson == null) throw new TranslateStepError("artifact_missing", `work/batch-${nn}-pack.md or -task.json is missing from R2`);
+  const draftText = await getText(deps.blobs, keys.draft);
 
   // Key handling (design §B): re-read the org's config, decrypt here, keep the
   // plaintext in this scope only. The provider must still be the one dispatch
@@ -521,19 +559,45 @@ export async function batchStep(deps: StepDeps, params: TranslateWorkflowParams,
     throw new TranslateStepError("ai_provider_key_decrypt_failed", "stored provider key could not be decrypted (wrapping key rotated?)");
   }
 
+  // Second idempotency tier: a draft this job already PAID for on an earlier
+  // step attempt, stored by the onFailedDraft hook below because its checks
+  // failed. Resuming from it turns this attempt into the repair pass, so a
+  // transient failure that landed after a billed draft costs one call, not two.
+  let resume: { output: string; checks: CheckResult } | null = null;
+  if (draftText != null) {
+    try {
+      const prev = validateBatchOutput(draftText, batchRows, { parse: resource.codec.parse, checkOpts: resource.checkOpts });
+      if (prev.checks.ok) {
+        // Only stored when its checks failed, so this means the checks changed
+        // under us. Promote it rather than re-buying an output that now passes.
+        await persistBilled(deps, keys.output, draftText, `work/batch-${nn}-out.tsv`);
+        await progress(deps, params.jobId, p, `batch ${nn}/${total} reused a stored draft (checks ok)`);
+        return { nn, rowCount: batchRows.length, attempts: 0, calls: 0, inputTokens: 0, outputTokens: 0, costUsd: null, reused: true };
+      }
+      resume = { output: draftText, checks: prev.checks };
+    } catch {
+      /* unparseable leftover — retranslate */
+    }
+  }
+
   let result;
   try {
     const transport = deps.transport ?? transportFor(params.provider);
     result = await runBatch(
       { provider: params.provider, model: params.model, apiKey, thinking: p.thinking, transport },
       { nn, names: batchFileNames(nn), sourceTsv, packMarkdown, taskJson, batchRows },
-      { resource, skill: p.skill },
+      {
+        resource,
+        skill: p.skill,
+        resume,
+        onFailedDraft: (output) => persistBilled(deps, keys.draft, output, `work/batch-${nn}-draft.tsv`),
+      },
     );
   } catch (err) {
     throw sanitizeBatchError(err, apiKey);
   }
 
-  await putText(deps.blobs, keys.output, result.outputText);
+  await persistBilled(deps, keys.output, result.outputText, `work/batch-${nn}-out.tsv`);
   await progress(deps, params.jobId, p, `batch ${nn}/${total} done (${batchRows.length} rows, ${result.attempts} attempt(s))`);
 
   let inputTokens = 0;
