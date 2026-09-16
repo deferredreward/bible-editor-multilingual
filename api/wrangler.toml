@@ -109,6 +109,13 @@ name = "bptranslate-export-dev"
 binding = "EXPORT_WORKFLOW"
 class_name = "ExportWorkflow"
 
+[[workflows]]
+# Internal translate runner (issue #445, docs/translate-internal-runner.md).
+# Dev-suffixed for the same reason as the export workflow above.
+name = "bptranslate-translate-dev"
+binding = "TRANSLATE_WORKFLOW"
+class_name = "TranslateWorkflow"
+
 # No crons on the default env: they're registered only on production (below)
 # so an accidental dev deploy can't double-fire the nightly export.
 # `wrangler dev --test-scheduled` exposes /__scheduled regardless.
@@ -173,6 +180,18 @@ DEV_AUTH_ENABLED = "true"
 DCS_EXPORT_OWNER = "BibleEditorService"
 TN_QUICK_URL = "https://uw-bt-bot.fly.dev/api/tn-quick"
 PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"
+# Internal translate runner (issue #445, docs/translate-internal-runner.md).
+# OPT-IN: "proxy" (the default, and any value other than "internal") keeps every
+# pipeline job on the Fly bot exactly as before. "internal" routes a job to
+# TRANSLATE_WORKFLOW only when ALL of the remaining gates also pass — the job is
+# a translate job, the org brought its own provider key, and that provider is
+# listed below. Flip this to "internal" in api/.dev.vars for a local dry run
+# rather than here, so a dev deploy can't turn it on for everyone.
+PIPELINE_MODE = "proxy"
+# Providers with an in-Worker adapter. OpenAI / Gemini / xAI stay proxied until
+# each adapter is smoke-tested; blanking this var disables the internal runner
+# on its own.
+PIPELINE_INTERNAL_PROVIDERS = "claude"
 # Dev has two workspaces: the existing dev database (BSOJ, and also the
 # SHARED_DB holding accounts/sessions/lexicon) plus an empty database for the
 # test org. The FIRST entry is the fallback when no be_ws cookie is present,
@@ -236,6 +255,11 @@ name = "bptranslate-export"
 binding = "EXPORT_WORKFLOW"
 class_name = "ExportWorkflow"
 
+[[env.production.workflows]]
+name = "bptranslate-translate"
+binding = "TRANSLATE_WORKFLOW"
+class_name = "TranslateWorkflow"
+
 [env.production.triggers]
 # Export cron retimed to 05:30 UTC (was "0 6 * * *") so the -be- branches land
 # ~30 min before Rich's 06:00 UTC DCS-side validate-and-merge job (sequence:
@@ -266,5 +290,17 @@ NIGHTLY_EXPORTS_ENABLED = "true"
 DCS_EXPORT_OWNER = "BibleEditorService"
 TN_QUICK_URL = "https://uw-bt-bot.fly.dev/api/tn-quick"
 PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"
+# Internal translate runner (issue #445, docs/translate-internal-runner.md).
+# OPT-IN: "proxy" (the default, and any value other than "internal") keeps every
+# pipeline job on the Fly bot exactly as before. "internal" routes a job to
+# TRANSLATE_WORKFLOW only when ALL of the remaining gates also pass — the job is
+# a translate job, the org brought its own provider key, and that provider is
+# listed below. Flip this to "internal" in api/.dev.vars for a local dry run
+# rather than here, so a dev deploy can't turn it on for everyone.
+PIPELINE_MODE = "proxy"
+# Providers with an in-Worker adapter. OpenAI / Gemini / xAI stay proxied until
+# each adapter is smoke-tested; blanking this var disables the internal runner
+# on its own.
+PIPELINE_INTERNAL_PROVIDERS = "claude"
 WORKSPACES = ""
 SUPER_ADMINS = ""

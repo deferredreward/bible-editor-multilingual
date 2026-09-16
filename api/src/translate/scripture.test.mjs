@@ -97,20 +97,45 @@ test("buildScripturePack includes target versions when present, with repo-derive
   assert.equal(targetSimplified.label, "Target simplified (ar_gst)");
 });
 
-test("buildScripturePack never throws when a fetch fails (network error)", async () => {
-  const fetchImpl = async () => { throw new Error("network down"); };
-  const rows = [{ Reference: "1:1", ID: "a1" }];
-  const pack = await buildScripturePack({
+test("buildScripturePack: a 404 is absence, but a transport failure propagates (never a silently context-free pack)", async () => {
+  const input = {
     book: "GEN",
-    rows,
+    rows: [{ Reference: "1:1", ID: "a1" }],
     sourceLiteralRef: "unfoldingWord/en_ult@master",
     sourceSimplifiedRef: "unfoldingWord/en_ust@master",
     targetLiteralRef: "ar_gl/ar_glt@master",
     targetSimplifiedRef: "ar_gl/ar_gst@master",
-  }, { fetchImpl });
-  assert.equal(pack.versions.length, 0);
-  assert.equal(pack.targetLiteralFound, false);
-  assert.equal(pack.targetSimplifiedFound, false);
+  };
+
+  // Everything 404s (no repo, no book yet) → absent, still never fatal.
+  const gone = await buildScripturePack(input, {
+    fetchImpl: async () => ({ status: 404, ok: false, headers: null, text: async () => "" }),
+  });
+  assert.equal(gone.versions.length, 0);
+  assert.equal(gone.targetLiteralFound, false);
+  assert.equal(gone.targetSimplifiedFound, false);
+
+  // A network error is NOT absence: swallowing it persisted a context-free pack
+  // that the whole run was then billed against. It must reach the caller so the
+  // context step can retry.
+  await assert.rejects(
+    () => buildScripturePack(input, { fetchImpl: async () => { throw new Error("network down"); } }),
+    /network down/,
+  );
+
+  // Same for a 5xx and for a truncated read (short body vs content-length).
+  await assert.rejects(
+    () => buildScripturePack(input, { fetchImpl: async () => ({ status: 502, ok: false, headers: null, text: async () => "bad gateway" }) }),
+    /HTTP 502/,
+  );
+  await assert.rejects(
+    () => buildScripturePack(input, {
+      fetchImpl: async () => ({
+        status: 200, ok: true, text: async () => "\c 1", headers: { get: (k) => (k.toLowerCase() === "content-length" ? "9000" : null) },
+      }),
+    }),
+    /truncated body/,
+  );
 });
 
 test("renderBatchPack appends the scripture section with per-verse bullets", () => {

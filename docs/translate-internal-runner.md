@@ -78,6 +78,15 @@ workspaceEnv(this.env, resolveWorkspace(this.env, params.workspace))` exactly as
 `exportWorkflow.ts:228-229`; `NonRetryableError` if `params.workspace` is absent.
 Workflows do not inherit the per-request env clone (STATE.md lesson).
 
+Nothing may touch a tenant binding before that resolve has verified the slug —
+not even the failure record. `wf_status_json` is written by an UPDATE keyed by
+`job_id` alone, and job ids are unique only WITHIN a tenant database, so a
+refusal recorded against the still-raw default binding overwrites whatever org
+owns that id there. A run whose workspace cannot be resolved therefore writes
+NOTHING and fails loudly as an errored instance; its `pipeline_jobs` row is left
+to the sweeps that already own abandoned rows (`pipelines.ts` MAX_POLL_ATTEMPTS
+~8h, STUCK_JOB_THRESHOLD_SECONDS 48h).
+
 Key handling: inside each `batch-NN` step, `getAiProviderConfig(this.env.DB)` →
 `resolveDispatchAi` → `decryptApiKey` (same trio as `pipelines.ts:637-649`). Verify
 `row.provider === params.provider`, else fail `ai_provider_changed`. Key is a local
@@ -98,8 +107,51 @@ Steps:
    timeout:'25 minutes'}`: if `work/batch-NN-out.tsv` exists and validates, skip
    (mirrors `translate-pipeline.js:449-454`). Else get source+pack+task from R2,
    decrypt key, run the MAX_BATCH_ATTEMPTS=2 draft+repair loop (`:328-376`
-   verbatim), put output, UPDATE `current_status` + `wf_status_json` (running).
-   Return `{nn, rowCount, attempts, usage, costUsd}`. Error mapping: `invalid_key`,
+   verbatim), UPDATE `current_status` + `wf_status_json` (running), and RETURN
+   the validated output. It is then written by a second step per batch,
+   `batch-NN-persist` (`INFRA_RETRY`), which does nothing but put
+   `work/batch-NN-out.tsv`.
+
+   The split is the cost control, and it is the one place this design
+   deliberately does not keep a step return tiny. A provider call is money and
+   `batch-NN` is retryable, so an R2 failure after a billed call used to have
+   only bad options: retry the step and pay again, or fail the batch. Cloudflare
+   persists a step's return value before the next step runs, so returning the
+   output makes it durable in the engine's own storage the moment `batch-NN`
+   commits; `batch-NN-persist` then retries off that replayed value and never
+   off the provider. Sizes are documented, not assumed — Workflows "Limits" caps
+   a non-stream step result at 1 MiB and per-instance persisted state at 100 MB
+   (Free) / 1 GB (Paid), against ~8-70 KB per batch output and ~1.5 MB for a
+   22-batch run. Step count is 2N+3 (25 for OBA's 11 batches), against 1,024
+   (Free) / 10,000 (Paid). The decrypted key is still never in a step return.
+
+   The 1 MiB cap is enforced, not assumed: batches are bounded by rows and
+   source characters, and the deterministic checks tolerate arbitrary length
+   growth in a translated column, so a valid output CAN exceed it (demonstrated
+   at 1.2 MB from the recorded 15-row batch-01). `batch-NN` measures its
+   serialized return and, at or over 768 KiB (25% headroom, because the measured
+   JSON is a proxy for the engine's own encoding plus its envelope), writes the
+   output itself under the in-step retries below and returns the same
+   "already in R2" marker a reused output returns. An oversized batch therefore
+   degrades to the pre-split behaviour instead of failing to commit — which
+   would have retried the step and re-bought the batch.
+
+   The mid-loop write stays in `batch-NN` because it happens while that step is
+   running: a draft whose checks failed is persisted to `work/batch-NN-draft.json`
+   BEFORE the repair call — text and billed calls in ONE object, because R2 is
+   atomic per object and atomic across none — and resumed from on the next
+   attempt. The retry buys the repair pass, not the draft again, and the resumed
+   batch still reports the draft's tokens and cost, which the org was billed for
+   whether or not the isolate that spent them survived. A `.tsv` plus a `.json`
+   sidecar could land the draft and lose its price, and the resume then billed
+   the repair pass alone. That put keeps the in-step retry and the non-retryable
+   `output_persist_failed` failure.
+
+   The window that stays open — and no arrangement of steps closes it — is an
+   isolate dying after the provider's reply arrives and before `batch-NN`'s
+   return is committed. Nothing durable exists at that instant, so the retry
+   pays again.
+   Return `{nn, rowCount, attempts, usage, costUsd, outputText}`. Error mapping: `invalid_key`,
    `model_not_found`, `context_too_long`, `output_too_long`, `empty_output`,
    checks-still-failing → `NonRetryableError`; `rate_limited`,
    `provider_overloaded`, `timeout`, `network_error` → plain throw (step retries,
@@ -131,6 +183,7 @@ R2 layout mirrors the bot's `work/` so the dry-run compare is a directory diff:
 
 ```
 pipeline-output/<workspaceSlug>/<jobId>/work/batch-NN{.tsv,-pack.md,-task.json,-out.tsv}
+pipeline-output/<workspaceSlug>/<jobId>/work/batch-NN-draft.json  # only when a billed draft failed checks: {output, calls}
 pipeline-output/<workspaceSlug>/<jobId>/out/<tn_OBA.tsv | bible/kt/god.md …>
 pipeline-output/<workspaceSlug>/<jobId>/out/translate-report-<S>-<E>.json
 ```
@@ -193,6 +246,34 @@ Port fixtures (`tn_OBA.tsv`, `tq_OBA.tsv`, `tw_kt_god.md`, `ta_figs-aside/*`) to
   branch (pattern: `pipelineDispatchTimeout.test.mjs`), "no key in params/status/
   error strings" test.
 
+- Engine-level: `translate/workflowEngine.test.mjs`, on the harness in
+  `translate/workflowHarness.mjs` + `translate/workflowHarnessWorker.ts`. Runs the REAL
+  `TranslateWorkflow` class under a real Workflows engine — workerd via miniflare, with
+  D1 (every migration applied) and R2 — and serves every outbound fetch in-process:
+  the DCS raw endpoints, and the Anthropic Messages API as SSE into the real
+  `@anthropic-ai/sdk` inside the Worker, so there is no network and no stubbed
+  adapter. Covers what no step-body test can reach: the whole recorded OBA run
+  through `step.do`; the workspace re-point with a second, differently-keyed tenant
+  present (which key reaches the provider identifies which D1 was read); a missing /
+  unknown slug refusing before either tenant is touched; `NonRetryableError` fatality
+  (one billed call for `invalid_key`, two for the in-step repair loop) against real
+  step retries for a transient; R2 output reuse costing zero calls; and the decrypted
+  key's absence from step returns, instance output/error, D1, R2 and the engine's own
+  on-disk state.
+
+  Two runtime facts it measured, both load-bearing:
+  (a) the engine honours retry `delay` in real time, so the suite spends ~45 s
+  sleeping inside the retry cases — the reason the transient proofs use one-batch
+  jobs and the batch-step case retries once rather than twice;
+  (b) a step's error reaches `run()`'s catch rebuilt as `${name}: ${message}`, which is
+  why `classifyStepError` strips an error-name prefix before reading the `[kind] ` tag.
+  Before that, every failure the catch-all recorded was filed as a retryable
+  `internal_error` instead of its real kind.
+
+  Still needs a deployed worker: Cloudflare's own limits (step return / params size,
+  step and instance timeouts, subrequests per step), instance `terminate()` on cancel,
+  and whether production's engine rebuilds step errors the same way miniflare does.
+
 Live dry run: dev worker, workspace `bsoj`, admin stores an Anthropic key via
 `/api/ai-provider`, `PIPELINE_MODE=internal` in `.dev.vars`, start OBA 1 tn from the
 UI. Compare `pipeline-output/bsoj/<jobId>/` to `dry-run-ar-OBA/`: 153 rows, 11
@@ -217,11 +298,14 @@ drifted), `checks.ok`, Quote byte-identical 153/153, all Notes Arabic, report
 7. tq (near-free), then tw/ta (`articleResolver`, article steps). ~1.5 d.
 
 Risks: (1) Workflow limits (step return/params size, step timeout, subrequests per
-step): content in R2, tiny returns, verify limits in `wrangler dev` before step 4.
+step): content in R2 and small returns, with the one measured exception of
+`batch-NN`'s output (§B step 3); verify limits in `wrangler dev` before step 4.
 (2) Wrong-tenant env: mandatory `params.workspace`, first-line re-point,
 slug-prefixed R2 keys, cloned test. (3) Key exposure: step-local decrypt, scrub on
 every throw, serialized-artifact test, never log params. (4) Double LLM spend on
 step retry: R2 output-reuse check at step start; `NonRetryableError` for
-deterministic failures. (5) Prompt/behavior drift from the bot: sync script +
+deterministic failures; the billed output leaves the paying step as its return
+value so the R2 write can retry without re-buying it. (5) Prompt/behavior drift
+from the bot: sync script +
 checksum test against the skills checkout; dry-run comparison in step 6. OpenAI/xAI
 and Gemini stay proxied until each adapter is smoke-tested.

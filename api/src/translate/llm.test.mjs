@@ -796,6 +796,53 @@ test("runBatch heals a re-normalized pass-through cell instead of failing it", a
   assert.equal(res.rows[0].Quote, SRC_ROW.Quote, "copy-back restores the source bytes");
 });
 
+test("runBatch hands onFailedDraft the draft's own billed calls, and a resume bills them again", async () => {
+  const batch = makeBatch();
+  const broken = `${HEADER}
+1:1	zz99		rc://*/ta/man/translate/figs-metaphor	דְּבַר	1	ترجمة`;
+
+  // Pass 1: the draft fails checks, so the loop hands it to onFailedDraft
+  // BEFORE the repair call. What it hands over is what the caller can store.
+  const drafts = [];
+  const first = stubTransport(() => ok(broken));
+  await assert.rejects(llm.runBatch(deps({ transport: first.transport }), batch, {
+    resource, skill: "translate-tn",
+    onFailedDraft: async (output, checks, calls) => { drafts.push({ output, checks, calls }); },
+  }), (err) => err.code === "checks_failed");
+  assert.equal(drafts.length, 1);
+  assert.equal(drafts[0].output, `${broken}
+`);
+  assert.equal(drafts[0].calls.length, 1, "the draft's price travels with the draft");
+  assert.equal(drafts[0].calls[0].usage.inputTokens, 10);
+
+  // Pass 2, on a fresh step: resuming enters at the repair pass and buys ONE
+  // call — but the ledger it reports is two, because the org paid for two.
+  const second = stubTransport(() => ok(`${HEADER}
+${ROW}`));
+  const res = await llm.runBatch(deps({ transport: second.transport }), batch, {
+    resource, skill: "translate-tn",
+    resume: { output: drafts[0].output, checks: drafts[0].checks, calls: drafts[0].calls },
+  });
+  assert.equal(second.calls.length, 1, "the resumed run buys the repair pass only");
+  assert.equal(res.attempts, 2);
+  assert.equal(res.calls, 2, "…and reports the inherited draft as billed, because it was");
+  assert.equal(res.llmCalls.length, 2);
+  assert.equal(res.llmCalls.reduce((n, c) => n + c.usage.inputTokens, 0), 20);
+
+  // `resume.calls` is optional at this boundary, and an omitted ledger counts
+  // only what this call bought. That is a defensive default, NOT an accepted
+  // under-count: the Workflow caller stores a draft and its ledger in one R2
+  // object (storage.batchKeys `draft`), so it cannot hand runBatch a resumed
+  // draft whose price it has lost.
+  const third = stubTransport(() => ok(`${HEADER}
+${ROW}`));
+  const bare = await llm.runBatch(deps({ transport: third.transport }), batch, {
+    resource, skill: "translate-tn",
+    resume: { output: drafts[0].output, checks: drafts[0].checks },
+  });
+  assert.equal(bare.calls, 1);
+});
+
 test("runBatch propagates a transport failure unchanged (no repair pass on provider errors)", async () => {
   const batch = makeBatch();
   const { calls, transport } = stubTransport(() => { const e = new Error("Overloaded"); e.status = 529; throw e; });
