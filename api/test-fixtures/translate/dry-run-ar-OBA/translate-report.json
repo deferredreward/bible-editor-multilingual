@@ -1,0 +1,242 @@
+{
+  "version": 1,
+  "generatedBy": "bp-assistant/translate",
+  "book": "OBA",
+  "startChapter": 1,
+  "endChapter": 1,
+  "targetLang": "ar",
+  "sourceRef": "unfoldingWord/en_tn@master",
+  "contextRef": "<local-fixture-dir>/ar-context-pack",
+  "contextSha": null,
+  "rowCount": 153,
+  "batches": [
+    {
+      "batch": "01",
+      "rowCount": 15,
+      "attempts": 1,
+      "templateFallbacks": [
+        "writing-quotations",
+        "figs-exclusive",
+        "figs-quotations"
+      ],
+      "slugs": [
+        "figs-metaphor",
+        "translate-names",
+        "writing-quotations",
+        "figs-metonymy",
+        "figs-exclusive",
+        "figs-activepassive",
+        "figs-explicit",
+        "figs-quotations",
+        "figs-idiom",
+        "figs-abstractnouns"
+      ]
+    },
+    {
+      "batch": "02",
+      "rowCount": 15,
+      "attempts": 1,
+      "templateFallbacks": [
+        "writing-quotations",
+        "figs-youcrowd",
+        "figs-123person"
+      ],
+      "slugs": [
+        "writing-quotations",
+        "figs-parallelism",
+        "figs-metaphor",
+        "figs-activepassive",
+        "figs-personification",
+        "figs-youcrowd",
+        "figs-abstractnouns",
+        "figs-123person",
+        "figs-rquestion"
+      ]
+    },
+    {
+      "batch": "03",
+      "rowCount": 15,
+      "attempts": 1,
+      "templateFallbacks": [
+        "figs-hyperbole",
+        "writing-quotations",
+        "figs-doublet",
+        "figs-exclamations"
+      ],
+      "slugs": [
+        "figs-hyperbole",
+        "figs-activepassive",
+        "figs-metaphor",
+        "writing-quotations",
+        "figs-abstractnouns",
+        "figs-doublet",
+        "figs-exclamations",
+        "figs-rquestion",
+        "figs-personification"
+      ]
+    },
+    {
+      "batch": "04",
+      "rowCount": 15,
+      "attempts": 1,
+      "templateFallbacks": [
+        "figs-youcrowd",
+        "figs-aside"
+      ],
+      "slugs": [
+        "figs-explicit",
+        "figs-youcrowd",
+        "figs-parallelism",
+        "figs-ellipsis",
+        "figs-aside",
+        "figs-abstractnouns",
+        "figs-personification",
+        "figs-rquestion",
+        "figs-synecdoche"
+      ]
+    },
+    {
+      "batch": "05",
+      "rowCount": 15,
+      "attempts": 1,
+      "templateFallbacks": [
+        "grammar-connect-logic-goal"
+      ],
+      "slugs": [
+        "translate-names",
+        "figs-synecdoche",
+        "grammar-connect-logic-goal",
+        "figs-metaphor",
+        "figs-activepassive",
+        "figs-idiom",
+        "figs-abstractnouns",
+        "figs-metonymy",
+        "figs-personification"
+      ]
+    },
+    {
+      "batch": "06",
+      "rowCount": 15,
+      "attempts": 1,
+      "templateFallbacks": [
+        "figs-litany",
+        "figs-hendiadys",
+        "figs-gendernotations"
+      ],
+      "slugs": [
+        "figs-explicit",
+        "figs-idiom",
+        "figs-metaphor",
+        "figs-parallelism",
+        "figs-personification",
+        "figs-synecdoche",
+        "figs-litany",
+        "figs-hendiadys",
+        "figs-gendernotations"
+      ]
+    },
+    {
+      "batch": "07",
+      "rowCount": 15,
+      "attempts": 1,
+      "templateFallbacks": [
+        "figs-exclamations",
+        "figs-you",
+        "translate-unknown"
+      ],
+      "slugs": [
+        "figs-idiom",
+        "figs-parallelism",
+        "figs-personification",
+        "figs-exclamations",
+        "figs-you",
+        "translate-unknown",
+        "figs-metaphor",
+        "figs-explicit",
+        "figs-activepassive"
+      ]
+    },
+    {
+      "batch": "08",
+      "rowCount": 15,
+      "attempts": 1,
+      "templateFallbacks": [
+        "writing-pronouns",
+        "figs-doublet"
+      ],
+      "slugs": [
+        "figs-synecdoche",
+        "figs-explicit",
+        "writing-pronouns",
+        "figs-metaphor",
+        "figs-metonymy",
+        "figs-doublet",
+        "figs-abstractnouns",
+        "figs-idiom",
+        "figs-parallelism"
+      ]
+    },
+    {
+      "batch": "09",
+      "rowCount": 15,
+      "attempts": 1,
+      "templateFallbacks": [
+        "translate-unknown",
+        "figs-doublet",
+        "figs-123person"
+      ],
+      "slugs": [
+        "figs-synecdoche",
+        "figs-metonymy",
+        "figs-metaphor",
+        "translate-unknown",
+        "figs-doublet",
+        "figs-explicit",
+        "figs-123person",
+        "figs-ellipsis"
+      ]
+    },
+    {
+      "batch": "10",
+      "rowCount": 15,
+      "attempts": 1,
+      "templateFallbacks": [
+        "grammar-collectivenouns"
+      ],
+      "slugs": [
+        "figs-personification",
+        "figs-ellipsis",
+        "figs-synecdoche",
+        "grammar-collectivenouns",
+        "figs-metaphor",
+        "figs-metonymy",
+        "translate-names",
+        "figs-explicit"
+      ]
+    },
+    {
+      "batch": "11",
+      "rowCount": 3,
+      "attempts": 1,
+      "templateFallbacks": [],
+      "slugs": [
+        "figs-metonymy",
+        "figs-synecdoche"
+      ]
+    }
+  ],
+  "checks": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 1,
+    "errors": [],
+    "warnings": [
+      {
+        "check": "whitespace",
+        "severity": "warning",
+        "rowId": "jrz8",
+        "message": "leading/trailing/double spaces in target Note"
+      }
+    ]
+  }
+}

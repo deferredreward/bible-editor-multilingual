@@ -1,0 +1,146 @@
+// Deterministic-check + TSV round-trip tests for the translate runner.
+// Ported 1:1 from bp-assistant test/translate-checks.test.js (all 13 cases).
+// Fixture: real unfoldingWord/en_tn tn_OBA.tsv (fetched 2026-07-10).
+// Run from api/:
+//   node --experimental-strip-types --no-warnings --test src/translate/checks.test.mjs
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { parseTnTsv, serializeTnTsv, sliceChapterRows } from "./tsvCodec.ts";
+import { runChecks, extractRcLinks } from "./checks.ts";
+import { fixture } from "./fixtures.mjs";
+
+const loadOba = () => parseTnTsv(fixture("tn_OBA.tsv"));
+
+// A fake "perfect translation": pass-through columns untouched, Note replaced
+// with a marker that preserves rc:// links, digits, and bracket structure.
+function fakeTranslateNote(note) {
+  if (!note) return note;
+  const links = extractRcLinks(note);
+  const digits = [...new Set(note.match(/\d+/g) || [])];
+  const opens = (note.match(/\[/g) || []).length;
+  const closes = (note.match(/\]/g) || []).length;
+  const pairs = Math.min(opens, closes);
+  return "ترجمة " + digits.join(" ") + " " + links.join(" ") + " "
+    + "[]".repeat(pairs) + " " + "[".repeat(Math.max(0, opens - pairs))
+    + "]".repeat(Math.max(0, closes - pairs)) + " **م**";
+}
+
+test("tn_OBA.tsv parses and round-trips byte-identically", () => {
+  const raw = fixture("tn_OBA.tsv").replace(/\r\n/g, "\n");
+  const rows = parseTnTsv(raw);
+  assert.ok(rows.length > 100, `expected >100 rows, got ${rows.length}`);
+  const out = serializeTnTsv(rows);
+  assert.equal(out, raw.endsWith("\n") ? raw : raw + "\n");
+});
+
+test("sliceChapterRows includes front matter only from chapter 1", () => {
+  const rows = loadOba();
+  const withFront = sliceChapterRows(rows, 1, 1);
+  assert.ok(withFront.some((r) => r.Reference === "front:intro"));
+  const noFront = sliceChapterRows(rows, 2, 3);
+  assert.ok(!noFront.some((r) => r.Reference === "front:intro"));
+});
+
+test("perfect fake translation passes all error checks", () => {
+  const src = loadOba();
+  const tgt = src.map((r) => ({ ...r, Note: fakeTranslateNote(r.Note) }));
+  const res = runChecks(src, tgt);
+  assert.deepEqual(res.errors, [], JSON.stringify(res.errors.slice(0, 5), null, 2));
+  assert.ok(res.ok);
+});
+
+test("Quote column corruption is a blocking error (the Aquilla failure)", () => {
+  const src = loadOba().slice(0, 5);
+  const tgt = src.map((r) => ({ ...r, Note: fakeTranslateNote(r.Note) }));
+  const victim = tgt.find((r) => r.Quote.trim() !== "");
+  victim.Quote = "Авдий"; // what Aquilla actually did to עֹֽבַדְיָ֑ה
+  const res = runChecks(src, tgt);
+  assert.ok(res.errors.some((e) => e.check === "passthrough-quote" && e.rowId === victim.ID));
+  assert.ok(!res.ok);
+});
+
+test("normalization-only Quote difference is NOT flagged (Hebrew combining-mark reorder)", () => {
+  // The live OBA failure: source Quote and round-tripped Quote are visually
+  // identical Hebrew that differ only in combining-mark order (legacy
+  // consonant-dagesh-vowel vs NFC canonical). Byte-different, NFC-equal. A
+  // byte-wise compare flags it as passthrough corruption; an NFC compare must not.
+  const legacy = "ב" + "ּ" + "ִ"; // bet + dagesh(ccc21) + hiriq(ccc14): non-canonical
+  const canonical = "ב" + "ִ" + "ּ"; // bet + hiriq + dagesh: NFC canonical
+  assert.notEqual(legacy, canonical, "orderings must be byte-different");
+  assert.equal(legacy.normalize("NFC"), canonical.normalize("NFC"), "and NFC-equal");
+  const src = [{ Reference: "1:1", ID: "ab12", Tags: "", SupportReference: "", Quote: legacy, Occurrence: "1", Note: "x" }];
+  const tgt = [{ ...src[0], Quote: canonical, Note: "ترجمة" }];
+  const res = runChecks(src, tgt);
+  assert.ok(!res.errors.some((e) => e.check === "passthrough-quote"),
+    "normalization-only Quote difference must not block: " + JSON.stringify(res.errors));
+  assert.ok(res.ok, JSON.stringify(res.errors.slice(0, 5), null, 2));
+});
+
+test("ID drop / row loss is a blocking error", () => {
+  const src = loadOba().slice(0, 5);
+  const tgt = src.slice(0, 4).map((r) => ({ ...r, Note: fakeTranslateNote(r.Note) }));
+  const res = runChecks(src, tgt);
+  assert.ok(res.errors.some((e) => e.check === "missing-row" && e.rowId === src[4].ID));
+});
+
+test("extra invented row is a blocking error", () => {
+  const src = loadOba().slice(0, 3);
+  const tgt = src.map((r) => ({ ...r, Note: fakeTranslateNote(r.Note) }));
+  tgt.push({ ...src[0], ID: "zz99" });
+  const res = runChecks(src, tgt);
+  assert.ok(res.errors.some((e) => e.check === "extra-row" && e.rowId === "zz99"));
+});
+
+test("extractRcLinks captures the full link body (not just the scheme)", () => {
+  const links = extractRcLinks("see [[rc://*/ta/man/translate/figs-metaphor]] and rc://*/tw/dict/bible/kt/god.");
+  assert.deepEqual(links, ["rc://*/ta/man/translate/figs-metaphor", "rc://*/tw/dict/bible/kt/god"]);
+});
+
+test("CHANGED rc:// link target is a blocking error (not just add/remove)", () => {
+  const src = [{ Reference: "1:1", ID: "ab12", Tags: "", SupportReference: "rc://*/ta/man/translate/figs-metaphor", Quote: "x", Occurrence: "1", Note: "See [[rc://*/ta/man/translate/figs-metaphor]]." }];
+  const tgt = [{ ...src[0], Note: "انظر [[rc://*/ta/man/translate/figs-simile]]." }]; // target slug corrupted
+  const res = runChecks(src, tgt);
+  assert.ok(res.errors.some((e) => e.check === "rc-links" && e.rowId === "ab12"),
+    "a changed rc:// target must be caught: " + JSON.stringify(res.errors));
+});
+
+test("dropped rc:// link is a blocking error", () => {
+  const src = loadOba().filter((r) => /rc:\/\//.test(r.Note)).slice(0, 3);
+  assert.ok(src.length >= 1, "fixture must contain rc:// notes");
+  const tgt = src.map((r) => ({ ...r, Note: "ترجمة بدون روابط" }));
+  const res = runChecks(src, tgt);
+  assert.ok(res.errors.some((e) => e.check === "rc-links"));
+});
+
+test("empty translation is a blocking error; identical passthrough is a warning", () => {
+  const src = loadOba().slice(0, 2);
+  const tgt = [
+    { ...src[0], Note: "" },
+    { ...src[1] }, // untouched note
+  ];
+  const res = runChecks(src, tgt);
+  assert.ok(res.errors.some((e) => e.check === "empty-translation" && e.rowId === src[0].ID));
+  assert.ok(res.warnings.some((w) => w.check === "identical-to-source" && w.rowId === src[1].ID));
+});
+
+test("SupportReference / Reference / Occurrence tampering all block", () => {
+  const src = loadOba().slice(0, 3);
+  const tgt = src.map((r) => ({ ...r, Note: fakeTranslateNote(r.Note) }));
+  tgt[0].SupportReference = "rc://*/ta/man/translate/figs-idiom";
+  tgt[1].Reference = "9:9";
+  tgt[2].Occurrence = "2";
+  const res = runChecks(src, tgt);
+  const checks = res.errors.map((e) => e.check);
+  assert.ok(checks.includes("passthrough-supportreference"), checks.join(","));
+  assert.ok(checks.includes("passthrough-reference"));
+  assert.ok(checks.includes("passthrough-occurrence"));
+});
+
+test("row order shuffle is a blocking error", () => {
+  const src = loadOba().slice(0, 4);
+  const tgt = src.map((r) => ({ ...r, Note: fakeTranslateNote(r.Note) }));
+  [tgt[0], tgt[1]] = [tgt[1], tgt[0]];
+  const res = runChecks(src, tgt);
+  assert.ok(res.errors.some((e) => e.check === "row-order"));
+});
