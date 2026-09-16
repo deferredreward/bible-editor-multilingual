@@ -32,6 +32,7 @@ import { tnContentKey } from "./tnDedup.ts";
 import { IMPORT_CLAIM_STALE_SECONDS } from "./pipelineImportClaim.ts";
 import { nextPreDraftJson } from "./preDraftSnapshot.ts";
 import { fetchBotOutputWith } from "./botOutput.ts";
+import { getText, outKey } from "./translate/storage.ts";
 import { rawUrlOriginError } from "./rawUrlPin.ts";
 import { sameDcsName } from "./repoUrl.ts";
 
@@ -58,8 +59,13 @@ interface ImportContext {
   endChapter: number;
   cfg: ProjectConfig;
   // The bot's own job id (pipeline_jobs.upstream_job_id) — required to fetch
-  // editor-delivery output entries; absent/unused for Door43-branch delivery.
+  // editor-delivery output entries on the PROXY runner; absent/unused for
+  // Door43-branch delivery and for the internal runner (which addresses its
+  // output by the editor's own job id under this workspace's R2 prefix).
   upstreamJobId?: string;
+  // pipeline_jobs.runner (migration 0073): 'internal' reads editor-delivery
+  // bytes from R2; NULL / 'proxy' keeps the bot's output endpoint.
+  runner?: string | null;
 }
 
 export interface ImportResult {
@@ -122,6 +128,24 @@ async function fetchBotOutput(env: Env, upstreamJobId: string, file: string): Pr
   if (!env.BT_API_TOKEN) throw new Error("fetch bot output: BT_API_TOKEN not configured");
   const base = env.PIPELINE_API_BASE || DEFAULT_BOT_BASE;
   return fetchBotOutputWith(fetch, base, env.BT_API_TOKEN, upstreamJobId, file);
+}
+
+// Internal-runner counterpart of fetchBotOutput: the same editor-delivery
+// manifest, but the bytes were written to R2 by TranslateWorkflow's merge-report
+// step instead of being staged on the bot (design §C). Addressed by the EDITOR's
+// job id — the internal runner has no separate upstream id — under this
+// workspace's slug prefix, which is what keeps one org's import from ever
+// reaching another org's output.
+//
+// `entry.file` comes from the manifest, which is JSON the Workflow wrote; outKey
+// runs it through storage.ts's traversal guard anyway, on the rule that a path
+// used to address storage is validated at the point of use, not at the point of
+// trust.
+async function fetchInternalOutput(env: Env, jobId: string, file: string): Promise<string> {
+  const key = outKey(env.WORKSPACE_SLUG ?? "default", jobId, file);
+  const text = await getText(env.BLOBS, key);
+  if (text == null) throw new Error(`fetch internal output: ${key} not found`);
+  return text;
 }
 
 interface StagedRow {
@@ -230,10 +254,18 @@ async function parseOutputEntry(
 
   let raw: string;
   if (isEditorDelivery) {
-    if (!ctx.upstreamJobId) {
-      throw new Error(`editor delivery entry for job ${ctx.jobId} but no upstream_job_id`);
+    if (ctx.runner === "internal") {
+      raw = await fetchInternalOutput(env, ctx.jobId, entry.file!);
+    } else {
+      // Proxy only: the bot's output endpoint is keyed by ITS job id, so a
+      // missing upstream id means we cannot fetch. The internal runner has no
+      // upstream id at all, which is why this requirement moved inside the
+      // proxy branch rather than gating both.
+      if (!ctx.upstreamJobId) {
+        throw new Error(`editor delivery entry for job ${ctx.jobId} but no upstream_job_id`);
+      }
+      raw = await fetchBotOutput(env, ctx.upstreamJobId, entry.file!);
     }
-    raw = await fetchBotOutput(env, ctx.upstreamJobId, entry.file!);
   } else {
     raw = await fetchText(entry.rawUrl!);
   }

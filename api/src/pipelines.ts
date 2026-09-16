@@ -28,8 +28,14 @@ import {
   coverageVerseRange,
   isNarrowerTranslateScope,
 } from "./pipelineDedupSql.ts";
-import { getAiProviderConfig, resolveDispatchAi, scrubSecret } from "./aiProvider.ts";
+import { getAiProviderConfig, resolveDispatchAi, scrubSecret, type DispatchAi } from "./aiProvider.ts";
 import { decryptApiKey } from "./aiKeyCrypto.ts";
+import {
+  buildTranslateWorkflowParams,
+  readInternalStatus,
+  translateInstanceId,
+  translateRunner,
+} from "./translate/dispatch.ts";
 import { applyContextRef } from "./assistedContextRef.ts";
 import { getLatestSuccessfulContextExport } from "./contextExportResults.ts";
 import { broadcastChapter } from "./wsEvents.ts";
@@ -423,6 +429,14 @@ interface PolledJob {
   // Prior poll's error_kind. Lets us detect a *repeated* import failure so a
   // deterministically-bad apply force-fails instead of holding the slot/lock.
   error_kind: string | null;
+  // Which runner is executing this job (migration 0073). 'internal' reads
+  // progress from wf_status_json and output from R2; NULL (pre-0073 rows) and
+  // 'proxy' both mean the Fly bot. Stamped once at dispatch, so a job keeps
+  // polling and importing the way it ran even if PIPELINE_MODE flips.
+  runner: string | null;
+  // The internal runner's status channel — TranslateWorkflow writes a
+  // bot-shaped StatusResponse here (translate/status.ts). NULL for proxy jobs.
+  wf_status_json: string | null;
 }
 
 interface ChainStepValue {
@@ -633,6 +647,8 @@ export async function dispatchNext(env: Env): Promise<void> {
   // subscription (billing correctness).
   let aiApiKey: string | undefined; // plaintext lives ONLY in this function scope
   let aiProvider: string | undefined;
+  let aiModel: string | undefined;
+  let dispatchAi: DispatchAi = { kind: "none" };
   if (job.pipeline_type === "translate") {
     const row = await getAiProviderConfig(env.DB);
     const ai = resolveDispatchAi(row, env.AI_KEY_WRAPPING_KEY);
@@ -640,6 +656,7 @@ export async function dispatchNext(env: Env): Promise<void> {
       await fail("sdk_error", `ai_provider_unavailable: ${ai.reason}`);
       return;
     }
+    dispatchAi = ai;
     if (ai.kind === "configured") {
       try {
         aiApiKey = await decryptApiKey(env.AI_KEY_WRAPPING_KEY!, ai.ciphertext, ai.iv);
@@ -648,8 +665,60 @@ export async function dispatchNext(env: Env): Promise<void> {
         return;
       }
       aiProvider = ai.provider;
+      // Non-null in practice: resolveDispatchAi returns kind:'error'
+      // ("model_missing") before 'configured' when the row has no model.
+      aiModel = ai.model ?? undefined;
       Object.assign(upstreamBody, { provider: ai.provider, model: ai.model, apiKey: aiApiKey });
     }
+  }
+
+  // Internal runner fork (docs/translate-internal-runner.md §D.1). Everything
+  // above — the slot claim, the stamp check, the username, the options snapshot,
+  // the per-org provider resolve — is shared; only the "who actually runs it"
+  // half differs. The internal branch never touches `upstreamBody` (it was built
+  // for the bot's POST and carries the plaintext key, which must not travel) and
+  // never reaches the fetch block below.
+  if (translateRunner(env, job, dispatchAi) === "internal") {
+    // params.workspace is REQUIRED by the Workflow: it re-points its own env on
+    // the first line of run(), because a Workflow does NOT inherit the
+    // per-request env clone. "default" is the implicit single-workspace slug
+    // (workspaces.ts) — the same value workspaceEnv would have stamped — so this
+    // fallback resolves to the same org, and a genuinely unknown slug fails
+    // closed inside the Workflow rather than silently running on another tenant.
+    const workspace = env.WORKSPACE_SLUG ?? "default";
+    const instanceId = translateInstanceId(workspace, job.job_id);
+    try {
+      // provider/model are non-undefined here: translateRunner only answers
+      // 'internal' when resolveDispatchAi returned `configured`, which sets both.
+      const params = buildTranslateWorkflowParams({
+        job,
+        options,
+        workspace,
+        provider: aiProvider!,
+        model: aiModel!,
+      });
+      await env.TRANSLATE_WORKFLOW.create({ id: instanceId, params });
+    } catch (e) {
+      // Same failure path as an upstream reject: fail the row (freeing the slot)
+      // rather than retrying, so we never risk two concurrent runs. Scrubbed on
+      // the same belt-and-braces principle as the upstream body below — the key
+      // is not in params, but an error message is not ours to trust.
+      const raw = e instanceof Error ? e.message : String(e);
+      await fail("sdk_error", `translate_workflow_create_failed: ${aiApiKey ? scrubSecret(raw, aiApiKey) : raw}`);
+      return;
+    }
+    // Same UPDATE the proxy path ends with, plus the runner stamp: the instance
+    // id takes upstream_job_id's place as "the id of the run that is executing
+    // this job", and runner='internal' pins the poll + import path for this row
+    // even if PIPELINE_MODE flips while it is in flight.
+    await env.DB.prepare(
+      `UPDATE pipeline_jobs
+          SET state = 'running', upstream_job_id = ?2, runner = 'internal', updated_at = unixepoch()
+        WHERE job_id = ?1`,
+    )
+      .bind(job.job_id, instanceId)
+      .run();
+    return;
   }
 
   let upstream: Response;
@@ -771,26 +840,38 @@ async function pollPipelineJob(
   if (!job.upstream_job_id) {
     return { kind: "ok", text: "{}", status: 200, state: "queued" };
   }
-  let upstream: Response;
-  try {
-    upstream = await fetch(
-      `${upstreamBase(env)}/api/pipeline/${encodeURIComponent(job.upstream_job_id)}`,
-      { headers: { Authorization: `Bearer ${env.BT_API_TOKEN}` } },
-    );
-  } catch {
-    return { kind: "unreachable" };
-  }
-
-  const text = await upstream.text();
-  if (!upstream.ok) {
-    return { kind: "non_ok", text, status: upstream.status };
-  }
-
+  // The ONLY runner-dependent read in this function (design §D.2). An internal
+  // job's progress lives in pipeline_jobs.wf_status_json, written by
+  // TranslateWorkflow in the bot's own StatusResponse shape — so from here down,
+  // every line treats both runners identically.
   let data: StatusResponse | null = null;
-  try {
-    data = JSON.parse(text) as StatusResponse;
-  } catch {
-    return { kind: "malformed", text };
+  let text: string;
+  let httpStatus = 200;
+  if (job.runner === "internal") {
+    data = readInternalStatus(job);
+    text = JSON.stringify(data);
+  } else {
+    let upstream: Response;
+    try {
+      upstream = await fetch(
+        `${upstreamBase(env)}/api/pipeline/${encodeURIComponent(job.upstream_job_id)}`,
+        { headers: { Authorization: `Bearer ${env.BT_API_TOKEN}` } },
+      );
+    } catch {
+      return { kind: "unreachable" };
+    }
+
+    text = await upstream.text();
+    if (!upstream.ok) {
+      return { kind: "non_ok", text, status: upstream.status };
+    }
+
+    try {
+      data = JSON.parse(text) as StatusResponse;
+    } catch {
+      return { kind: "malformed", text };
+    }
+    httpStatus = upstream.status;
   }
 
   const shouldImport =
@@ -816,8 +897,10 @@ async function pollPipelineJob(
           endChapter: job.end_chapter,
           cfg,
           // Editor-delivery entries are fetched from the bot's output endpoint,
-          // keyed by the bot's own job id.
+          // keyed by the bot's own job id — or, for an internal run, read from
+          // R2 under this job's own prefix (pipelineImport.fetchInternalOutput).
           upstreamJobId: job.upstream_job_id ?? undefined,
+          runner: job.runner,
         },
         data.output,
       );
@@ -829,7 +912,7 @@ async function pollPipelineJob(
         // then fails the set output_json would suppress the retry. Return the
         // upstream status unchanged; the owning poll finalizes when it's done,
         // and the next poll (or this client's next tick) sees the result.
-        return { kind: "ok", text, status: upstream.status, state: data.state ?? "running" };
+        return { kind: "ok", text, status: httpStatus, state: data.state ?? "running" };
       }
       appliedChapters = importResult.applied?.affectedChapters ?? [];
     } catch (err) {
@@ -1002,7 +1085,7 @@ async function pollPipelineJob(
     });
   }
 
-  return { kind: "ok", text: responseText, status: upstream.status, state: effectiveState };
+  return { kind: "ok", text: responseText, status: httpStatus, state: effectiveState };
 }
 
 // Two days. A non-terminal job that hasn't moved in this long is almost
@@ -1160,7 +1243,8 @@ export async function pollAllNonTerminal(env: Env): Promise<void> {
   const rs = await env.DB.prepare(
     `SELECT job_id, upstream_job_id, user_id, pipeline_type, book, start_chapter,
             end_chapter, session_key, follow_up_options, follow_up_chain,
-            follow_up_job_id, error_kind, (output_json IS NULL) AS no_output_yet
+            follow_up_job_id, error_kind, (output_json IS NULL) AS no_output_yet,
+            runner, wf_status_json
        FROM pipeline_jobs
       WHERE state IN ('running', 'paused_for_outage', 'paused_for_usage_limit')
       ORDER BY updated_at ASC
@@ -1594,7 +1678,8 @@ pipelines.get("/:jobId", requireEditor, async (c) => {
     `SELECT job_id, upstream_job_id, user_id, pipeline_type, book, start_chapter,
             end_chapter, session_key, follow_up_options, follow_up_chain,
             follow_up_job_id, error_kind, state, current_skill, current_status,
-            created_at, updated_at, (output_json IS NULL) AS no_output_yet
+            created_at, updated_at, (output_json IS NULL) AS no_output_yet,
+            runner, wf_status_json
        FROM pipeline_jobs WHERE job_id = ?1`,
   )
     .bind(jobId)

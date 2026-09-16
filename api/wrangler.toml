@@ -180,6 +180,18 @@ DEV_AUTH_ENABLED = "true"
 DCS_EXPORT_OWNER = "BibleEditorService"
 TN_QUICK_URL = "https://uw-bt-bot.fly.dev/api/tn-quick"
 PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"
+# Internal translate runner (issue #445, docs/translate-internal-runner.md).
+# OPT-IN: "proxy" (the default, and any value other than "internal") keeps every
+# pipeline job on the Fly bot exactly as before. "internal" routes a job to
+# TRANSLATE_WORKFLOW only when ALL of the remaining gates also pass — the job is
+# a translate job, the org brought its own provider key, and that provider is
+# listed below. Flip this to "internal" in api/.dev.vars for a local dry run
+# rather than here, so a dev deploy can't turn it on for everyone.
+PIPELINE_MODE = "proxy"
+# Providers with an in-Worker adapter. OpenAI / Gemini / xAI stay proxied until
+# each adapter is smoke-tested; blanking this var disables the internal runner
+# on its own.
+PIPELINE_INTERNAL_PROVIDERS = "claude"
 # Dev has two workspaces: the existing dev database (BSOJ, and also the
 # SHARED_DB holding accounts/sessions/lexicon) plus an empty database for the
 # test org. The FIRST entry is the fallback when no be_ws cookie is present,
@@ -278,5 +290,17 @@ NIGHTLY_EXPORTS_ENABLED = "true"
 DCS_EXPORT_OWNER = "BibleEditorService"
 TN_QUICK_URL = "https://uw-bt-bot.fly.dev/api/tn-quick"
 PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"
+# Internal translate runner (issue #445, docs/translate-internal-runner.md).
+# OPT-IN: "proxy" (the default, and any value other than "internal") keeps every
+# pipeline job on the Fly bot exactly as before. "internal" routes a job to
+# TRANSLATE_WORKFLOW only when ALL of the remaining gates also pass — the job is
+# a translate job, the org brought its own provider key, and that provider is
+# listed below. Flip this to "internal" in api/.dev.vars for a local dry run
+# rather than here, so a dev deploy can't turn it on for everyone.
+PIPELINE_MODE = "proxy"
+# Providers with an in-Worker adapter. OpenAI / Gemini / xAI stay proxied until
+# each adapter is smoke-tested; blanking this var disables the internal runner
+# on its own.
+PIPELINE_INTERNAL_PROVIDERS = "claude"
 WORKSPACES = ""
 SUPER_ADMINS = ""
