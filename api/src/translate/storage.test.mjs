@@ -31,6 +31,7 @@ test("batchKeys mirrors the bot's work/ file names and core.buildBatchArtifacts'
     // draft whose checks failed, written before the repair call so a step
     // retry resumes instead of re-buying the draft (workflowSteps.batchStep).
     draft: "pipeline-output/bsoj/job_01HZX/work/batch-03-draft.tsv",
+    draftMeta: "pipeline-output/bsoj/job_01HZX/work/batch-03-draft.json",
   });
   const art = core.buildBatchArtifacts(2, {
     batchRows: [], packMarkdown: "", targetLang: "ar", targetLangName: "Arabic", direction: "rtl", book: "OBA", resource: core.tsvResource("tn"),
