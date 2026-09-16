@@ -32,8 +32,10 @@
 //      for `new NonRetryableError(msg, kind)`, which set `.name` to the kind and
 //      so defeated the engine's own fatality check.
 //   4. Idempotency, and its cost-shaped twin: an instance whose batch output is
-//      already in R2 makes zero model calls, and a step retry that follows a
-//      billed draft resumes from that draft rather than buying it again.
+//      already in R2 makes zero model calls; a step retry that follows a billed
+//      draft resumes from that draft rather than buying it again, and still
+//      bills the org for it; and an R2 refusal of a paid batch's output is
+//      retried against the engine's own persisted step return, not the provider.
 //   5. No decrypted key in anything the runtime persists — step returns,
 //      instance output/error, wf_status_json, the D1 row, R2, or the engine's
 //      own on-disk instance state.
@@ -47,7 +49,7 @@ import { mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { anthropicErrorResponse, anthropicStreamResponse, r2Keys, r2Text, startEngine } from "./workflowHarness.mjs";
+import { FAIL_PUTS_KEY, anthropicErrorResponse, anthropicStreamResponse, r2Keys, r2Text, startEngine } from "./workflowHarness.mjs";
 import { fixture, fixturePackFiles } from "./fixtures.mjs";
 import { batchNn } from "./storage.ts";
 import { BEGIN_OUTPUT, END_OUTPUT } from "./llm.ts";
@@ -449,7 +451,9 @@ test("engine: a transient failure after a billed draft resumes from the draft in
   const status = await s.engine.run("translate-bsoj-draft-resume", SMALL);
   assert.equal(status.status, "complete", `instance errored: ${JSON.stringify(status.error)}`);
   // THE regression assertion: 3, not 4. The retried step entered at the repair
-  // pass with the stored draft, so it bought one call instead of two.
+  // pass with the stored draft, so it bought one call instead of two. (3 HTTP
+  // requests, of which 2 are completions the org was billed for and 1 is the
+  // 429 that produced nothing.)
   assert.equal(s.state.modelCalls, 3, "the step retry must not re-buy the draft it already paid for");
 
   const bucket = await s.engine.r2();
@@ -457,6 +461,53 @@ test("engine: a transient failure after a billed draft resumes from the draft in
   assert.ok(keys.includes("pipeline-output/bsoj/job-1/work/batch-01-draft.tsv"),
     "the billed draft was persisted BEFORE the repair call, which is what made the resume possible");
   assert.ok(keys.includes("pipeline-output/bsoj/job-1/work/batch-01-out.tsv"));
+  assert.equal((await wfStatus(s.engine, "DB")).state, "done");
+
+  // …and the org is billed for BOTH completions. The isolate that bought the
+  // draft died; the charge did not die with it. Before this was carried across
+  // the resume the report showed the repair pass alone, so a run the org paid
+  // twice for reported once — and the report is the only bill they see.
+  assert.ok(keys.includes("pipeline-output/bsoj/job-1/work/batch-01-draft.json"),
+    "the draft's price is persisted beside the draft, which is what makes the accounting survive");
+  assert.deepEqual(
+    JSON.parse(await r2Text(bucket, "pipeline-output/bsoj/job-1/work/batch-01-draft.json")).map((c) => c.usage),
+    [{ inputTokens: 5000, outputTokens: 3000 }],
+  );
+  assert.equal(status.output.calls, 2, "the run's result counts the paid-for draft as well as the repair pass");
+  const report = JSON.parse(await r2Text(bucket, "pipeline-output/bsoj/job-1/out/translate-report-1-1.json"));
+  assert.equal(report.llm.calls, 2, "and so does the report the org reads");
+  assert.equal(report.llm.inputTokens, 10000, "every billed input token, across both isolates");
+  assert.equal(report.llm.outputTokens, 6000);
+  assert.ok(report.llm.estimatedCostUsd > 0);
+  assert.equal(status.output.costUsd, report.llm.estimatedCostUsd);
+});
+
+test("engine: an R2 refusal after a billed batch is retried, and replays the output instead of re-buying it", async (t) => {
+  // Finding B. The provider call is made in batch-NN, which RETURNS the output;
+  // batch-NN-persist writes it. Cloudflare persists a step's return before the
+  // next step runs, so the paid output is already durable when the write is
+  // attempted — and the write is therefore allowed to be retryable. Done inside
+  // one step, this same R2 failure could only be answered by paying again or by
+  // failing the batch.
+  const s = await scenario({ reply: ({ user }) => anthropicStreamResponse({ text: recordedReply(user), model: MODEL }) });
+  t.after(() => s.engine.dispose());
+
+  // THREE refusals, deliberately: the previous shape retried the put three
+  // times INSIDE the paying step, so a single refusal would be absorbed there
+  // and would not tell the two designs apart. Three exhausts that budget and
+  // lands on the step's own retries — where the old shape had already given up
+  // non-retryably (output_persist_failed) and this one has not.
+  const bucket = await s.engine.r2();
+  await bucket.put(FAIL_PUTS_KEY, "3");
+
+  const status = await s.engine.run("translate-bsoj-r2-refuses", SMALL, { binding: "FLAKY_R2_WORKFLOW" });
+  assert.equal(status.status, "complete", `instance errored: ${JSON.stringify(status.error)}`);
+  assert.equal(await bucket.head(FAIL_PUTS_KEY), null, "all three injected R2 failures really fired");
+
+  // THE assertion: one provider call, for a run whose durable write failed.
+  assert.equal(s.state.modelCalls, 1, "the persist retry replayed the stored output; it must not re-buy the batch");
+  assert.ok(await r2Text(bucket, "pipeline-output/bsoj/job-1/work/batch-01-out.tsv"), "and the output did land, on the retry");
+  assert.equal(status.output.calls, 1);
   assert.equal((await wfStatus(s.engine, "DB")).state, "done");
 });
 

@@ -145,6 +145,16 @@ export function anthropicErrorResponse(status, type, message) {
 const TERMINAL = new Set(["complete", "errored", "terminated", "unknown"]);
 
 /**
+ * Write a count to this key to make the FLAKY_R2_WORKFLOW binding refuse that
+ * many batch-output puts (workflowHarnessWorker.FlakyR2TranslateWorkflow reads
+ * the key name from the HARNESS_FAIL_PUTS_KEY var). Each refusal spends one,
+ * and the key is deleted when the budget runs out, so the run eventually
+ * succeeds against a healthy bucket — and a test can assert the budget was
+ * fully spent, which is what proves the failures really happened.
+ */
+export const FAIL_PUTS_KEY = "__harness__/refuse-out-puts";
+
+/**
  * Boot a workerd instance with the real TranslateWorkflow bound.
  *
  * @param {object} opts
@@ -165,8 +175,14 @@ export async function startEngine({ d1, r2 = ["BLOBS"], vars = {}, outbound, per
     compatibilityFlags: ["nodejs_compat"],
     d1Databases: d1,
     r2Buckets: r2,
-    bindings: vars,
-    workflows: { TRANSLATE_WORKFLOW: { name: "bible-editor-translate-test", className: "TranslateWorkflow" } },
+    bindings: { ...vars, HARNESS_FAIL_PUTS_KEY: FAIL_PUTS_KEY },
+    workflows: {
+      TRANSLATE_WORKFLOW: { name: "bible-editor-translate-test", className: "TranslateWorkflow" },
+      // Same real run(), one R2 binding that refuses a single batch-output put
+      // — see workflowHarnessWorker.FlakyR2TranslateWorkflow. Bound separately
+      // so no other proof can accidentally run through it.
+      FLAKY_R2_WORKFLOW: { name: "bible-editor-translate-flaky-test", className: "FlakyR2TranslateWorkflow" },
+    },
     ...(persistDir ? { workflowsPersist: persistDir } : {}),
     outboundService: (request) => outbound(request),
   });
@@ -180,25 +196,30 @@ export async function startEngine({ d1, r2 = ["BLOBS"], vars = {}, outbound, per
     d1: (binding) => mf.getD1Database(binding),
     r2: (binding = "BLOBS") => mf.getR2Bucket(binding),
 
-    /** Ask the engine to create an instance of the real Workflow. */
-    async create(id, params) {
-      const res = await mf.dispatchFetch("http://harness/create", { method: "POST", body: JSON.stringify({ id, params }) });
+    /**
+     * Ask the engine to create an instance of the real Workflow. `binding`
+     * selects which class the engine instantiates; it defaults to the real
+     * TranslateWorkflow and only the one-shot-R2-failure proof passes anything
+     * else (FLAKY_R2_WORKFLOW).
+     */
+    async create(id, params, binding = "TRANSLATE_WORKFLOW") {
+      const res = await mf.dispatchFetch(`http://harness/create?binding=${encodeURIComponent(binding)}`, { method: "POST", body: JSON.stringify({ id, params }) });
       const body = await res.json();
       if (!res.ok) throw new Error(`create(${id}) failed: ${JSON.stringify(body)}`);
       return body;
     },
 
-    async status(id) {
-      const res = await mf.dispatchFetch(`http://harness/status?id=${encodeURIComponent(id)}`);
+    async status(id, binding = "TRANSLATE_WORKFLOW") {
+      const res = await mf.dispatchFetch(`http://harness/status?id=${encodeURIComponent(id)}&binding=${encodeURIComponent(binding)}`);
       return res.json();
     },
 
     /** Poll the engine until the instance reaches a terminal status. */
-    async run(id, params, { timeoutMs = 300000, pollMs = 100 } = {}) {
-      await this.create(id, params);
+    async run(id, params, { timeoutMs = 300000, pollMs = 100, binding = "TRANSLATE_WORKFLOW" } = {}) {
+      await this.create(id, params, binding);
       const deadline = Date.now() + timeoutMs;
       for (;;) {
-        const s = await this.status(id);
+        const s = await this.status(id, binding);
         if (TERMINAL.has(s.status)) return s;
         if (Date.now() > deadline) throw new Error(`instance ${id} still ${s.status} after ${timeoutMs}ms`);
         await new Promise((r) => setTimeout(r, pollMs));
