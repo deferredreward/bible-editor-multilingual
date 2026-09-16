@@ -22,16 +22,18 @@
 //      lands `done`; pipeline_jobs.state / output_json are never written.
 //   2. The re-point re-points: a run for workspace A reads A's provider key and
 //      writes A's D1 row and A's R2 prefix, with a second, differently-seeded
-//      tenant present. A missing / unknown workspace refuses before either
-//      tenant is touched.
+//      tenant present. A missing / unknown workspace refuses without modifying
+//      one column of EITHER tenant's row — job ids collide across tenant
+//      databases, so recording that refusal was itself a cross-tenant write.
 //   3. Non-retryability is real: a deterministic provider failure runs the batch
 //      step ONCE (one billed call); a checks failure runs it once (two calls —
 //      the in-step draft+repair loop, not a step retry); a transient failure is
 //      retried by the engine and the run completes. This is the regression test
 //      for `new NonRetryableError(msg, kind)`, which set `.name` to the kind and
 //      so defeated the engine's own fatality check.
-//   4. Idempotency: an instance whose batch output is already in R2 makes zero
-//      model calls.
+//   4. Idempotency, and its cost-shaped twin: an instance whose batch output is
+//      already in R2 makes zero model calls, and a step retry that follows a
+//      billed draft resumes from that draft rather than buying it again.
 //   5. No decrypted key in anything the runtime persists — step returns,
 //      instance output/error, wf_status_json, the D1 row, R2, or the engine's
 //      own on-disk instance state.
@@ -313,37 +315,48 @@ test("engine: a run for workspace B reads B's key, writes B's D1 and B's R2 pref
   assert.deepEqual(keys.filter((k) => !k.startsWith("pipeline-output/org2/")), [], "every key written is under B's prefix");
 });
 
-test("engine: a missing or unknown workspace refuses, records the failure, and touches neither tenant", async (t) => {
+test("engine: a missing or unknown workspace refuses without touching ANY tenant's row", async (t) => {
   const s = await scenario({ reply: () => { throw new Error("the model must never be called"); } });
   t.after(() => s.engine.dispose());
 
   const { workspace, ...noWorkspace } = SMALL;
   assert.equal(workspace, "bsoj");
 
+  // Both tenants hold a row for THIS job id, and that collision is the point:
+  // status.writeWfStatus is an UPDATE keyed by job_id alone, so a refusal
+  // recorded against the still-raw default binding lands on whichever org owns
+  // that id there. run() used to build deps before the resolve precisely so a
+  // refusal could be recorded — which made every refusal a cross-tenant write.
+  const before = { DB: await jobRow(s.engine, "DB"), DB_ORG2: await jobRow(s.engine, "DB_ORG2") };
+
   const missing = await s.engine.run("translate-missing-ws", noWorkspace);
   assert.equal(missing.status, "errored");
-  const afterMissing = await wfStatus(s.engine, "DB");
-  assert.equal(afterMissing.state, "failed");
-  assert.equal(afterMissing.current.errorKind, "workspace_missing");
-
   const unknown = await s.engine.run("translate-unknown-ws", { ...SMALL, workspace: "retired-org" });
   assert.equal(unknown.status, "errored");
-  const afterUnknown = await wfStatus(s.engine, "DB");
-  assert.equal(afterUnknown.state, "failed");
-  assert.equal(afterUnknown.current.errorKind, "workspace_unknown");
-  assert.match(afterUnknown.current.error, /retired-org/);
 
-  // Neither refusal read a tenant's key, produced output, or reached org2 —
-  // whose D1 is the one resolveWorkspace() would have handed back for an
-  // unknown slug if the guard were not there.
+  // Measured, and the reason run() logs the refusal: the engine reports a
+  // NonRetryableError thrown out of run() as a generic WorkflowFatalError and
+  // DROPS the message, so the instance error does not name the kind. With no
+  // row to write it to either, console.error is the only channel left — hence
+  // the log line in translateWorkflow.ts carrying jobId, slug and kind.
+  for (const status of [missing, unknown]) {
+    assert.equal(status.error?.name, "WorkflowFatalError");
+    assert.doesNotMatch(JSON.stringify(status.error), /workspace_(missing|unknown)/,
+      "if the engine ever starts propagating the message, say so here instead of relying on the log");
+  }
+
+  // THE regression assertion: not one column of either row moved — not
+  // wf_status_json, not current_skill / current_status, not even updated_at.
+  // The refusal is loud in the instance and silent in every database, and the
+  // row is left to pipelines.ts's poll-count / 48h sweeps.
+  for (const binding of ["DB", "DB_ORG2"]) {
+    assert.deepEqual(await jobRow(s.engine, binding), before[binding], `${binding}: a refusal modified a tenant row`);
+  }
+
+  // And nothing else was touched either — org2's D1 is the one resolveWorkspace()
+  // would have handed back for an unknown slug if the guard were not there.
   assert.equal(s.state.modelCalls, 0);
   assert.deepEqual(await r2Keys(await s.engine.r2()), []);
-  assert.equal(await wfStatus(s.engine, "DB_ORG2"), null, "org2 never saw either refusal");
-  for (const binding of ["DB", "DB_ORG2"]) {
-    const row = await jobRow(s.engine, binding);
-    assert.equal(row.state, "running");
-    assert.equal(row.output_json, null);
-  }
 });
 
 // ---------------------------------------------------------------------------
@@ -418,6 +431,32 @@ test("engine: a transient provider failure is retried by the batch step and the 
   const status = await s.engine.run("translate-bsoj-rate-limited", SMALL);
   assert.equal(status.status, "complete", `instance errored: ${JSON.stringify(status.error)}`);
   assert.equal(s.state.modelCalls, 2, "rate_limited is retryable: the engine re-ran the batch step");
+  assert.equal((await wfStatus(s.engine, "DB")).state, "done");
+});
+
+test("engine: a transient failure after a billed draft resumes from the draft instead of re-drafting", async (t) => {
+  // The double-spend window review finding: runBatch bills a draft, the draft
+  // fails checks, and the repair call then dies on a provider transient. The
+  // step is retryable (correctly — a 429 recovers), so the engine re-runs it;
+  // without a durable draft that re-run buys the draft a SECOND time.
+  const s = await scenario({ reply: ({ n, user }) => {
+    if (n === 1) return anthropicStreamResponse({ text: recordedReply(user, { drop: 1 }), model: MODEL });
+    if (n === 2) return anthropicErrorResponse(429, "rate_limit_error", "slow down");
+    return anthropicStreamResponse({ text: recordedReply(user), model: MODEL });
+  } });
+  t.after(() => s.engine.dispose());
+
+  const status = await s.engine.run("translate-bsoj-draft-resume", SMALL);
+  assert.equal(status.status, "complete", `instance errored: ${JSON.stringify(status.error)}`);
+  // THE regression assertion: 3, not 4. The retried step entered at the repair
+  // pass with the stored draft, so it bought one call instead of two.
+  assert.equal(s.state.modelCalls, 3, "the step retry must not re-buy the draft it already paid for");
+
+  const bucket = await s.engine.r2();
+  const keys = await r2Keys(bucket);
+  assert.ok(keys.includes("pipeline-output/bsoj/job-1/work/batch-01-draft.tsv"),
+    "the billed draft was persisted BEFORE the repair call, which is what made the resume possible");
+  assert.ok(keys.includes("pipeline-output/bsoj/job-1/work/batch-01-out.tsv"));
   assert.equal((await wfStatus(s.engine, "DB")).state, "done");
 });
 
