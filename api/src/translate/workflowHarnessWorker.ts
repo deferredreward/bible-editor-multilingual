@@ -19,12 +19,14 @@ import { TranslateWorkflow, type TranslateWorkflowParams, type TranslateWorkflow
 export { TranslateWorkflow };
 
 /**
- * TEST-ONLY subclass, bound separately and used by exactly one proof: the one
- * that has to make an R2 write fail AFTER a batch has been paid for, to show
- * that its retry replays the persisted output instead of re-buying it. Nothing
- * about the Workflow is overridden — run() is the real one — and the only
- * substitution is an R2 binding that refuses one put of a batch output. Every
- * other proof drives the real class through the real binding.
+ * TEST-ONLY subclass, bound separately and used by the proofs that have to make
+ * an R2 write fail AFTER a batch has been paid for: the batch output, to show
+ * that its retry replays the persisted output instead of re-buying it, and the
+ * billed draft, to show that a refusal cannot separate a draft from its price.
+ * Nothing about the Workflow is overridden — run() is the real one — and the
+ * only substitution is an R2 binding that refuses a budgeted number of puts of
+ * keys ending in HARNESS_FAIL_PUTS_SUFFIX. Every other proof drives the real
+ * class through the real binding.
  */
 export class FlakyR2TranslateWorkflow extends TranslateWorkflow {
   async run(event: WorkflowEvent<TranslateWorkflowParams>, step: WorkflowStep): Promise<TranslateWorkflowResult> {
@@ -41,7 +43,8 @@ export class FlakyR2TranslateWorkflow extends TranslateWorkflow {
       BLOBS: {
         get: (key: string) => real.get(key),
         async put(key: string, value: string, opts?: unknown) {
-          if (budgetKey && key.endsWith("-out.tsv")) {
+          const suffix = String(self.env.HARNESS_FAIL_PUTS_SUFFIX ?? "-out.tsv");
+          if (budgetKey && key.endsWith(suffix)) {
             const obj = await real.get(budgetKey);
             const left = obj ? Number(await obj.text()) : 0;
             if (left > 0) {

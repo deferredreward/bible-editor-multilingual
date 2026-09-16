@@ -146,11 +146,12 @@ const TERMINAL = new Set(["complete", "errored", "terminated", "unknown"]);
 
 /**
  * Write a count to this key to make the FLAKY_R2_WORKFLOW binding refuse that
- * many batch-output puts (workflowHarnessWorker.FlakyR2TranslateWorkflow reads
- * the key name from the HARNESS_FAIL_PUTS_KEY var). Each refusal spends one,
- * and the key is deleted when the budget runs out, so the run eventually
- * succeeds against a healthy bucket — and a test can assert the budget was
- * fully spent, which is what proves the failures really happened.
+ * many puts of keys ending in `failPutsSuffix` (default `-out.tsv`;
+ * workflowHarnessWorker.FlakyR2TranslateWorkflow reads the key name from the
+ * HARNESS_FAIL_PUTS_KEY var and the suffix from HARNESS_FAIL_PUTS_SUFFIX). Each
+ * refusal spends one, and the key is deleted when the budget runs out, so the
+ * run eventually succeeds against a healthy bucket — and a test can assert the
+ * budget was fully spent, which is what proves the failures really happened.
  */
 export const FAIL_PUTS_KEY = "__harness__/refuse-out-puts";
 
@@ -164,8 +165,10 @@ export const FAIL_PUTS_KEY = "__harness__/refuse-out-puts";
  * @param {(req: Request) => Promise<Response>} opts.outbound serves EVERY fetch the worker makes
  * @param {string} [opts.persistDir] write the engine's instance state here, so a
  *        test can read back every byte the Workflows runtime put on disk
+ * @param {string} [opts.failPutsSuffix] which R2 keys FLAKY_R2_WORKFLOW refuses
+ *        (default `-out.tsv`); the budget itself lives at FAIL_PUTS_KEY
  */
-export async function startEngine({ d1, r2 = ["BLOBS"], vars = {}, outbound, persistDir }) {
+export async function startEngine({ d1, r2 = ["BLOBS"], vars = {}, outbound, persistDir, failPutsSuffix = "-out.tsv" }) {
   const { Miniflare } = await import(nodeModule("miniflare/dist/src/index.js"));
   const contents = await workerBundle();
   const mf = new Miniflare({
@@ -175,7 +178,7 @@ export async function startEngine({ d1, r2 = ["BLOBS"], vars = {}, outbound, per
     compatibilityFlags: ["nodejs_compat"],
     d1Databases: d1,
     r2Buckets: r2,
-    bindings: { ...vars, HARNESS_FAIL_PUTS_KEY: FAIL_PUTS_KEY },
+    bindings: { ...vars, HARNESS_FAIL_PUTS_KEY: FAIL_PUTS_KEY, HARNESS_FAIL_PUTS_SUFFIX: failPutsSuffix },
     workflows: {
       TRANSLATE_WORKFLOW: { name: "bible-editor-translate-test", className: "TranslateWorkflow" },
       // Same real run(), one R2 binding that refuses a single batch-output put

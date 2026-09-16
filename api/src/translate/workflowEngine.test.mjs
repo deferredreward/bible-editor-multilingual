@@ -120,6 +120,25 @@ function recordedReply(user, { drop = 0 } = {}) {
   return wrapped(`${RECORDED.header}\n${body}`);
 }
 
+const MIB = 1024 * 1024;
+
+// A padding unit for an oversized output: one space plus four Arabic letters.
+// Deliberately harmless to every deterministic check — no tab or newline, no
+// rc:// link, no digit, never two spaces in a row — so the inflated output
+// VALIDATES and reaches the step return exactly as a normal one would.
+const PAD_UNIT = " كلمة";
+
+/** The recorded reply for this prompt, with every Note inflated by `units` pads. */
+function inflatedReply(user, units) {
+  const pad = PAD_UNIT.repeat(units);
+  return recordedReply(user).split("\n").map((line) => {
+    if (!line.includes("\t") || line.startsWith("Reference\t")) return line;
+    const cells = line.split("\t");
+    cells[cells.length - 1] += pad;
+    return cells.join("\t");
+  }).join("\n");
+}
+
 // --- outbound (DCS + Anthropic), the only fakes, and both outside the Worker -
 
 /** The recorded Arabic tn_OBA.tsv, used as the already-published target book. */
@@ -189,7 +208,7 @@ async function seedTenant(d1, { jobId = JOB, state = "running", provider = "clau
  * migrations is about a second, and shared D1 state between proofs would make
  * every assertion order-dependent.
  */
-async function scenario({ files = dcsFiles({ withTarget: ARABIC_BOOK }), reply, dcs, tenantA = {}, tenantB = {}, persist = false } = {}) {
+async function scenario({ files = dcsFiles({ withTarget: ARABIC_BOOK }), reply, dcs, tenantA = {}, tenantB = {}, persist = false, failPutsSuffix } = {}) {
   const out = outbound({ files, reply, dcs });
   const persistDir = persist ? mkdtempSync(join(tmpdir(), "bem-wf-")) : undefined;
   const engine = await startEngine({
@@ -198,6 +217,7 @@ async function scenario({ files = dcsFiles({ withTarget: ARABIC_BOOK }), reply, 
     vars: { WORKSPACES, AI_KEY_WRAPPING_KEY: WRAP },
     outbound: out.handler,
     persistDir,
+    ...(failPutsSuffix ? { failPutsSuffix } : {}),
   });
   await seedTenant(await engine.d1("DB"), { key: KEY_A, ...tenantA });
   await seedTenant(await engine.d1("DB_ORG2"), { key: KEY_B, ...tenantB });
@@ -458,7 +478,7 @@ test("engine: a transient failure after a billed draft resumes from the draft in
 
   const bucket = await s.engine.r2();
   const keys = await r2Keys(bucket);
-  assert.ok(keys.includes("pipeline-output/bsoj/job-1/work/batch-01-draft.tsv"),
+  assert.ok(keys.includes("pipeline-output/bsoj/job-1/work/batch-01-draft.json"),
     "the billed draft was persisted BEFORE the repair call, which is what made the resume possible");
   assert.ok(keys.includes("pipeline-output/bsoj/job-1/work/batch-01-out.tsv"));
   assert.equal((await wfStatus(s.engine, "DB")).state, "done");
@@ -467,12 +487,14 @@ test("engine: a transient failure after a billed draft resumes from the draft in
   // draft died; the charge did not die with it. Before this was carried across
   // the resume the report showed the repair pass alone, so a run the org paid
   // twice for reported once — and the report is the only bill they see.
-  assert.ok(keys.includes("pipeline-output/bsoj/job-1/work/batch-01-draft.json"),
-    "the draft's price is persisted beside the draft, which is what makes the accounting survive");
-  assert.deepEqual(
-    JSON.parse(await r2Text(bucket, "pipeline-output/bsoj/job-1/work/batch-01-draft.json")).map((c) => c.usage),
-    [{ inputTokens: 5000, outputTokens: 3000 }],
-  );
+  //
+  // The price is IN the draft object, not beside it: R2 is atomic per object
+  // and atomic across none, so a text/price pair could land half of itself.
+  assert.deepEqual(keys.filter((k) => k.includes("-draft")), ["pipeline-output/bsoj/job-1/work/batch-01-draft.json"],
+    "one object holds the draft and its price; there is no second key to lose");
+  const draft = JSON.parse(await r2Text(bucket, "pipeline-output/bsoj/job-1/work/batch-01-draft.json"));
+  assert.deepEqual(draft.calls?.map((c) => c.usage), [{ inputTokens: 5000, outputTokens: 3000 }]);
+  assert.ok(draft.output.includes("\t"), "and the draft TSV the resume reads back rides in it");
   assert.equal(status.output.calls, 2, "the run's result counts the paid-for draft as well as the repair pass");
   const report = JSON.parse(await r2Text(bucket, "pipeline-output/bsoj/job-1/out/translate-report-1-1.json"));
   assert.equal(report.llm.calls, 2, "and so does the report the org reads");
@@ -480,6 +502,69 @@ test("engine: a transient failure after a billed draft resumes from the draft in
   assert.equal(report.llm.outputTokens, 6000);
   assert.ok(report.llm.estimatedCostUsd > 0);
   assert.equal(status.output.costUsd, report.llm.estimatedCostUsd);
+});
+
+test("engine: one R2 refusal while storing a billed draft cannot separate it from its price", async (t) => {
+  // The draft is written mid-step, so the step's own retries cannot cover it —
+  // persistBilled's in-step retries are all it has. When the price lived in a
+  // separate best-effort put, one refusal there landed the draft without its
+  // ledger, and the resumed batch billed the repair pass alone. One object
+  // means one put, so the refusal is either absorbed or loses the whole draft.
+  const s = await scenario({
+    failPutsSuffix: "-draft.json",
+    reply: ({ n, user }) => {
+      if (n === 1) return anthropicStreamResponse({ text: recordedReply(user, { drop: 1 }), model: MODEL });
+      if (n === 2) return anthropicErrorResponse(429, "rate_limit_error", "slow down");
+      return anthropicStreamResponse({ text: recordedReply(user), model: MODEL });
+    },
+  });
+  t.after(() => s.engine.dispose());
+
+  // One refusal: enough to have destroyed the sidecar, not enough to exhaust
+  // persistBilled's budget of three.
+  const bucket = await s.engine.r2();
+  await bucket.put(FAIL_PUTS_KEY, "1");
+
+  const status = await s.engine.run("translate-bsoj-draft-put-refused", SMALL, { binding: "FLAKY_R2_WORKFLOW" });
+  assert.equal(status.status, "complete", `instance errored: ${JSON.stringify(status.error)}`);
+  assert.equal(await bucket.head(FAIL_PUTS_KEY), null, "the injected R2 refusal really fired");
+  assert.equal(s.state.modelCalls, 3, "the step retry still resumed from the draft rather than re-drafting");
+
+  const draft = JSON.parse(await r2Text(bucket, "pipeline-output/bsoj/job-1/work/batch-01-draft.json"));
+  assert.deepEqual(draft.calls?.map((c) => c.usage), [{ inputTokens: 5000, outputTokens: 3000 }],
+    "the ledger survived the refusal in the same object as the draft it belongs to");
+
+  // THE assertion: the bill the org reads is the whole bill, refusal or not.
+  assert.equal(status.output.calls, 2);
+  const report = JSON.parse(await r2Text(bucket, "pipeline-output/bsoj/job-1/out/translate-report-1-1.json"));
+  assert.equal(report.llm.calls, 2, "both completions, after an R2 refusal in the middle of recording one");
+  assert.equal(report.llm.inputTokens, 10000);
+});
+
+test("engine: an output too large for a step return is persisted inside the paying step, and bought once", async (t) => {
+  // Cloudflare refuses to persist a non-stream step result over 1 MiB. batch-NN
+  // returns its output, so an unbounded return is a step that cannot commit —
+  // the engine retries it, and the retry re-buys the batch. Nothing bounded the
+  // output: batches are capped by rows and source characters, and the
+  // deterministic checks tolerate arbitrary growth in a translated column.
+  const s = await scenario({ reply: ({ user }) =>
+    anthropicStreamResponse({ text: inflatedReply(user, 9000), model: MODEL }) });
+  t.after(() => s.engine.dispose());
+
+  const status = await s.engine.run("translate-bsoj-oversized", SMALL);
+  assert.equal(status.status, "complete", `instance errored: ${JSON.stringify(status.error)}`);
+  assert.equal(s.state.modelCalls, 1, "an oversized batch must never cause a second paid call");
+
+  const bucket = await s.engine.r2();
+  const out = await r2Text(bucket, "pipeline-output/bsoj/job-1/work/batch-01-out.tsv");
+  assert.ok(Buffer.byteLength(out, "utf8") > MIB, `the output really is oversized (${Buffer.byteLength(out, "utf8")} bytes)`);
+
+  // THE assertion, against what the engine itself persisted: every step return
+  // of this run, together, is smaller than the cap ONE of them would have blown.
+  const returns = Buffer.byteLength(JSON.stringify(status.__LOCAL_DEV_STEP_OUTPUTS ?? null), "utf8");
+  assert.ok(returns > 2, "the engine really recorded per-step returns");
+  assert.ok(returns < MIB, `no step return may approach the 1 MiB cap (all of them together were ${returns} bytes)`);
+  assert.equal((await wfStatus(s.engine, "DB")).state, "done");
 });
 
 test("engine: an R2 refusal after a billed batch is retried, and replays the output instead of re-buying it", async (t) => {
