@@ -1,8 +1,10 @@
 # CLAUDE.md
 
-> Deployed to `https://bible-editor-api.unfoldingword.workers.dev` (Cloudflare Workers, unfoldingWord account). The default env in `api/wrangler.toml` carries dev-friendly values for `wrangler dev` and is named `bible-editor-api-dev` with **no crons**, so a plain `wrangler deploy` lands on a separate dev worker instead of overwriting prod; prod (worker name `bible-editor-api`, crons registered) lives under `[env.production.*]` and ships via `wrangler deploy --env production`. Any `--remote` D1 / `wrangler secret` / `wrangler tail` command needs `--env production` to target the deployed worker.
+> Deployed to `https://bptranslate.unfoldingword.workers.dev` (Cloudflare Workers, unfoldingWord account). The default env in `api/wrangler.toml` carries dev-friendly values for `wrangler dev` and is named `bptranslate-dev` with **no crons**, so a plain `wrangler deploy` lands on a separate dev worker instead of overwriting prod; prod (worker name `bptranslate`, crons registered) lives under `[env.production.*]` and ships via `wrangler deploy --env production`. Any `--remote` D1 / `wrangler secret` / `wrangler tail` command needs `--env production` to target the deployed worker.
 
-> **Dev D1 database separated.** Created `bible_editor_dev` (ID: `ceb458bf-4608-4696-a087-9026618a6cef`) as the default remote target for `wrangler d1 ... --remote`. Production ID (`7e566abf-454d-43d6-b24e-11df74f1c0ed`) is isolated to `[env.production.*]` so `wrangler deploy --env production` targets prod only. `wrangler dev` (local) remains unchanged — it uses a local SQLite file and never touches remote.
+> **Renamed off the shared bible-editor footprint on 2026-09-16 (issue #444).** Every Cloudflare resource this app uses was byte-identical to upstream `unfoldingWord/bible-editor` — same worker, same D1, same R2, same Workflow — so a deploy from either repo landed on the same worker. `api/wrangler.toml` now names its own set under the `bptranslate` prefix, still on the unfoldingWord account. The old `bible-editor-*` resources are untouched and still hold the live data; the remaining human steps (DCS OAuth app, secrets, data move, cutover) are in [`docs/cloudflare-migration-2026-09.md`](docs/cloudflare-migration-2026-09.md). Until that runbook is worked through, the new resources are **empty**.
+>
+> **Dev D1 database separated.** `bptranslate_dev` (ID: `c4ae5e6d-6fb4-4ffc-a82a-008e793c691c`) is the default remote target for `wrangler d1 ... --remote`; the per-org dev DB is `bptranslate_mltest_dev` (ID: `5c09dc0f-7bb4-4177-a167-3ffe17944866`). The production ID (`247c4a41-eaf4-4d49-bce2-68f4d1bbe00e`, database `bptranslate`) is isolated to `[env.production.*]` so `wrangler deploy --env production` targets prod only. `wrangler dev` (local) remains unchanged — it uses a local SQLite file and never touches remote.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -89,9 +91,9 @@ npx playwright test tests/concurrency/s2-same-verse.spec.ts -g "<grep>"
 API-only operations (from `api/`):
 
 ```sh
-npx wrangler d1 migrations apply bible_editor_dev --local                   # apply migrations locally
-npx wrangler d1 migrations apply bible_editor --remote --env production     # apply migrations to prod
-npx wrangler d1 execute bible_editor_dev --local --file=../scripts/out/import-ZEC.sql
+npx wrangler d1 migrations apply bptranslate_dev --local                    # apply migrations locally
+npx wrangler d1 migrations apply bptranslate --remote --env production      # apply migrations to prod
+npx wrangler d1 execute bptranslate_dev --local --file=../scripts/out/import-ZEC.sql
 npm run tail                                                                 # wrangler tail (live API logs)
 ```
 
@@ -214,17 +216,17 @@ Run order:
 
 ### Deploy
 
-> **`npm run deploy` ships to PRODUCTION.** It resolves to `wrangler deploy --env production` (`api/package.json` `deploy` script). Do **not** use it for a dev push — it got us once already. To deploy the **dev** worker (`bible-editor-api-dev`), build the SPA then run a plain `wrangler deploy` (no `--env`) from `api/`:
+> **`npm run deploy` ships to PRODUCTION.** It resolves to `wrangler deploy --env production` (`api/package.json` `deploy` script). Do **not** use it for a dev push — it got us once already. To deploy the **dev** worker (`bptranslate-dev`), build the SPA then run a plain `wrangler deploy` (no `--env`) from `api/`:
 > ```sh
 > npm run build:web                              # from repo root → web/dist
-> cd api && npx wrangler deploy                  # NO --env → dev worker bible-editor-api-dev
+> cd api && npx wrangler deploy                  # NO --env → dev worker bptranslate-dev
 > ```
-> Same rule for D1: a plain `--remote` migration targets the **dev** databases (`bible_editor_dev`, `bible_editor_mltest_dev`); prod requires `--env production`. So `--remote` without `--env production` is the safe dev target.
+> Same rule for D1: a plain `--remote` migration targets the **dev** databases (`bptranslate_dev`, `bptranslate_mltest_dev`); prod requires `--env production`. So `--remote` without `--env production` is the safe dev target.
 >
-> **Non-interactive gotcha:** two Cloudflare accounts are authed on this box, so `wrangler deploy` / `d1 ... --remote` fail with *"More than one account available… non-interactive mode"*. Export `CLOUDFLARE_ACCOUNT_ID=5a3ffd86280d3ed086be76d955829242` (unfoldingWord — where all three DBs `bible_editor`, `bible_editor_dev`, `bible_editor_mltest_dev` and the workers live) for the command. Only prod `bible_editor` is targeted by name+`--env production`, so dev commands that name the `_dev` DBs never touch it.
+> **Non-interactive gotcha:** two Cloudflare accounts are authed on this box, so `wrangler deploy` / `d1 ... --remote` fail with *"More than one account available… non-interactive mode"*. Export `CLOUDFLARE_ACCOUNT_ID=5a3ffd86280d3ed086be76d955829242` (unfoldingWord — where all three DBs `bptranslate`, `bptranslate_dev`, `bptranslate_mltest_dev` and the workers live, alongside the old `bible_editor*` set) for the command. Only prod `bptranslate` is targeted by name+`--env production`, so dev commands that name the `_dev` DBs never touch it.
 
 Single command from repo root: `npm run deploy` builds `web/dist` then runs `wrangler deploy --env production` from `api/`. The Worker serves both `/api/*` and the SPA. See [`docs/deploy.md`](docs/deploy.md) for first-time provisioning (D1 create, R2 bucket, secrets `JWT_SIGNING_KEY` / `DCS_CLIENT_ID` / `DCS_CLIENT_SECRET` / `DCS_SERVICE_TOKEN` / `BT_API_TOKEN`).
 
-**From GitHub Actions:** the only deploy workflow in this fork is `.github/workflows/deploy-dev.yml` ("Deploy to dev"), manual-only via *Run workflow*, and it ships the **dev** worker (flagless `wrangler deploy`). There is deliberately no prod deploy button here. Two caveats: a dispatch runs the workflow file from whichever ref you select, and older branches still carry the pre-rename prod-deploying `deploy.yml` — so keep the token's Workers-Scripts scope dev-only — but know that the job's D1 migration step needs D1 write, and Cloudflare's D1 token permission is **account-wide with no per-database scoping**, so any token that can migrate the dev DBs can also write prod D1; treat it as prod-sensitive regardless. The job applies D1 migrations to both remote dev databases before deploying (the guardrail there is the database *name*, not the absent `--env` — wrangler falls back to account-wide name lookup). Worker secrets are per-script — `bible-editor-api-dev` has its own set (deliberately **without** `DCS_SERVICE_TOKEN`, so dev exports fail closed as `no_service_token` instead of writing to the real DCS org). Local dev note: `SUPER_ADMINS` is empty in wrangler.toml on purpose; every checkout's `api/.dev.vars` needs `SUPER_ADMINS=dev` (see `.dev.vars.example`) or local workspace switching silently 403s. `worktree-init.ps1` copies `.dev.vars` from main automatically.
+**From GitHub Actions:** the only deploy workflow in this fork is `.github/workflows/deploy-dev.yml` ("Deploy to dev"), manual-only via *Run workflow*, and it ships the **dev** worker (flagless `wrangler deploy`). There is deliberately no prod deploy button here. Two caveats: a dispatch runs the workflow file from whichever ref you select, and older branches still carry the pre-rename prod-deploying `deploy.yml` — so keep the token's Workers-Scripts scope dev-only — but know that the job's D1 migration step needs D1 write, and Cloudflare's D1 token permission is **account-wide with no per-database scoping**, so any token that can migrate the dev DBs can also write prod D1; treat it as prod-sensitive regardless. The job applies D1 migrations to both remote dev databases before deploying (the guardrail there is the database *name*, not the absent `--env` — wrangler falls back to account-wide name lookup). Worker secrets are per-script — `bptranslate-dev` has its own set, and because it is a **brand-new script** it starts with none at all: the first dispatch after the rename deploys successfully and then fails at runtime on sign-in until `docs/cloudflare-migration-2026-09.md` step 3 has been run. Local dev note: `SUPER_ADMINS` is empty in wrangler.toml on purpose; every checkout's `api/.dev.vars` needs `SUPER_ADMINS=dev` (see `.dev.vars.example`) or local workspace switching silently 403s. `worktree-init.ps1` copies `.dev.vars` from main automatically.
 
 Prod-only vars (`ALLOWED_ORIGINS`, `DEV_AUTH_ENABLED=false`) live in `[env.production.vars]` so the default env stays dev-friendly. Don't put prod values at the top level — that broke local dev once already.

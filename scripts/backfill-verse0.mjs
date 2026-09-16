@@ -15,11 +15,11 @@
 //   node scripts/backfill-verse0.mjs              # all books
 //   node scripts/backfill-verse0.mjs NUM EXO LEV  # selected books
 // Then apply:
-//   (cd api && npx wrangler d1 execute bible_editor --remote --env production \
+//   (cd api && npx wrangler d1 execute bptranslate --remote --env production \
 //       --file=../scripts/out/backfill-verse0.sql)
 //
 // Apply locally first to verify the diff is sane:
-//   (cd api && npx wrangler d1 execute bible_editor --local \
+//   (cd api && npx wrangler d1 execute bptranslate --local \
 //       --file=../scripts/out/backfill-verse0.sql)
 
 import { writeFileSync, mkdirSync, existsSync } from "node:fs";

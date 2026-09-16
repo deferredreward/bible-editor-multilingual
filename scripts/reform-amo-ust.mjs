@@ -15,7 +15,7 @@
 // of the CURRENT prod verses (`[{chapter,verse,version,content_json}]`, exported
 // from prod D1) via --snapshot; it reforms each off the UHB and prints versioned
 // UPDATE + edit_log SQL for the verses that actually change. Apply with
-// `wrangler d1 execute bible_editor --remote --env production --file=...`.
+// `wrangler d1 execute bptranslate --remote --env production --file=...`.
 
 import { readFileSync } from "node:fs";
 import usfm from "usfm-js";

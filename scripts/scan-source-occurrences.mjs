@@ -15,10 +15,10 @@
 //
 // Workflow:
 //   1. Dump verses to JSON (run from api/):
-//        npx wrangler d1 execute bible_editor --remote --env production \
+//        npx wrangler d1 execute bptranslate --remote --env production \
 //          --command "SELECT book,chapter,verse,bible_version,content_json,version FROM verses" \
 //          --json > ../scripts/out/verses-dump.json
-//      (local dev: bible_editor_dev --local)
+//      (local dev: bptranslate_dev --local)
 //   2. Scan (report only):
 //        node --experimental-strip-types --no-warnings scripts/scan-source-occurrences.mjs scripts/out/verses-dump.json
 //   3. Emit repair SQL for flagged verses:

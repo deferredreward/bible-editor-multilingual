@@ -16,7 +16,7 @@
 //   node scripts/backfill-sortorder.mjs ISA            # one book
 //   node scripts/backfill-sortorder.mjs ISA ECC NUM    # several
 // Emits scripts/out/backfill-<BOOK>-<kind>.sql; apply with:
-//   npx wrangler d1 execute bible_editor --remote --env production \
+//   npx wrangler d1 execute bptranslate --remote --env production \
 //     --file=../scripts/out/backfill-<BOOK>-<kind>.sql   (run from api/)
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

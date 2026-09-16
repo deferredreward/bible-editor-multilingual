@@ -5,7 +5,7 @@
 //
 // Run:
 //   node scripts/backfill-edit-log.mjs ZEC
-//   (cd api && npx wrangler d1 execute bible_editor --local --file=../scripts/out/backfill-edit-log-ZEC.sql)
+//   (cd api && npx wrangler d1 execute bptranslate --local --file=../scripts/out/backfill-edit-log-ZEC.sql)
 //
 // Idempotent: re-running produces the same final state. Rows that already
 // have a v1 create/imported entry are skipped at apply time. Rows whose
@@ -176,4 +176,4 @@ console.log(`  tn rows considered:  ${tn}`);
 console.log(`  tq rows considered:  ${tq}`);
 console.log(`  twl rows considered: ${twl}`);
 console.log(`apply with:`);
-console.log(`  (cd api && npx wrangler d1 execute bible_editor --local --file=../scripts/out/backfill-edit-log-${book}.sql)`);
+console.log(`  (cd api && npx wrangler d1 execute bptranslate --local --file=../scripts/out/backfill-edit-log-${book}.sql)`);

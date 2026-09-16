@@ -80,7 +80,7 @@ for (let i = 0, n = 0; i < statements.length; i += batchSize, n++) {
   for (let attempt = 1; attempt <= 4 && !ok; attempt++) {
     try {
       execSync(
-        `npx wrangler d1 execute bible_editor ${target.join(" ")} --file="${chunkPath}"`,
+        `npx wrangler d1 execute bptranslate ${target.join(" ")} --file="${chunkPath}"`,
         { cwd: apiDir, stdio: ["ignore", "ignore", "pipe"] },
       );
       ok = true;

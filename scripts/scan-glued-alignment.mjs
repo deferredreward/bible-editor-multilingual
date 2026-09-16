@@ -5,8 +5,8 @@
 // bad AI run is caught corpus-wide, beyond the per-exported-book nightly detector.
 //
 // Usage (run from repo root):
-//   node scripts/scan-glued-alignment.mjs            # LOCAL dev D1 (bible_editor_dev)
-//   node scripts/scan-glued-alignment.mjs --remote   # PROD D1 (bible_editor)
+//   node scripts/scan-glued-alignment.mjs            # LOCAL dev D1 (bptranslate_dev)
+//   node scripts/scan-glued-alignment.mjs --remote   # PROD D1 (bptranslate)
 //   node scripts/scan-glued-alignment.mjs --remote --book AMO
 // Exit code 1 when any glued milestone is found (0 = clean), so a routine can alert.
 //
@@ -24,7 +24,7 @@ import { dirname, resolve } from "node:path";
 const remote = process.argv.includes("--remote");
 const bi = process.argv.indexOf("--book");
 const book = bi >= 0 ? process.argv[bi + 1] : null;
-const db = remote ? "bible_editor" : "bible_editor_dev";
+const db = remote ? "bptranslate" : "bptranslate_dev";
 const envFlag = remote ? "--remote --env production" : "--local";
 const apiDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "api");
 

@@ -66,7 +66,7 @@ console.log("[dev-smoke] applying migrations to the fresh local D1…");
 runWithRetry("migrations apply", () => {
   const migrate = spawnSync(
     "npx",
-    ["wrangler", "d1", "migrations", "apply", "bible_editor_dev", "--local", "--persist-to", persistTo],
+    ["wrangler", "d1", "migrations", "apply", "bptranslate_dev", "--local", "--persist-to", persistTo],
     { cwd: apiDir, stdio: "inherit", shell: true },
   );
   if (migrate.status !== 0) {

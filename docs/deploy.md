@@ -1,5 +1,17 @@
 # Deploy — Cloudflare
 
+> **Migrated from the `bible-editor-*` resource set on 2026-09-16 (issue
+> #444).** Every name and id below changed: worker `bible-editor-api` →
+> `bptranslate` (dev `bible-editor-api-dev` → `bptranslate-dev`), D1
+> `bible_editor`/`bible_editor_dev`/`bible_editor_mltest_dev` →
+> `bptranslate`/`bptranslate_dev`/`bptranslate_mltest_dev`, R2
+> `bible-editor-blobs*` → `bptranslate-blobs*`, Workflow
+> `bible-editor-export*` → `bptranslate-export*`. The account is unchanged
+> (unfoldingWord, `5a3ffd86280d3ed086be76d955829242`). The old resources are
+> deliberately left untouched and still hold the live data — the human steps
+> that finish the move (new DCS OAuth app, secrets, data export/import,
+> cutover) live in [`cloudflare-migration-2026-09.md`](cloudflare-migration-2026-09.md).
+
 Tactical 7-month tool. One Worker serves both `/api/*` and the SPA from the
 same origin; the SPA bundle ships as static assets bound into the Worker. A
 single `npm run deploy` from the repo root publishes everything.
@@ -19,12 +31,12 @@ runtime locally.
 
 ```sh
 # 1. Apply the new migration (book_usfm_meta) to local D1.
-cd api && npx wrangler d1 migrations apply bible_editor_dev --local && cd ..
+cd api && npx wrangler d1 migrations apply bptranslate_dev --local && cd ..
 
 # 2. Re-import any book whose USFM headers you want preserved (optional —
 #    older imports still export with synthesized minimal headers).
 node scripts/import-book.mjs ZEC
-cd api && npx wrangler d1 execute bible_editor_dev --local --file=../scripts/out/import-ZEC.sql && cd ..
+cd api && npx wrangler d1 execute bptranslate_dev --local --file=../scripts/out/import-ZEC.sql && cd ..
 
 # 3. Run the stack.
 npm run dev
@@ -45,7 +57,7 @@ curl -X POST http://localhost:8787/api/exports/run \
 curl -s http://localhost:8787/api/exports | jq '.snapshots[0:5]'
 
 # 6. Inspect the rendered files in local R2 storage.
-cd api && npx wrangler r2 object list bible-editor-blobs-dev --local --prefix exports/ && cd ..
+cd api && npx wrangler r2 object list bptranslate-blobs-dev --local --prefix exports/ && cd ..
 ```
 
 `dryDcs: true` skips the Gitea commit even if `DCS_SERVICE_TOKEN` is set;
@@ -58,23 +70,31 @@ push to a real DCS branch.
 
 ```sh
 cd api
-npx wrangler d1 create bible_editor
+npx wrangler d1 create bptranslate
 # → copy the printed database_id into wrangler.toml's [[d1_databases]] block
 ```
+
+Already done for this deployment on 2026-09-16 — the three databases exist and
+their ids are already in `wrangler.toml`: `bptranslate`
+(`247c4a41-eaf4-4d49-bce2-68f4d1bbe00e`), `bptranslate_dev`
+(`c4ae5e6d-6fb4-4ffc-a82a-008e793c691c`) and `bptranslate_mltest_dev`
+(`5c09dc0f-7bb4-4177-a167-3ffe17944866`), as are the R2 buckets
+`bptranslate-blobs` and `bptranslate-blobs-dev`. All are **empty** until the
+data move in [`cloudflare-migration-2026-09.md`](cloudflare-migration-2026-09.md).
 
 Replace the `database_id` value (in both the top-level `[[d1_databases]]`
 block and the `[[env.production.d1_databases]]` block) with the printed id.
 Then apply all migrations to the remote prod DB:
 
 ```sh
-npx wrangler d1 migrations apply bible_editor --remote --env production
+npx wrangler d1 migrations apply bptranslate --remote --env production
 ```
 
 Migration filenames are authoritative. The repo has historical duplicate
 numeric prefixes (`0025_*` and `0026_*`), so do not refer to a migration by
 number alone in runbooks or PR notes; use the full filename.
 
-### 1a. Restore the editor allowlist (rebuild only — required)
+### 1a. Restore the editor allowlist (rebuild or fresh database — required)
 
 Migration `0016_user_roles.sql` seeds **only** the admin, because the migration
 set runs against every database including each new per-org one, which must not
@@ -85,24 +105,29 @@ production editors out entirely** — `callbackDcsAuth` checks `user_roles` befo
 upserting into `users`, so they cannot even mint a JWT. Restore them explicitly:
 
 ```sh
-npx wrangler d1 execute bible_editor --remote --env production \
+npx wrangler d1 execute bptranslate --remote --env production \
   --file=../scripts/seed-prod-editor-allowlist.sql
 ```
 
 Verify the row count before moving on:
 
 ```sh
-npx wrangler d1 execute bible_editor --remote --env production \
+npx wrangler d1 execute bptranslate --remote --env production \
   --command "SELECT role, count(*) FROM user_roles GROUP BY role;"
 ```
 
 Skip this step only when provisioning a fresh non-production org database — those
 are supposed to start with the admin alone.
 
+The 2026-09-16 migration to `bptranslate` created an **empty** prod database, so
+this step is required there too unless the prod data is imported wholesale from
+a `bible_editor` export (which already carries `user_roles`). See
+[`cloudflare-migration-2026-09.md`](cloudflare-migration-2026-09.md).
+
 ### 2. Create the R2 bucket
 
 ```sh
-npx wrangler r2 bucket create bible-editor-blobs
+npx wrangler r2 bucket create bptranslate-blobs
 ```
 
 The bucket name in `wrangler.toml` already matches; no edit needed.
@@ -119,6 +144,11 @@ openssl rand -hex 32 | npx wrangler secret put JWT_SIGNING_KEY --env production
 
 # DCS OAuth app — register at https://git.door43.org/user/settings/applications.
 # Redirect URI must be: https://<your-worker>.workers.dev/api/auth/dcs/callback
+# For this deployment that is:
+#   https://bptranslate.unfoldingword.workers.dev/api/auth/dcs/callback
+# The dev worker needs its OWN application (callback
+# https://bptranslate-dev.unfoldingword.workers.dev/api/auth/dcs/callback) —
+# DCS matches the redirect exactly, and secrets are per-script anyway.
 npx wrangler secret put DCS_CLIENT_ID --env production
 npx wrangler secret put DCS_CLIENT_SECRET --env production
 
@@ -147,7 +177,7 @@ Prod-only overrides go in `[env.production.vars]` (NOT the top-level
 
 ```toml
 [env.production.vars]
-ALLOWED_ORIGINS = "https://bible-editor-api.<your-account>.workers.dev"
+ALLOWED_ORIGINS = "https://bptranslate.unfoldingword.workers.dev"
 DEV_AUTH_ENABLED = "false"
 DCS_EXPORT_OWNER = "your-service-account-username"   # owns the fork repos
 ```
@@ -171,12 +201,12 @@ then apply the generated SQL to **remote**:
 ```sh
 cd ..  # back to repo root
 node scripts/import-book.mjs ZEC
-cd api && npx wrangler d1 execute bible_editor --remote --env production \
+cd api && npx wrangler d1 execute bptranslate --remote --env production \
   --file=../scripts/out/import-ZEC.sql && cd ..
 
 # Lexicon (UHAL + UGL) — large file, takes a minute.
 node scripts/import-lexicon.mjs
-cd api && npx wrangler d1 execute bible_editor --remote --env production \
+cd api && npx wrangler d1 execute bptranslate --remote --env production \
   --file=../scripts/out/import-lexicon.sql && cd ..
 ```
 
@@ -186,7 +216,7 @@ cd api && npx wrangler d1 execute bible_editor --remote --env production \
 # From the repo root. Builds web/dist then `wrangler deploy --env production`
 # from api/. The --env flag activates the [env.production.*] blocks in
 # wrangler.toml; `name` is repeated inside that block so the deploy lands on
-# the existing `bible-editor-api` worker (no name suffix).
+# the existing `bptranslate` worker (no name suffix).
 npm run deploy
 ```
 
@@ -198,7 +228,7 @@ the Workflow binding on Cloudflare.
 
 ```sh
 # API health
-curl https://bible-editor-api.<your-account>.workers.dev/api/health
+curl https://bptranslate.unfoldingword.workers.dev/api/health
 
 # Trigger a real export (after one signed-in editor session has written
 # anything to the row tables). DRY-RUN first — verify rendered files

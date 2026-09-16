@@ -24,10 +24,10 @@
 //
 // Workflow (run from repo root):
 //   1. Dump pristine-candidate columns (run from api/). Prod:
-//        npx wrangler d1 execute bible_editor --remote --env production \
+//        npx wrangler d1 execute bptranslate --remote --env production \
 //          --command "SELECT id,book,chapter,verse,note,version,updated_by,deleted_at,trashed_at FROM tn_rows WHERE deleted_at IS NULL AND trashed_at IS NULL AND updated_by IS NULL" \
 //          --json > ../scripts/out/tn-rows-dump.json
-//      (local dev: bible_editor_dev --local)
+//      (local dev: bptranslate_dev --local)
 //   2. Dry-run report (per-book counts + suspicious notes):
 //        node --experimental-strip-types --no-warnings scripts/normalize-tn-whitespace.mjs scripts/out/tn-rows-dump.json
 //        node --experimental-strip-types --no-warnings scripts/normalize-tn-whitespace.mjs scripts/out/tn-rows-dump.json --book ISA
@@ -170,7 +170,7 @@ function main() {
   const outPath = resolve(outDir, "normalize-tn-whitespace.sql");
   writeFileSync(outPath, lines.join("\n") + "\n", "utf8");
   console.log(`\nWrote ${candidates.length * 2} statements to ${outPath}`);
-  console.log("Review, then: npx wrangler d1 execute bible_editor --remote --env production --file=../scripts/out/normalize-tn-whitespace.sql");
+  console.log("Review, then: npx wrangler d1 execute bptranslate --remote --env production --file=../scripts/out/normalize-tn-whitespace.sql");
 }
 
 main();

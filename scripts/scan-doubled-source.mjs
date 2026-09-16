@@ -33,7 +33,7 @@ const book = bi >= 0 ? argv[bi + 1] : null;
 const ri = argv.indexOf("--reason");
 const allReasons = argv.includes("--all-reasons");
 const onlyReason = ri >= 0 ? argv[ri + 1] : (allReasons ? null : "duplicate");
-const db = remote ? "bible_editor" : "bible_editor_dev";
+const db = remote ? "bptranslate" : "bptranslate_dev";
 const envFlag = remote ? "--remote --env production" : "--local";
 const apiDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "api");
 

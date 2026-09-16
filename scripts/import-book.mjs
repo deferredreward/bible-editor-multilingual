@@ -5,7 +5,7 @@
 // Run:
 //   node scripts/import-book.mjs ZEC
 // Then apply:
-//   (cd api && npx wrangler d1 execute bible_editor --local --file=../scripts/out/import-ZEC.sql)
+//   (cd api && npx wrangler d1 execute bptranslate --local --file=../scripts/out/import-ZEC.sql)
 //
 // The emitter is idempotent only at the row level (REPLACE INTO). Re-running
 // for the same book will overwrite existing rows; the version stamp resets
@@ -338,4 +338,4 @@ console.log(`  tn:     ${tnCount}`);
 console.log(`  tq:     ${tqCount}`);
 console.log(`  twl:    ${twlCount}`);
 console.log(`  total SQL statements: ${lines.length}`);
-console.log("\nApply:  cd api && npx wrangler d1 execute bible_editor --local --file=../scripts/out/import-" + book + ".sql");
+console.log("\nApply:  cd api && npx wrangler d1 execute bptranslate --local --file=../scripts/out/import-" + book + ".sql");

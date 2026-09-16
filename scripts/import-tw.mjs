@@ -8,9 +8,9 @@
 // Run:
 //   node scripts/import-tw.mjs
 // Then apply (local dev):
-//   (cd api && npx wrangler d1 execute bible_editor_dev --local --file=../scripts/out/import-tw.sql)
+//   (cd api && npx wrangler d1 execute bptranslate_dev --local --file=../scripts/out/import-tw.sql)
 // Or prod:
-//   (cd api && npx wrangler d1 execute bible_editor --remote --env production --file=../scripts/out/import-tw.sql)
+//   (cd api && npx wrangler d1 execute bptranslate --remote --env production --file=../scripts/out/import-tw.sql)
 //
 // Each row stores: id ("kt/god"), category ("kt"|"names"|"other"), title (the
 // article's first markdown heading — the headword line, which may list synonyms),
