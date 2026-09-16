@@ -348,6 +348,50 @@ an old bookmark sees a working app, and their edits go nowhere.
   stale data. That writes to a resource upstream also deploys to, so coordinate
   with upstream first.
 
+### 8a. The old app does not stop on its own — and its crons are the real hazard
+
+Nothing in this migration turns the old deployment off. Three things keep running
+after cutover, in increasing order of danger:
+
+1. **`bible-editor-api-dev`** keeps serving. No crons. Confusing only.
+2. **`bible-editor-api`** keeps serving the old prod database at the old URL, so
+   a stale bookmark shows a healthy app whose edits go nowhere (step 8).
+3. **The old prod crons keep firing.** `[env.production.triggers]` on the config
+   that worker was deployed from is
+   `crons = ["30 5 * * *", "*/5 * * * *"]`, and cron registration lives on the
+   deployed script until something changes it.
+
+Point 3 is the one that can destroy work rather than merely waste it. After
+cutover both workers export nightly into the **same** DCS repos under
+`DCS_EXPORT_OWNER` (`BibleEditorService`), at the **same** 05:30 UTC, one of them
+rendering a database that is frozen at the cutover snapshot and drifting further
+behind every day. Whichever lands second wins. That is exactly the failure class
+already recorded in `STATE.md`: a stale D1 export silently reverting work that a
+live editor had done. The `*/5` poller is milder — it would keep importing AI
+output into the abandoned database — but it is equally pointless.
+
+So the cutover is not finished until the old prod crons are gone. Two ways:
+
+- Redeploy `bible-editor-api` from a checkout that still has the old resource
+  names but with `crons = []` under `[env.production.triggers]`, or
+- delete the script.
+
+An omitted `[triggers]` block does **not** clear them; the config comment in
+`api/wrangler.toml` says so explicitly, which is why this repo always spells
+`crons = []`.
+
+> **This needs upstream's agreement first.** `unfoldingWord/bible-editor` deploys
+> to the same script name with the same crons and the same `bible_editor`
+> database. Clearing the crons is not durable on our own: the next upstream
+> production deploy re-registers them and the stale nightly export comes back.
+> Talk to upstream before cutover, not after, and agree who owns
+> `bible-editor-api` from that day. Upstream retires 2026-12-31, so this is a
+> finite problem, but it spans the whole window.
+
+Until that conversation happens, the safe interim is to leave the old worker
+running but confirm each morning that its export ran against a database nobody
+is editing — harmless while the freeze holds, dangerous the moment it does not.
+
 ### 9. Afterwards
 
 - Leave `bible_editor`, `bible_editor_dev`, `bible_editor_mltest_dev`,
