@@ -78,6 +78,15 @@ workspaceEnv(this.env, resolveWorkspace(this.env, params.workspace))` exactly as
 `exportWorkflow.ts:228-229`; `NonRetryableError` if `params.workspace` is absent.
 Workflows do not inherit the per-request env clone (STATE.md lesson).
 
+Nothing may touch a tenant binding before that resolve has verified the slug —
+not even the failure record. `wf_status_json` is written by an UPDATE keyed by
+`job_id` alone, and job ids are unique only WITHIN a tenant database, so a
+refusal recorded against the still-raw default binding overwrites whatever org
+owns that id there. A run whose workspace cannot be resolved therefore writes
+NOTHING and fails loudly as an errored instance; its `pipeline_jobs` row is left
+to the sweeps that already own abandoned rows (`pipelines.ts` MAX_POLL_ATTEMPTS
+~8h, STUCK_JOB_THRESHOLD_SECONDS 48h).
+
 Key handling: inside each `batch-NN` step, `getAiProviderConfig(this.env.DB)` →
 `resolveDispatchAi` → `decryptApiKey` (same trio as `pipelines.ts:637-649`). Verify
 `row.provider === params.provider`, else fail `ai_provider_changed`. Key is a local
@@ -99,6 +108,14 @@ Steps:
    (mirrors `translate-pipeline.js:449-454`). Else get source+pack+task from R2,
    decrypt key, run the MAX_BATCH_ATTEMPTS=2 draft+repair loop (`:328-376`
    verbatim), put output, UPDATE `current_status` + `wf_status_json` (running).
+   A provider call is money and this step is retryable, so every R2 write that
+   brackets one is hardened: a draft whose checks failed is persisted to
+   `work/batch-NN-draft.tsv` BEFORE the repair call and resumed from on the next
+   attempt (the retry buys the repair pass, not the draft again), and the put of
+   a validated output is retried in-step and then fails `output_persist_failed`
+   NON-retryably — a retry would find no stored output and re-buy the batch. The
+   window that stays open is an isolate death between the provider's reply and
+   the R2 put: nothing durable exists yet, so the retry pays again.
    Return `{nn, rowCount, attempts, usage, costUsd}`. Error mapping: `invalid_key`,
    `model_not_found`, `context_too_long`, `output_too_long`, `empty_output`,
    checks-still-failing → `NonRetryableError`; `rate_limited`,
@@ -131,6 +148,7 @@ R2 layout mirrors the bot's `work/` so the dry-run compare is a directory diff:
 
 ```
 pipeline-output/<workspaceSlug>/<jobId>/work/batch-NN{.tsv,-pack.md,-task.json,-out.tsv}
+pipeline-output/<workspaceSlug>/<jobId>/work/batch-NN-draft.tsv   # only when a billed draft failed checks
 pipeline-output/<workspaceSlug>/<jobId>/out/<tn_OBA.tsv | bible/kt/god.md …>
 pipeline-output/<workspaceSlug>/<jobId>/out/translate-report-<S>-<E>.json
 ```

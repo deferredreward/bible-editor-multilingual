@@ -94,44 +94,57 @@ export class TranslateWorkflow extends WorkflowEntrypoint<Env, TranslateWorkflow
   async run(event: WorkflowEvent<TranslateWorkflowParams>, step: WorkflowStep): Promise<TranslateWorkflowResult> {
     const params = event.payload;
 
-    // deps is built BEFORE the workspace resolve so a refusal there can still
-    // be recorded. It used to throw with no deps in scope, which left
-    // wf_status_json NULL and the row sitting in 'running' until the
-    // stale-dispatch sweep expired it. Until the re-point below, db/blobs are
-    // the RAW (default) bindings: writeWfStatus is an UPDATE keyed by job_id, so
-    // against the wrong tenant's D1 it simply changes no rows.
-    const deps: StepDeps = {
-      db: this.env.DB,
-      blobs: this.env.BLOBS,
-      workspaceSlug: "",
-      wrappingKey: this.env.AI_KEY_WRAPPING_KEY,
-      startedAt: new Date(event.timestamp).toISOString(),
-    };
-
-    // Workflows don't inherit the per-request env clone that index.ts's fetch
-    // wrapper builds, so this.env is the RAW Worker env — this.env.DB would be
-    // the default binding regardless of which org queued the run. Re-point it
-    // once, here, exactly as ExportWorkflow does (STATE.md lesson). Unlike the
-    // export, params.workspace is mandatory: a translate run reads an org's
-    // provider key and writes that org's job row, so "fall back to the default
-    // workspace" is a cross-tenant bug, not a convenience.
+    // NOTHING may touch a tenant's D1 until params.workspace has been resolved
+    // AND verified. Until the re-point below, this.env.DB is the RAW (default)
+    // binding — Workflows don't inherit the per-request env clone that
+    // index.ts's fetch wrapper builds — and status.writeWfStatus is an UPDATE
+    // keyed by job_id alone. Job ids are unique only WITHIN a tenant database,
+    // so a refusal recorded here silently overwrote ANOTHER org's row
+    // (current_skill, current_status, updated_at, wf_status_json) whenever the
+    // two happened to share an id. An earlier revision built `deps` above this
+    // resolve precisely so a refusal could be recorded; that traded a silent
+    // failure for a cross-tenant write, which is the worse of the two.
+    //
+    // There is no correct row to write instead: workspace_missing names no
+    // tenant at all, and workspace_unknown names one this deployment has no
+    // binding for — so the refusal writes NOTHING, by design. The job row is
+    // left to the sweeps that already own abandoned rows (pipelines.ts):
+    // pollAllNonTerminal bumps attempt_count on every poll and auto-fails a
+    // still-'running' row after MAX_POLL_ATTEMPTS (~8h at the */5 cron), with
+    // the 48h no-progress sweep behind it. The immediate signal is the errored
+    // Workflow instance, which is what an operator has to look at anyway for a
+    // refusal that names a workspace this deployment does not have.
+    //
+    // A translate run reads an org's provider key and writes that org's job
+    // row, so "fall back to the default workspace" is a cross-tenant bug, not a
+    // convenience (unlike the export, where params.workspace is optional).
     await primeWorkspaces(this.env);
     let ws;
     try {
       ws = await resolveWorkflowWorkspaceFresh(this.env, params);
     } catch (err) {
       const c = classifyStepError(err);
-      try {
-        await recordFailure(deps, params, err);
-      } catch {
-        /* best-effort, exactly like the record-failure step below */
-      }
+      // The instance's own error is all an operator gets for this failure, and
+      // the engine reports a NonRetryableError thrown out of run() as a generic
+      // "WorkflowFatalError … a step threw an NonRetryableError" with the
+      // message dropped (measured in translate/workflowEngine.test.mjs). Since
+      // nothing may be written to a tenant row here, the log line IS the
+      // diagnosis — job id, slug and kind, all non-secret.
+      console.error("TranslateWorkflow: refusing a run whose workspace cannot be resolved", {
+        jobId: params?.jobId, workspace: params?.workspace, errorKind: c.errorKind, error: c.message,
+      });
       throw new NonRetryableError(`[${c.errorKind}] ${c.message}`);
     }
     (this as unknown as { env: Env }).env = workspaceEnv(this.env, ws);
-    deps.db = this.env.DB;
-    deps.blobs = this.env.BLOBS;
-    deps.workspaceSlug = this.env.WORKSPACE_SLUG ?? ws.slug;
+
+    // Only now — every binding here belongs to the verified workspace.
+    const deps: StepDeps = {
+      db: this.env.DB,
+      blobs: this.env.BLOBS,
+      workspaceSlug: this.env.WORKSPACE_SLUG ?? ws.slug,
+      wrappingKey: this.env.AI_KEY_WRAPPING_KEY,
+      startedAt: new Date(event.timestamp).toISOString(),
+    };
 
     try {
       const src = await step.do("guard-and-source", INFRA_RETRY, () => guarded(() => guardAndSourceStep(deps, params)));

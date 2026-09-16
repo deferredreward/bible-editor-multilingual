@@ -27,6 +27,10 @@ test("batchKeys mirrors the bot's work/ file names and core.buildBatchArtifacts'
     pack: "pipeline-output/bsoj/job_01HZX/work/batch-03-pack.md",
     task: "pipeline-output/bsoj/job_01HZX/work/batch-03-task.json",
     output: "pipeline-output/bsoj/job_01HZX/work/batch-03-out.tsv",
+    // The one key with no counterpart in the bot's work/ directory: a billed
+    // draft whose checks failed, written before the repair call so a step
+    // retry resumes instead of re-buying the draft (workflowSteps.batchStep).
+    draft: "pipeline-output/bsoj/job_01HZX/work/batch-03-draft.tsv",
   });
   const art = core.buildBatchArtifacts(2, {
     batchRows: [], packMarkdown: "", targetLang: "ar", targetLangName: "Arabic", direction: "rtl", book: "OBA", resource: core.tsvResource("tn"),

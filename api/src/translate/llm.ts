@@ -676,13 +676,35 @@ export async function runOne(deps: LlmDeps, input: PromptInput): Promise<RunOneR
 }
 
 export type RunBatchInput = BatchArtifacts & { batchRows: readonly TsvRow[] };
-export type RunBatchOptions = { resource: TsvResource; skill: string };
+export type RunBatchOptions = {
+  resource: TsvResource;
+  skill: string;
+  /**
+   * A draft the caller already PAID for on an earlier step attempt, recovered
+   * from durable storage, whose checks failed. Resuming from it starts the loop
+   * at the repair pass, so a step retry after a transient failure that landed
+   * AFTER a billed draft does not buy that draft a second time.
+   */
+  resume?: { output: string; checks: CheckResult } | null;
+  /**
+   * Awaited with every billed draft that failed validation, BEFORE the repair
+   * call is made. This is the caller's chance to persist the draft durably —
+   * nothing the org paid for should exist only in this isolate's memory. A
+   * throw here aborts the batch (the caller decides how fatal that is) rather
+   * than letting the loop spend another call on top of an unsaved one.
+   */
+  onFailedDraft?: (output: string, checks: CheckResult) => Promise<void>;
+};
 export type RunBatchResult = {
   rows: TsvRow[];
   checks: CheckResult;
-  /** Draft/repair passes that produced a validated output (1 or 2). */
+  /** Draft/repair passes that produced a validated output (1 or 2), resumed ones included. */
   attempts: number;
-  /** Billed provider calls, including drafts discarded on truncation; >= attempts. */
+  /**
+   * Provider calls billed by THIS invocation, drafts discarded on truncation
+   * included. Normally >= attempts; on a resumed batch it is one lower, because
+   * the draft being resumed from was billed by an earlier step attempt.
+   */
   calls: number;
   /** The validated output file content (batch-NN-out.tsv). */
   outputText: string;
@@ -695,14 +717,23 @@ export type RunBatchResult = {
  * attempt 2 re-runs with the violations and the previous output inlined. Still
  * failing after MAX_BATCH_ATTEMPTS → checks_failed (non-retryable: the same
  * prompt will fail the same way).
+ *
+ * `resume` and `onFailedDraft` exist for one reason: a provider call is money,
+ * and the caller runs inside a Workflow step that may be retried. Together they
+ * make the draft survive the step — persisted before the repair call, handed
+ * back on the next attempt — so a transient failure between the draft and the
+ * step's completion costs the repair pass, not the draft as well.
  */
-export async function runBatch(deps: LlmDeps, artifacts: RunBatchInput, { resource, skill }: RunBatchOptions): Promise<RunBatchResult> {
-  let lastChecks: CheckResult | null = null;
-  let lastOutput: string | null = null;
+export async function runBatch(deps: LlmDeps, artifacts: RunBatchInput, { resource, skill, resume, onFailedDraft }: RunBatchOptions): Promise<RunBatchResult> {
+  let lastChecks: CheckResult | null = resume?.checks ?? null;
+  let lastOutput: string | null = resume?.output ?? null;
   const llmCalls: LlmCall[] = [];
   const cols = resource.translateColumns.join(" + ");
 
-  for (let attempt = 1; attempt <= MAX_BATCH_ATTEMPTS; attempt++) {
+  // A resumed batch enters at the LAST attempt: the draft it resumes from was
+  // already billed, so the budget this step has left is the repair pass, and
+  // spending more than that is exactly the double-spend being avoided.
+  for (let attempt = resume ? MAX_BATCH_ATTEMPTS : 1; attempt <= MAX_BATCH_ATTEMPTS; attempt++) {
     const isRepair = attempt > 1 && lastChecks;
     const repairNote = isRepair
       ? `\n\nYour previous output FAILED deterministic validation. Violations:\n${
@@ -733,6 +764,8 @@ export async function runBatch(deps: LlmDeps, artifacts: RunBatchInput, { resour
     if (checks.ok) return { rows, checks, attempts: attempt, calls: llmCalls.length, outputText: one.output, llmCalls };
     lastChecks = checks;
     lastOutput = one.output;
+    // Persist the billed-but-invalid draft before spending anything else.
+    if (attempt < MAX_BATCH_ATTEMPTS && onFailedDraft) await onFailedDraft(one.output, checks);
   }
   const summary = lastChecks!.errors.slice(0, 5).map((e) => `[${e.check}] ${e.rowId}: ${e.message}`).join("; ");
   const failed = new TranslateProviderError("checks_failed", deps.provider,
