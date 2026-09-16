@@ -41,11 +41,11 @@ script that declares it, so `bptranslate-dev` gets its own namespace for free.
 Nothing to migrate — ChapterRoom holds only live WS presence and fanout; HTTP +
 `If-Match` is the source of truth.
 
-The old resources are left completely untouched. They still hold all the live
-data and still serve `bible-editor-api.unfoldingword.workers.dev` until the
-cutover below. Delete them only after the new prod worker has run clean for a
-while — and remember upstream `unfoldingWord/bible-editor` deploys to them too,
-so that deletion is not this repo's decision alone.
+The old resources are left completely untouched, and **the production ones stay
+that way permanently** — `bible-editor-api` and `bible_editor` are upstream's
+live app for the gateway editors and are not part of this migration at all. See
+step 8a for the scope, which was corrected on 2026-09-16 after an earlier draft
+of this document assumed a production takeover.
 
 ---
 
@@ -65,14 +65,22 @@ export CLOUDFLARE_ACCOUNT_ID=5a3ffd86280d3ed086be76d955829242
 Door43 matches the redirect URI exactly, so each new hostname needs its own
 application. At <https://git.door43.org/user/settings/applications>, create:
 
+- **BPtranslate (dev)** — redirect URI
+  `https://bptranslate-dev.unfoldingword.workers.dev/api/auth/dcs/callback`
+  — this is the one this migration needs.
 - BPtranslate (prod) — redirect URI
   `https://bptranslate.unfoldingword.workers.dev/api/auth/dcs/callback`
-- BPtranslate (dev) — redirect URI
-  `https://bptranslate-dev.unfoldingword.workers.dev/api/auth/dcs/callback`
+  — **parked**, see step 8a. Harmless to register now, unused until BPtranslate
+  gets a production tier of its own.
 
-Keep the two client id/secret pairs apart; they go to different workers in
-step 3. Leave the existing bible-editor applications alone — the old workers
-keep using them until they are retired.
+Leave the existing bible-editor applications alone: upstream's live app keeps
+using them.
+
+Our authorize request sends **no `scope` parameter** (`api/src/auth.ts:590-594`),
+and Gitea's own documentation says a scope is required. It nonetheless works
+today against DCS (Gitea 1.27.3+dcs), so the existing application is the proof.
+Register the new one to match, and treat the dev sign-in in step 6 as the test of
+whether that still holds.
 
 Known DCS quirk: if one application ends up with more than one redirect URI, DCS
 can pick the first in the list rather than the one you sent. One URI per
@@ -92,24 +100,36 @@ npx wrangler deploy
 
 That is the dev worker (`bptranslate-dev`, no `--env`) and it is safe now: the
 new dev D1s are empty and the default env registers no crons. The prod deploy
-(`npx wrangler deploy --env production`) waits until step 7.
+(`npx wrangler deploy --env production`) is **parked** — see step 8a.
 
 ### 3. Set the secrets on BOTH new workers
 
 Secrets are per-script. A brand-new script starts with none, so a deploy
 succeeds and then sign-in fails at runtime until this step is done.
 
-> ### AI_KEY_WRAPPING_KEY must be copied VERBATIM
+> ### AI_KEY_WRAPPING_KEY — decided 2026-09-16: generate a new one
 >
 > It wraps every org's bring-your-own AI provider API key before the ciphertext
-> is written to D1 (`api/src/aiKeyCrypto.ts`, table `ai_provider_config`). If a
-> fresh key is generated while the old rows are imported, every stored per-org
-> key becomes permanently undecryptable — the rows survive, the keys do not, and
-> each org has to re-enter its provider key. Copy the existing value out of
-> wherever it was recorded when it was first generated; Cloudflare will not show
-> it to you again. If it genuinely cannot be recovered, that is survivable but it
-> is a decision, not an accident: generate a new one AND clear
-> `ai_provider_config` after the import so nobody hits a decrypt error.
+> is written to D1 (`api/src/aiKeyCrypto.ts`, table `ai_provider_config`). A
+> fresh key makes every imported row permanently undecryptable: the rows survive,
+> the keys do not.
+>
+> The original value is not recoverable — it exists only as a Worker secret,
+> Cloudflare will not show it again, and it is in none of the local `.dev.vars`
+> files. Benjamin's call: generate a new one, because only two provider keys are
+> stored (a Claude key for his own testing and a Gemini key for BSOJ, which can
+> be reissued).
+>
+> So after the import, clear the stored ciphertext — the table holds one row per
+> database by schema (`id INTEGER PRIMARY KEY CHECK (id = 1)`), so this is a
+> couple of rows, not a fleet:
+>
+> ```sh
+> npx wrangler d1 execute bptranslate_dev --remote --command >   "UPDATE ai_provider_config SET provider='default', model=NULL, key_ciphertext=NULL, key_iv=NULL, key_hint=NULL;"
+> ```
+>
+> Then re-enter both keys through the admin UI. Skipping the clear leaves a
+> decrypt error waiting for whoever next starts a translate job.
 
 Dev worker (no `--env`):
 
@@ -123,7 +143,8 @@ npx wrangler secret put BT_API_TOKEN             # uw-bt-bot.fly.dev, reuse the 
 npx wrangler secret put AI_KEY_WRAPPING_KEY      # VERBATIM copy, see the box above
 ```
 
-Prod worker (every command gets `--env production`):
+Prod worker — **parked** (step 8a). Keep for when BPtranslate gets its own
+production tier; every command gets `--env production`:
 
 ```sh
 npx wrangler secret put JWT_SIGNING_KEY --env production
@@ -158,7 +179,7 @@ For a database you intend to start empty:
 ```sh
 npx wrangler d1 migrations apply bptranslate_dev --remote
 npx wrangler d1 migrations apply bptranslate_mltest_dev --remote
-npx wrangler d1 migrations apply bptranslate --remote --env production
+# parked (step 8a): npx wrangler d1 migrations apply bptranslate --remote --env production
 ```
 
 Migration filenames are authoritative — the repo has duplicate numeric prefixes
@@ -280,7 +301,15 @@ rows and let them finish or cancel them, since an in-flight AI job is tracked
 server-side and its output would import into the database you are about to stop
 using.
 
-### 7. Prod data move and cutover
+### 7. BPtranslate production — NOT part of this migration
+
+> **Superseded by step 8a (2026-09-16).** Upstream's `bible-editor-api` /
+> `bible_editor` is the gateway editors' live app and stays where it is; we are
+> not exporting it into `bptranslate`. Keep this section only as the shape a
+> future BPtranslate production tier would take, if and when BPtranslate gets one
+> of its own. Do not run it against `bible_editor`.
+
+### 7 (parked). Prod data move and cutover
 
 Same shape as step 5, with `--env production` on every command touching the new
 prod database, plus a freeze in the middle: editing on the old prod worker has
@@ -348,49 +377,56 @@ an old bookmark sees a working app, and their edits go nowhere.
   stale data. That writes to a resource upstream also deploys to, so coordinate
   with upstream first.
 
-### 8a. The old app does not stop on its own — and its crons are the real hazard
+### 8a. Scope correction: we are moving the dev tier, not production
 
-Nothing in this migration turns the old deployment off. Three things keep running
-after cutover, in increasing order of danger:
+**Decision, Benjamin, 2026-09-16.** `unfoldingWord/bible-editor` — worker
+`bible-editor-api`, database `bible_editor`, the app the gateway editors use —
+**must keep running, untouched, and is not ours to migrate.** What moves to
+BPtranslate is the *dev* tier, because that is where this fork's work actually
+lives: the translation pipelines, the redesigned UI, and BSOJ's real editing.
 
-1. **`bible-editor-api-dev`** keeps serving. No crons. Confusing only.
-2. **`bible-editor-api`** keeps serving the old prod database at the old URL, so
-   a stale bookmark shows a healthy app whose edits go nowhere (step 8).
-3. **The old prod crons keep firing.** `[env.production.triggers]` on the config
-   that worker was deployed from is
-   `crons = ["30 5 * * *", "*/5 * * * *"]`, and cron registration lives on the
-   deployed script until something changes it.
+So the migration is:
 
-Point 3 is the one that can destroy work rather than merely waste it. After
-cutover both workers export nightly into the **same** DCS repos under
-`DCS_EXPORT_OWNER` (`BibleEditorService`), at the **same** 05:30 UTC, one of them
-rendering a database that is frozen at the cutover snapshot and drifting further
-behind every day. Whichever lands second wins. That is exactly the failure class
-already recorded in `STATE.md`: a stale D1 export silently reverting work that a
-live editor had done. The `*/5` poller is milder — it would keep importing AI
-output into the abandoned database — but it is equally pointless.
+| Moves | Stays |
+| --- | --- |
+| `bible-editor-api-dev` → `bptranslate-dev` | `bible-editor-api` (upstream's) |
+| `bible_editor_dev` → `bptranslate_dev` | `bible_editor` (upstream's) |
+| `bible_editor_mltest_dev` → `bptranslate_mltest_dev` | its crons, its exports |
 
-So the cutover is not finished until the old prod crons are gone. Two ways:
+Two consequences worth stating plainly, because an earlier draft of this document
+got them backwards:
 
-- Redeploy `bible-editor-api` from a checkout that still has the old resource
-  names but with `crons = []` under `[env.production.triggers]`, or
-- delete the script.
+- **Do not touch `bible-editor-api`'s crons.** Its
+  `crons = ["30 5 * * *", "*/5 * * * *"]` are upstream's nightly export and
+  pipeline poller. Clearing them would break the live app.
+- **There is no production freeze.** Nobody's editing window closes, because the
+  database the gateway editors use is not part of this.
 
-An omitted `[triggers]` block does **not** clear them; the config comment in
-`api/wrangler.toml` says so explicitly, which is why this repo always spells
-`crons = []`.
+A further reason the dev move is worth doing at all: `bible_editor_dev` is shared
+with upstream, whose default-env deploys land on the same worker and the same
+database. BSOJ's work currently sits somewhere an upstream developer can deploy
+over. `bptranslate_dev` is ours alone.
 
-> **This needs upstream's agreement first.** `unfoldingWord/bible-editor` deploys
-> to the same script name with the same crons and the same `bible_editor`
-> database. Clearing the crons is not durable on our own: the next upstream
-> production deploy re-registers them and the stale nightly export comes back.
-> Talk to upstream before cutover, not after, and agree who owns
-> `bible-editor-api` from that day. Upstream retires 2026-12-31, so this is a
-> finite problem, but it spans the whole window.
+### 8b. When the old deployment stops mattering
 
-Until that conversation happens, the safe interim is to leave the old worker
-running but confirm each morning that its export ran against a database nobody
-is editing — harmless while the freeze holds, dangerous the moment it does not.
+Nothing stops on its own, but after the scope correction almost nothing is
+dangerous either:
+
+- `bible-editor-api` and `bible_editor` keep running **by design**, indefinitely.
+- `bible-editor-api-dev` keeps serving `bible_editor_dev` until someone deletes
+  it. It carries **no crons** (`[triggers] crons = []` on the default env), so
+  nothing automatic writes anywhere. The only real hazard is a person: BSOJ on an
+  old bookmark, editing a database we have stopped reading.
+
+So the finish line for this migration is a human one. Once BSOJ has confirmed she
+is working on `bptranslate-dev`, the old dev worker is inert. Leave it deployed —
+it is upstream's default-env target anyway — and simply stop pointing anyone at
+it.
+
+A BPtranslate **production** tier (`bptranslate`, database `bptranslate`, crons
+on) is a separate, later decision. The empty prod database and the production
+block in `wrangler.toml` are parked and unused until then; step 7 below describes
+that future move and is **not** part of this one.
 
 ### 9. Afterwards
 
