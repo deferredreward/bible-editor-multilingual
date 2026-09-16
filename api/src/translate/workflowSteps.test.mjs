@@ -34,7 +34,7 @@ import * as storage from "./storage.ts";
 import { parseWfStatus } from "./status.ts";
 import { BEGIN_OUTPUT, END_OUTPUT, TranslateProviderError } from "./llm.ts";
 import { encryptApiKey } from "../aiKeyCrypto.ts";
-import { fixture, fixturePackFiles, memoryBlobStore } from "./fixtures.mjs";
+import { FIXTURES, fixture, fixturePackFiles, memoryBlobStore } from "./fixtures.mjs";
 
 const KEY = "sk-ant-api03-TESTKEYTESTKEYTESTKEYTESTKEY0001";
 const WRAP = Buffer.alloc(32, 7).toString("base64");
@@ -155,6 +155,17 @@ async function scenario(opts = {}) {
 
 const kindOf = (fn) => fn().then(() => { throw new Error("expected rejection"); }, (err) => steps.classifyStepError(err));
 
+/**
+ * The two steps the Workflow runs per batch, composed: batch-NN buys the output
+ * and RETURNS it, batch-NN-persist writes it. Most proofs below care about the
+ * pair, so they drive it through here; the ones that care about the seam drive
+ * steps.batchTranslateStep / steps.batchPersistStep directly.
+ */
+async function batchStep(deps, params, index, batchCount) {
+  const translated = await steps.batchTranslateStep(deps, params, index, batchCount);
+  return steps.batchPersistStep(deps, params, translated);
+}
+
 // --- tests -------------------------------------------------------------------
 
 test("params → TranslateParams: defaults, names, mergeMode and skill resolve as the bot would", () => {
@@ -204,7 +215,7 @@ test("full run: source → context → 11 batches → merge reproduces the recor
 
   const results = [];
   for (let i = 0; i < src.batchCount; i++) {
-    const r = await steps.batchStep(deps, PARAMS, i, src.batchCount);
+    const r = await batchStep(deps, PARAMS, i, src.batchCount);
     results.push(r);
     assert.equal(r.nn, storage.batchNn(i));
     assert.equal(r.attempts, 1);
@@ -218,6 +229,24 @@ test("full run: source → context → 11 batches → merge reproduces the recor
   assert.equal(s.replay.calls.length, 11);
   assert.equal(results.reduce((n, r) => n + r.rowCount, 0), 153);
   assert.equal(s.wf().state, "running", "batch steps never write done");
+
+  // §C parity, asserted as a SET and not just key by key: a clean run writes
+  // the recorded dry-run work directory and nothing besides. The draft and its
+  // call-metadata sidecar (batch-NN-draft.tsv/.json) exist only on the
+  // failed-checks path, and moving the output write into its own step must not
+  // add, drop or rename anything here.
+  //
+  // The one standing difference from the recording is batch-NN-task.json, which
+  // this runner writes and the committed dry run does not carry. That predates
+  // the step split; it is pinned here so it stays a known, single divergence
+  // rather than cover for the next one.
+  const workFiles = [...s.blobs.map.keys()].filter((k) => k.startsWith(`pipeline-output/${WS}/${JOB}/work/`)).sort();
+  const recorded = readdirSync(new URL(`${DRY}work/`, FIXTURES));
+  const expected = [
+    ...recorded,
+    ...Array.from({ length: 11 }, (_, i) => `batch-${storage.batchNn(i)}-task.json`),
+  ].map((f) => `pipeline-output/${WS}/${JOB}/work/${f}`).sort();
+  assert.deepEqual(workFiles, expected);
 
   const merged = await steps.mergeReportStep(deps, PARAMS, src, ctx, results);
   assert.equal(merged.rowCount, 153);
@@ -261,18 +290,18 @@ test("batch step reuses a validated output already in R2 without calling the pro
   const s = await scenario();
   const src = await steps.guardAndSourceStep(s.deps, PARAMS);
   await steps.contextStep(s.deps, PARAMS, src.batchCount);
-  const first = await steps.batchStep(s.deps, PARAMS, 2, src.batchCount);
+  const first = await batchStep(s.deps, PARAMS, 2, src.batchCount);
   assert.equal(first.reused, false);
   assert.equal(s.replay.calls.length, 1);
 
   const bomb = { ...s.deps, transport: async () => { throw new Error("must not be called"); } };
-  const again = await steps.batchStep(bomb, PARAMS, 2, src.batchCount);
+  const again = await batchStep(bomb, PARAMS, 2, src.batchCount);
   assert.deepEqual(again, { nn: "03", rowCount: first.rowCount, attempts: 0, calls: 0, inputTokens: 0, outputTokens: 0, costUsd: null, reused: true });
   assert.match(s.row().current_status, /^batch 03\/11 reused from previous attempt/);
 
   // A leftover that no longer validates is retranslated, not trusted.
   s.blobs.map.set("pipeline-output/bsoj/job-1/work/batch-03-out.tsv", "Reference\tID\tTags\tSupportReference\tQuote\tOccurrence\tNote\n1:1\tzz99\t\t\tx\t1\tbroken\n");
-  const redo = await steps.batchStep(s.deps, PARAMS, 2, src.batchCount);
+  const redo = await batchStep(s.deps, PARAMS, 2, src.batchCount);
   assert.equal(redo.reused, false);
   assert.equal(s.replay.calls.length, 2);
 });
@@ -283,7 +312,7 @@ test("cooperative cancel: a cancelled or externally-failed row fails step 1 and 
   await steps.contextStep(s.deps, PARAMS, src.batchCount);
 
   s.sqlite.prepare(`UPDATE pipeline_jobs SET state = 'cancelled' WHERE job_id = ?`).run(JOB);
-  let f = await kindOf(() => steps.batchStep(s.deps, PARAMS, 0, src.batchCount));
+  let f = await kindOf(() => batchStep(s.deps, PARAMS, 0, src.batchCount));
   assert.equal(f.errorKind, "cancelled");
   assert.equal(f.retryable, false);
   assert.equal(s.replay.calls.length, 0, "no provider call after cancel");
@@ -291,7 +320,7 @@ test("cooperative cancel: a cancelled or externally-failed row fails step 1 and 
   assert.equal(f.errorKind, "cancelled");
 
   s.sqlite.prepare(`UPDATE pipeline_jobs SET state = 'failed' WHERE job_id = ?`).run(JOB);
-  f = await kindOf(() => steps.batchStep(s.deps, PARAMS, 0, src.batchCount));
+  f = await kindOf(() => batchStep(s.deps, PARAMS, 0, src.batchCount));
   assert.equal(f.errorKind, "job_not_running");
   assert.equal(f.retryable, false);
 
@@ -309,7 +338,7 @@ test("provider gate inside the batch step: changed / unsupported / unavailable a
   let src = await steps.guardAndSourceStep(s.deps, PARAMS);
   await steps.contextStep(s.deps, PARAMS, src.batchCount);
   s.sqlite.prepare(`UPDATE ai_provider_config SET provider = 'openai', model = 'gpt-5.5' WHERE id = 1`).run();
-  let f = await kindOf(() => steps.batchStep(s.deps, PARAMS, 0, src.batchCount));
+  let f = await kindOf(() => batchStep(s.deps, PARAMS, 0, src.batchCount));
   assert.equal(f.errorKind, "ai_provider_changed");
   assert.equal(f.retryable, false);
   assert.equal(s.replay.calls.length, 0);
@@ -318,7 +347,7 @@ test("provider gate inside the batch step: changed / unsupported / unavailable a
   s = await scenario({ provider: "openai", model: "gpt-5.5", transport: null });
   src = await steps.guardAndSourceStep(s.deps, PARAMS);
   await steps.contextStep(s.deps, PARAMS, src.batchCount);
-  f = await kindOf(() => steps.batchStep(s.deps, { ...PARAMS, provider: "openai", model: "gpt-5.5" }, 0, src.batchCount));
+  f = await kindOf(() => batchStep(s.deps, { ...PARAMS, provider: "openai", model: "gpt-5.5" }, 0, src.batchCount));
   assert.equal(f.errorKind, "provider_not_supported_internal");
   assert.equal(f.retryable, false);
 
@@ -327,7 +356,7 @@ test("provider gate inside the batch step: changed / unsupported / unavailable a
   src = await steps.guardAndSourceStep(s.deps, PARAMS);
   await steps.contextStep(s.deps, PARAMS, src.batchCount);
   s.sqlite.prepare(`UPDATE ai_provider_config SET key_ciphertext = NULL, key_iv = NULL WHERE id = 1`).run();
-  f = await kindOf(() => steps.batchStep(s.deps, PARAMS, 0, src.batchCount));
+  f = await kindOf(() => batchStep(s.deps, PARAMS, 0, src.batchCount));
   assert.equal(f.errorKind, "ai_provider_unavailable");
   assert.match(f.message, /api_key_missing/);
 
@@ -335,7 +364,7 @@ test("provider gate inside the batch step: changed / unsupported / unavailable a
   s = await scenario();
   src = await steps.guardAndSourceStep(s.deps, PARAMS);
   await steps.contextStep(s.deps, PARAMS, src.batchCount);
-  f = await kindOf(() => steps.batchStep({ ...s.deps, wrappingKey: Buffer.alloc(32, 9).toString("base64") }, PARAMS, 0, src.batchCount));
+  f = await kindOf(() => batchStep({ ...s.deps, wrappingKey: Buffer.alloc(32, 9).toString("base64") }, PARAMS, 0, src.batchCount));
   assert.equal(f.errorKind, "ai_provider_key_decrypt_failed");
   assert.equal(f.retryable, false);
 });
@@ -372,7 +401,7 @@ test("by-id subset merges into an existing target book; range merge with an exis
   const sourceIds = s.blobs.map.get("pipeline-output/bsoj/job-1/work/batch-01.tsv");
   assert.deepEqual(sourceIds.split("\n").slice(1).filter(Boolean).map((l) => l.split("\t")[1]), rowIds, "the single batch holds exactly the selected rows, in source order");
   const ctx = await steps.contextStep(s.deps, params, 1);
-  const r = await steps.batchStep(s.deps, params, 0, 1);
+  const r = await batchStep(s.deps, params, 0, 1);
   assert.equal(r.rowCount, 2);
   const merged = await steps.mergeReportStep(s.deps, params, src, ctx, [r]);
   assert.equal(merged.rowCount, src.rowCount);
@@ -388,7 +417,7 @@ test("by-id with no existing target book fails merge_failed (non-retryable), as 
   const src = await steps.guardAndSourceStep(s.deps, params);
   const ctx = await steps.contextStep(s.deps, params, src.batchCount);
   const results = [];
-  for (let i = 0; i < src.batchCount; i++) results.push(await steps.batchStep(s.deps, params, i, src.batchCount));
+  for (let i = 0; i < src.batchCount; i++) results.push(await batchStep(s.deps, params, i, src.batchCount));
   const f = await kindOf(() => steps.mergeReportStep(s.deps, params, src, ctx, results));
   assert.equal(f.errorKind, "merge_failed");
   assert.equal(f.retryable, false);
@@ -403,7 +432,7 @@ test("key hygiene: a provider that echoes the key back never leaks it into error
   // Deterministic provider failure carrying the key (and an Authorization header) in its body.
   const echo = { ...s.deps, transport: async () => { const e = new Error(`bad request: key ${KEY} rejected; Authorization: Bearer ${KEY}`); e.status = 400; throw e; } };
   let err;
-  try { await steps.batchStep(echo, PARAMS, 0, src.batchCount); } catch (e) { err = e; }
+  try { await batchStep(echo, PARAMS, 0, src.batchCount); } catch (e) { err = e; }
   assert.ok(err instanceof TranslateProviderError);
   assert.equal(err.code, "provider_error");
   assert.ok(!err.message.includes(KEY), `message leaked the key: ${err.message}`);
@@ -421,7 +450,7 @@ test("key hygiene: a provider that echoes the key back never leaks it into error
 
   // Transient failure with the key in a nested cause: still retryable, still scrubbed.
   const over = { ...s.deps, transport: async () => { const inner = new Error(`socket closed for ${KEY}`); const e = new Error("Overloaded", { cause: inner }); e.status = 529; throw e; } };
-  try { await steps.batchStep(over, PARAMS, 0, src.batchCount); } catch (e) { err = e; }
+  try { await batchStep(over, PARAMS, 0, src.batchCount); } catch (e) { err = e; }
   const c = steps.classifyStepError(err);
   assert.equal(c.errorKind, "provider_overloaded");
   assert.equal(c.retryable, true);
@@ -429,7 +458,7 @@ test("key hygiene: a provider that echoes the key back never leaks it into error
 
   // A non-Error throw is wrapped and scrubbed rather than escaping raw.
   const raw = { ...s.deps, transport: async () => { throw `string failure ${KEY}`; } };
-  try { await steps.batchStep(raw, PARAMS, 0, src.batchCount); } catch (e) { err = e; }
+  try { await batchStep(raw, PARAMS, 0, src.batchCount); } catch (e) { err = e; }
   assert.ok(!String(err.message ?? err).includes(KEY));
 });
 
@@ -506,7 +535,7 @@ test("error hygiene: nothing leaving batchStep carries the key — not .stack, n
     },
   };
   let err;
-  try { await steps.batchStep(leaky, PARAMS, 0, src.batchCount); } catch (e) { err = e; }
+  try { await batchStep(leaky, PARAMS, 0, src.batchCount); } catch (e) { err = e; }
 
   assert.ok(err instanceof TranslateProviderError, "still classified as a provider error");
   assert.equal(err.code, "provider_error");
@@ -578,7 +607,7 @@ test("merge-report re-checks cancel before writing out/ and a done manifest", as
   const src = await steps.guardAndSourceStep(s.deps, PARAMS);
   const ctx = await steps.contextStep(s.deps, PARAMS, src.batchCount);
   const results = [];
-  for (let i = 0; i < src.batchCount; i++) results.push(await steps.batchStep(s.deps, PARAMS, i, src.batchCount));
+  for (let i = 0; i < src.batchCount; i++) results.push(await batchStep(s.deps, PARAMS, i, src.batchCount));
 
   s.sqlite.prepare(`UPDATE pipeline_jobs SET state = 'cancelled' WHERE job_id = ?`).run(JOB);
   const f = await kindOf(() => steps.mergeReportStep(s.deps, PARAMS, src, ctx, results));
@@ -598,7 +627,7 @@ test("merge base guards: an absent target refuses a partial book, and a shrinkin
   const src = await steps.guardAndSourceStep(s.deps, PARAMS);
   const ctx = await steps.contextStep(s.deps, PARAMS, src.batchCount);
   const results = [];
-  for (let i = 0; i < src.batchCount; i++) results.push(await steps.batchStep(s.deps, PARAMS, i, src.batchCount));
+  for (let i = 0; i < src.batchCount; i++) results.push(await batchStep(s.deps, PARAMS, i, src.batchCount));
 
   const partial = { ...src, coversWholeBook: false };
   const f = await kindOf(() => steps.mergeReportStep(s.deps, PARAMS, partial, ctx, results));
@@ -622,7 +651,7 @@ test("merge base guards: an absent target refuses a partial book, and a shrinkin
   const tsrc = await steps.guardAndSourceStep(t.deps, PARAMS);
   assert.equal(tsrc.coversWholeBook, true, "a truncated source looks complete to step 1 — only the base reveals it");
   const tctx = await steps.contextStep(t.deps, PARAMS, tsrc.batchCount);
-  const tres = [await steps.batchStep(t.deps, PARAMS, 0, tsrc.batchCount)];
+  const tres = [await batchStep(t.deps, PARAMS, 0, tsrc.batchCount)];
   const g = await kindOf(() => steps.mergeReportStep(t.deps, PARAMS, tsrc, tctx, tres));
   assert.equal(g.errorKind, "merge_shrink_refused");
   assert.equal(g.retryable, false);
@@ -672,14 +701,38 @@ function replayReply(user, { drop = 0 } = {}) {
   return { text: wrapped(`${RECORDED.header}\n${body}`), usage: { inputTokens: 5000, outputTokens: 3000 }, stopReason: "end_turn" };
 }
 
-test("a billed output R2 refuses: the put is retried in-step, then fails non-retryably rather than re-buying the call", async () => {
+test("the billed output leaves the paying step as its RETURN value, and nothing writes it there", async () => {
   const s = await scenario();
   const src = await steps.guardAndSourceStep(s.deps, PARAMS);
   await steps.contextStep(s.deps, PARAMS, src.batchCount);
   const keys = storage.batchKeys(WS, JOB, "01");
 
+  const translated = await steps.batchTranslateStep(s.deps, PARAMS, 0, src.batchCount);
+  assert.equal(s.replay.calls.length, 1);
+  // The seam: the step that spent the money hands the output back instead of
+  // writing it, so the engine persists it before the write is even attempted.
+  assert.equal(translated.outputText, fixture(`${DRY}work/batch-01-out.tsv`));
+  assert.equal(s.blobs.map.has(keys.output), false, "batch-NN must not write the output itself");
+  // ...and it is a step return, so it must still be free of the decrypted key.
+  assert.ok(!JSON.stringify(translated).includes(KEY));
+
+  const persisted = await steps.batchPersistStep(s.deps, PARAMS, translated);
+  assert.equal(s.blobs.map.get(keys.output), fixture(`${DRY}work/batch-01-out.tsv`));
+  assert.equal(persisted.outputText, undefined, "the accounting handed on to merge-report carries no payload");
+  assert.equal(persisted.calls, 1);
+});
+
+test("an R2 refusal in the persist step is retryable, and its retry replays the output instead of re-buying it", async () => {
+  const s = await scenario();
+  const src = await steps.guardAndSourceStep(s.deps, PARAMS);
+  await steps.contextStep(s.deps, PARAMS, src.batchCount);
+  const keys = storage.batchKeys(WS, JOB, "01");
+
+  const translated = await steps.batchTranslateStep(s.deps, PARAMS, 0, src.batchCount);
+  assert.equal(s.replay.calls.length, 1);
+
   let puts = 0;
-  const deps = {
+  const flaky = {
     ...s.deps,
     blobs: {
       ...s.blobs,
@@ -690,14 +743,20 @@ test("a billed output R2 refuses: the put is retried in-step, then fails non-ret
       },
     },
   };
+  const f = await kindOf(() => steps.batchPersistStep(flaky, PARAMS, translated));
+  // THE regression assertion. Non-retryable was the old answer, and it was the
+  // only one available while the put lived inside the paying step: a retry
+  // there found no stored output and bought the batch again. The output now
+  // survives in the step return, so the write is allowed to keep trying.
+  assert.equal(f.retryable, true, "the write of an already-durable output must earn its retries");
+  assert.equal(puts, 1);
 
-  const f = await kindOf(() => steps.batchStep(deps, PARAMS, 0, src.batchCount));
-  assert.equal(f.errorKind, "output_persist_failed");
-  // THE regression assertion: retryable here means the engine re-runs the step,
-  // finds no stored output and pays the provider a second time for the batch.
-  assert.equal(f.retryable, false, "a failure after a billed call must not earn a step retry");
-  assert.equal(puts, 3, "the put is retried in-step before the step is given up on");
-  assert.equal(s.replay.calls.length, 1, "exactly one billed call, whatever R2 does");
+  // What the engine does next: re-run ONLY the persist step, with the return
+  // value it persisted for batch-01 replayed into it.
+  const again = await steps.batchPersistStep(s.deps, PARAMS, translated);
+  assert.equal(s.replay.calls.length, 1, "the retry cost no provider call at all");
+  assert.equal(s.blobs.map.get(keys.output), fixture(`${DRY}work/batch-01-out.tsv`));
+  assert.equal(again.calls, 1);
 });
 
 test("a billed draft survives the step: a transient failure after it resumes at the repair pass instead of re-drafting", async () => {
@@ -723,32 +782,78 @@ test("a billed draft survives the step: a transient failure after it resumes at 
   await steps.contextStep(s.deps, PARAMS, src.batchCount);
   const keys = storage.batchKeys(WS, JOB, "01");
 
-  const f = await kindOf(() => steps.batchStep(s.deps, PARAMS, 0, src.batchCount));
+  const f = await kindOf(() => batchStep(s.deps, PARAMS, 0, src.batchCount));
   assert.equal(f.errorKind, "rate_limited");
   assert.equal(f.retryable, true, "a provider transient still earns the step its retry");
   assert.equal(prompts.length, 2, "one draft, then a repair call that never landed");
   assert.ok(s.blobs.map.has(keys.draft), "the billed draft is durable BEFORE the repair call is made");
   assert.equal(s.blobs.map.has(keys.output), false, "and nothing validated, so there is no output yet");
+  // What it COST is durable too. Without this the resumed step below reports
+  // only the repair call, and the run's report bills the org for one call when
+  // it paid for two.
+  assert.deepEqual(JSON.parse(s.blobs.map.get(keys.draftMeta)).map((c) => c.usage), [{ inputTokens: 5000, outputTokens: 3000 }]);
 
   // What the engine does next: re-run the same step.
-  const again = await steps.batchStep(s.deps, PARAMS, 0, src.batchCount);
+  const again = await batchStep(s.deps, PARAMS, 0, src.batchCount);
   assert.equal(prompts.length, 3, "the retry bought ONE call — without the stored draft it would re-draft AND repair");
   assert.match(prompts[2], /FAILED deterministic validation/, "the retry entered at the repair pass");
   assert.equal(again.reused, false);
-  assert.equal(again.calls, 1, "the resumed step bills only the repair pass");
   assert.equal(again.attempts, 2, "which is pass 2 of 2: the resumed draft was pass 1");
+  assert.equal(s.blobs.map.get(keys.output), fixture(`${DRY}work/batch-01-out.tsv`));
+  // THE accounting assertion: 2 calls, not 1. The isolate that bought the draft
+  // died, the org's card did not un-charge, and the report is the org's bill.
+  assert.equal(again.calls, 2, "the resumed batch bills the draft it inherited as well as the repair pass");
+  assert.equal(again.inputTokens, 10000);
+  assert.equal(again.outputTokens, 6000);
+
+  // And it reaches the report the org actually reads.
+  const rest = [];
+  for (let i = 1; i < src.batchCount; i++) rest.push(await batchStep(s.deps, PARAMS, i, src.batchCount));
+  const ctx = await steps.contextStep(s.deps, PARAMS, src.batchCount);
+  const merged = await steps.mergeReportStep(s.deps, PARAMS, src, ctx, [again, ...rest]);
+  assert.equal(merged.calls, src.batchCount + 1, "one call per batch, plus the draft batch-01 paid for twice");
+  const report = JSON.parse(s.blobs.map.get("pipeline-output/bsoj/job-1/out/translate-report-1-1.json"));
+  assert.equal(report.llm.calls, src.batchCount + 1);
+  assert.equal(report.llm.inputTokens, 5000 * (src.batchCount + 1), "every billed token is in the report");
+});
+
+test("a draft resumed with no stored call metadata still runs, and only under-reports", async () => {
+  // The metadata put is best-effort on purpose: it must never be the reason a
+  // paid batch fails. Losing it costs accuracy, not the run.
+  const prompts = [];
+  let phase = 1;
+  const s = await scenario({ transport: async (req) => {
+    prompts.push(req.user);
+    if (phase === 1) { phase = 2; return replayReply(req.user, { drop: 1 }); }
+    if (phase === 2) { phase = 3; throw new TranslateProviderError("rate_limited", "claude", "slow down"); }
+    return replayReply(req.user);
+  } });
+  const src = await steps.guardAndSourceStep(s.deps, PARAMS);
+  await steps.contextStep(s.deps, PARAMS, src.batchCount);
+  const keys = storage.batchKeys(WS, JOB, "01");
+
+  await kindOf(() => batchStep(s.deps, PARAMS, 0, src.batchCount));
+  s.blobs.map.delete(keys.draftMeta);
+
+  const again = await batchStep(s.deps, PARAMS, 0, src.batchCount);
+  assert.equal(prompts.length, 3, "the resume still happens: the draft text is what gates it");
+  assert.equal(again.calls, 1, "with no record of the draft's price, the batch reports the repair pass alone");
   assert.equal(s.blobs.map.get(keys.output), fixture(`${DRY}work/batch-01-out.tsv`));
 });
 
-test("a stored draft that validates is promoted to the batch output, never re-bought", async () => {
+test("a stored draft that validates is promoted to the batch output, never re-bought, and still billed", async () => {
   const s = await scenario({ transport: async () => { throw new Error("the provider must not be called"); } });
   const src = await steps.guardAndSourceStep(s.deps, PARAMS);
   await steps.contextStep(s.deps, PARAMS, src.batchCount);
   const keys = storage.batchKeys(WS, JOB, "01");
   s.blobs.map.set(keys.draft, fixture(`${DRY}work/batch-01-out.tsv`));
+  s.blobs.map.set(keys.draftMeta, JSON.stringify([{ usage: { inputTokens: 5000, outputTokens: 3000 }, costUsd: 0.06, model: "claude-sonnet-5" }]));
 
-  const r = await steps.batchStep(s.deps, PARAMS, 0, src.batchCount);
+  const r = await batchStep(s.deps, PARAMS, 0, src.batchCount);
   assert.equal(r.reused, true);
-  assert.equal(r.calls, 0);
   assert.equal(s.blobs.map.get(keys.output), fixture(`${DRY}work/batch-01-out.tsv`));
+  // Promotion re-uses the draft; it does not make the draft free.
+  assert.equal(r.calls, 1);
+  assert.equal(r.inputTokens, 5000);
+  assert.equal(r.costUsd, 0.06);
 });

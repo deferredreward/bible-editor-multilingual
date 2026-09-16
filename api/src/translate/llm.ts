@@ -684,16 +684,27 @@ export type RunBatchOptions = {
    * from durable storage, whose checks failed. Resuming from it starts the loop
    * at the repair pass, so a step retry after a transient failure that landed
    * AFTER a billed draft does not buy that draft a second time.
+   *
+   * `calls` is that draft's OWN billed calls, recovered alongside its text and
+   * seeded into this run's ledger. The org was billed for them whether or not
+   * the isolate that made them survived, so leaving them out makes the batch
+   * result — and the run's translate report, which is the bill the org sees —
+   * under-count the tokens and the dollars actually spent. Absent or empty when
+   * the metadata could not be read back: that under-counts exactly as the
+   * previous revision did, rather than failing a batch that is otherwise fine.
    */
-  resume?: { output: string; checks: CheckResult } | null;
+  resume?: { output: string; checks: CheckResult; calls?: readonly LlmCall[] } | null;
   /**
    * Awaited with every billed draft that failed validation, BEFORE the repair
    * call is made. This is the caller's chance to persist the draft durably —
    * nothing the org paid for should exist only in this isolate's memory. A
    * throw here aborts the batch (the caller decides how fatal that is) rather
    * than letting the loop spend another call on top of an unsaved one.
+   *
+   * `calls` is every call billed so far, resumed ones included, so what the
+   * caller stores is the draft's whole price and not just the last pass's.
    */
-  onFailedDraft?: (output: string, checks: CheckResult) => Promise<void>;
+  onFailedDraft?: (output: string, checks: CheckResult, calls: readonly LlmCall[]) => Promise<void>;
 };
 export type RunBatchResult = {
   rows: TsvRow[];
@@ -701,9 +712,11 @@ export type RunBatchResult = {
   /** Draft/repair passes that produced a validated output (1 or 2), resumed ones included. */
   attempts: number;
   /**
-   * Provider calls billed by THIS invocation, drafts discarded on truncation
-   * included. Normally >= attempts; on a resumed batch it is one lower, because
-   * the draft being resumed from was billed by an earlier step attempt.
+   * Provider calls billed for this batch, drafts discarded on truncation
+   * included, and — on a resumed batch — the calls an earlier step attempt
+   * already paid for. It is the batch's whole bill, not this isolate's share of
+   * it: the caller turns it into the run's usage report, and the org pays for
+   * the calls it did not live to see just the same. Normally >= attempts.
    */
   calls: number;
   /** The validated output file content (batch-NN-out.tsv). */
@@ -727,7 +740,9 @@ export type RunBatchResult = {
 export async function runBatch(deps: LlmDeps, artifacts: RunBatchInput, { resource, skill, resume, onFailedDraft }: RunBatchOptions): Promise<RunBatchResult> {
   let lastChecks: CheckResult | null = resume?.checks ?? null;
   let lastOutput: string | null = resume?.output ?? null;
-  const llmCalls: LlmCall[] = [];
+  // Seeded, not empty: a resumed draft was billed on an earlier step attempt,
+  // and this ledger is what the run's translate report bills the org from.
+  const llmCalls: LlmCall[] = resume?.calls ? [...resume.calls] : [];
   const cols = resource.translateColumns.join(" + ");
 
   // A resumed batch enters at the LAST attempt: the draft it resumes from was
@@ -765,7 +780,7 @@ export async function runBatch(deps: LlmDeps, artifacts: RunBatchInput, { resour
     lastChecks = checks;
     lastOutput = one.output;
     // Persist the billed-but-invalid draft before spending anything else.
-    if (attempt < MAX_BATCH_ATTEMPTS && onFailedDraft) await onFailedDraft(one.output, checks);
+    if (attempt < MAX_BATCH_ATTEMPTS && onFailedDraft) await onFailedDraft(one.output, checks, [...llmCalls]);
   }
   const summary = lastChecks!.errors.slice(0, 5).map((e) => `[${e.check}] ${e.rowId}: ${e.message}`).join("; ");
   const failed = new TranslateProviderError("checks_failed", deps.provider,

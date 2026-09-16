@@ -10,8 +10,12 @@
 // Contract with the rest of the app (design §B):
 //   * D1 writes go through status.writeWfStatus only: current_skill,
 //     current_status, updated_at, wf_status_json. Never state / output_json.
-//   * Content lives in R2 under storage.ts's job prefix; step return values are
-//     tiny (counts, shas, usage) because Cloudflare persists them.
+//   * Content lives in R2 under storage.ts's job prefix and step returns stay
+//     small, because Cloudflare persists every one of them. The single
+//     deliberate exception is batch-NN, which returns its validated output (~8-70
+//     KB) so that writing it becomes a separate, freely retryable step: the
+//     engine's own persistence is what stops an R2 failure from re-buying a
+//     provider call. See BatchTranslateResult for the measured limits.
 //   * The org's API key exists only as a local const inside batchStep. It is
 //     never returned, never written, and every error leaving that scope is
 //     scrubbed of it (llm.scrubSecrets).
@@ -54,6 +58,7 @@ import {
   runBatch,
   scrubSecrets,
   transportFor,
+  type LlmCall,
   type Transport,
 } from "./llm.ts";
 import {
@@ -64,6 +69,7 @@ import {
   outKey,
   putText,
   reportFileName,
+  type BatchKeys,
   type BlobStore,
 } from "./storage.ts";
 import {
@@ -432,7 +438,7 @@ export type BatchStepResult = {
   rowCount: number;
   /** Draft/repair passes (0 when a validated output was reused from R2). */
   attempts: number;
-  /** Billed provider calls (>= attempts; 0 on reuse). */
+  /** Billed provider calls for this batch, an earlier attempt's resumed draft included (0 on reuse). */
   calls: number;
   inputTokens: number;
   outputTokens: number;
@@ -440,23 +446,49 @@ export type BatchStepResult = {
   reused: boolean;
 };
 
+/**
+ * What `batch-NN` returns: the accounting above, plus the provider output the
+ * following `batch-NN-persist` step writes to R2.
+ *
+ * The output rides in the step return ON PURPOSE. Cloudflare persists a step's
+ * return value before the next step runs, so once `batch-NN` commits, the
+ * thing the org paid for is durable in the engine's own storage — and the R2
+ * write that follows becomes freely retryable, because its retry replays that
+ * stored value instead of re-buying the batch. The previous shape did the write
+ * inside the paying step, where the only way to keep a failed write from
+ * charging twice was to fail the whole batch non-retryably.
+ *
+ * Size: one batch output is ~8-70 KB, against a documented ceiling of 1 MiB for
+ * a non-stream step result and 100 MB (Free) / 1 GB (Paid) of persisted state
+ * per instance (Cloudflare Workflows "Limits": "Maximum non-stream step result
+ * per step", "Maximum state that can be persisted per Workflow instance"). A
+ * 22-batch run persists ~1.5 MB. Nothing else grows with the run, and the
+ * decrypted key is still never part of it.
+ */
+export type BatchTranslateResult = BatchStepResult & {
+  /**
+   * The validated batch output, for `batch-NN-persist` to write. Null when the
+   * output was already in R2 from an earlier instance — there is nothing to
+   * write, and re-writing it would be the one way to corrupt a good artifact.
+   */
+  outputText: string | null;
+};
+
 // A provider call is money, and everything between the provider's reply and a
-// durable write is a window in which a step retry re-buys it. These three
-// constants bound the only part of that window this code controls: the R2 put.
-// Failing the put NON-retryably is deliberate — a retried step would find no
-// stored output and pay for the batch again, so one loud failure is cheaper
-// than a silent second call.
+// durable write is a window in which a step retry re-buys it. The validated
+// output closes that window through the step return above. These constants
+// bound what is left: the mid-loop put of a FAILED draft, which cannot be its
+// own step because the batch step is still running when it happens.
 const BILLED_PUT_ATTEMPTS = 3;
 const BILLED_PUT_BASE_DELAY_MS = 250;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Persist something the org has ALREADY been billed for. Retries the put
- * in-step (R2 hiccups are transient and cost nothing to re-try) and, if it
- * still will not land, fails the step non-retryably: the paid output is lost
- * either way, and the only choice left is whether to lose it once or to lose it
- * and buy it again.
+ * Persist something the org has ALREADY been billed for, mid-step. Retries the
+ * put in-step (R2 hiccups are transient and cost nothing to re-try) and, if it
+ * still will not land, fails the step non-retryably: the repair call that would
+ * follow is money spent on top of a draft nothing can resume from.
  */
 async function persistBilled(deps: StepDeps, key: string, text: string, what: string): Promise<void> {
   let last: unknown;
@@ -475,6 +507,50 @@ async function persistBilled(deps: StepDeps, key: string, text: string, what: st
     + `— failing without a retry so the provider call already paid for is not bought again`,
     { retryable: false },
   );
+}
+
+/**
+ * Store a billed-but-invalid draft AND what it cost, before the repair call.
+ *
+ * The metadata goes first and best-effort: `draft` is the key the resume path
+ * gates on, so a sidecar that never lands must degrade to "resumed, price
+ * unknown" rather than either blocking the resume or failing a live batch. The
+ * text itself is the thing worth a hard failure, so it keeps persistBilled.
+ */
+async function persistDraft(deps: StepDeps, keys: BatchKeys, nn: string, output: string, calls: readonly LlmCall[]): Promise<void> {
+  try {
+    await putText(deps.blobs, keys.draftMeta, JSON.stringify(calls));
+  } catch (err) {
+    console.error("translate batch: could not persist draft call metadata (the resume will under-report usage)", {
+      nn, error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  await persistBilled(deps, keys.draft, output, `work/batch-${nn}-draft.tsv`);
+}
+
+/** A stored draft's billed calls. Anything unreadable degrades to "no record", never to a thrown batch. */
+async function readDraftCalls(deps: StepDeps, keys: BatchKeys): Promise<LlmCall[]> {
+  try {
+    const json = await getText(deps.blobs, keys.draftMeta);
+    if (json == null) return [];
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) ? (parsed as LlmCall[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Sum a call ledger into the shape BatchStepResult reports (and buildTranslateReport bills from). */
+function totals(calls: readonly LlmCall[]): { inputTokens: number; outputTokens: number; costUsd: number | null } {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let costUsd: number | null = null;
+  for (const c of calls) {
+    inputTokens += c.usage?.inputTokens || 0;
+    outputTokens += c.usage?.outputTokens || 0;
+    if (c.costUsd != null) costUsd = (costUsd ?? 0) + c.costUsd;
+  }
+  return { inputTokens, outputTokens, costUsd };
 }
 
 /**
@@ -508,7 +584,14 @@ export function sanitizeBatchError(err: unknown, apiKey: string): Error {
   return new TranslateStepError("internal_error_after_call", scrub(err instanceof Error ? err.message : String(err)), { retryable: false });
 }
 
-export async function batchStep(deps: StepDeps, params: TranslateWorkflowParams, index: number, batchCount: number): Promise<BatchStepResult> {
+/**
+ * Step 3a `batch-NN` — the step that spends the org's money, and the ONLY one
+ * that sees the decrypted key. It returns the validated output rather than
+ * writing it, so the write can be retried without re-buying the batch; see
+ * BatchTranslateResult. The key is a local const here: it is never returned,
+ * and every error leaving this scope is rebuilt scrubbed (sanitizeBatchError).
+ */
+export async function batchTranslateStep(deps: StepDeps, params: TranslateWorkflowParams, index: number, batchCount: number): Promise<BatchTranslateResult> {
   const nn = batchNn(index);
   const total = String(batchCount).padStart(2, "0");
   await assertJobLive(deps, params.jobId);
@@ -528,7 +611,7 @@ export async function batchStep(deps: StepDeps, params: TranslateWorkflowParams,
       const prev = validateBatchOutput(existing, batchRows, { parse: resource.codec.parse, checkOpts: resource.checkOpts });
       if (prev.checks.ok) {
         await progress(deps, params.jobId, p, `batch ${nn}/${total} reused from previous attempt (checks ok)`);
-        return { nn, rowCount: batchRows.length, attempts: 0, calls: 0, inputTokens: 0, outputTokens: 0, costUsd: null, reused: true };
+        return { nn, rowCount: batchRows.length, attempts: 0, calls: 0, inputTokens: 0, outputTokens: 0, costUsd: null, reused: true, outputText: null };
       }
     } catch {
       /* unparseable leftover — retranslate */
@@ -563,18 +646,23 @@ export async function batchStep(deps: StepDeps, params: TranslateWorkflowParams,
   // step attempt, stored by the onFailedDraft hook below because its checks
   // failed. Resuming from it turns this attempt into the repair pass, so a
   // transient failure that landed after a billed draft costs one call, not two.
-  let resume: { output: string; checks: CheckResult } | null = null;
+  //
+  // Its billed calls come back with it (keys.draftMeta). They are the org's
+  // real spend on this batch; dropping them made a resumed batch report only
+  // the repair call, so the run's translate report under-billed a draft the org
+  // had already paid for.
+  let resume: { output: string; checks: CheckResult; calls: LlmCall[] } | null = null;
   if (draftText != null) {
     try {
       const prev = validateBatchOutput(draftText, batchRows, { parse: resource.codec.parse, checkOpts: resource.checkOpts });
+      const paid = await readDraftCalls(deps, keys);
       if (prev.checks.ok) {
         // Only stored when its checks failed, so this means the checks changed
         // under us. Promote it rather than re-buying an output that now passes.
-        await persistBilled(deps, keys.output, draftText, `work/batch-${nn}-out.tsv`);
         await progress(deps, params.jobId, p, `batch ${nn}/${total} reused a stored draft (checks ok)`);
-        return { nn, rowCount: batchRows.length, attempts: 0, calls: 0, inputTokens: 0, outputTokens: 0, costUsd: null, reused: true };
+        return { nn, rowCount: batchRows.length, attempts: 0, calls: paid.length, ...totals(paid), reused: true, outputText: draftText };
       }
-      resume = { output: draftText, checks: prev.checks };
+      resume = { output: draftText, checks: prev.checks, calls: paid };
     } catch {
       /* unparseable leftover — retranslate */
     }
@@ -590,25 +678,40 @@ export async function batchStep(deps: StepDeps, params: TranslateWorkflowParams,
         resource,
         skill: p.skill,
         resume,
-        onFailedDraft: (output) => persistBilled(deps, keys.draft, output, `work/batch-${nn}-draft.tsv`),
+        onFailedDraft: (output, _checks, calls) => persistDraft(deps, keys, nn, output, calls),
       },
     );
   } catch (err) {
     throw sanitizeBatchError(err, apiKey);
   }
 
-  await persistBilled(deps, keys.output, result.outputText, `work/batch-${nn}-out.tsv`);
   await progress(deps, params.jobId, p, `batch ${nn}/${total} done (${batchRows.length} rows, ${result.attempts} attempt(s))`);
+  return {
+    nn, rowCount: batchRows.length, attempts: result.attempts, calls: result.calls,
+    ...totals(result.llmCalls), reused: false, outputText: result.outputText,
+  };
+}
 
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let costUsd: number | null = null;
-  for (const c of result.llmCalls) {
-    inputTokens += c.usage?.inputTokens || 0;
-    outputTokens += c.usage?.outputTokens || 0;
-    if (c.costUsd != null) costUsd = (costUsd ?? 0) + c.costUsd;
+/**
+ * Step 3b `batch-NN-persist` — write what `batch-NN` bought, and nothing else.
+ *
+ * Freely retryable, which is the whole point of the split: the engine replays
+ * `batch-NN`'s persisted return on every attempt, so an R2 refusal here costs
+ * retries, not another provider call. No cancel re-check either — the output is
+ * already paid for, and step 3a of the NEXT batch is where a cancel takes
+ * effect.
+ *
+ * The window that stays open is the one no arrangement of steps can close: an
+ * isolate dying after the provider's reply arrives and before `batch-NN`'s
+ * return is committed. Nothing durable exists yet at that instant, so the retry
+ * pays again.
+ */
+export async function batchPersistStep(deps: StepDeps, params: TranslateWorkflowParams, translated: BatchTranslateResult): Promise<BatchStepResult> {
+  const { outputText, ...result } = translated;
+  if (outputText != null) {
+    await putText(deps.blobs, batchKeys(deps.workspaceSlug, params.jobId, translated.nn).output, outputText);
   }
-  return { nn, rowCount: batchRows.length, attempts: result.attempts, calls: result.calls, inputTokens, outputTokens, costUsd, reused: false };
+  return result;
 }
 
 // ---------------------------------------------------------------------------

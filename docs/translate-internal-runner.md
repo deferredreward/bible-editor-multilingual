@@ -107,16 +107,38 @@ Steps:
    timeout:'25 minutes'}`: if `work/batch-NN-out.tsv` exists and validates, skip
    (mirrors `translate-pipeline.js:449-454`). Else get source+pack+task from R2,
    decrypt key, run the MAX_BATCH_ATTEMPTS=2 draft+repair loop (`:328-376`
-   verbatim), put output, UPDATE `current_status` + `wf_status_json` (running).
-   A provider call is money and this step is retryable, so every R2 write that
-   brackets one is hardened: a draft whose checks failed is persisted to
-   `work/batch-NN-draft.tsv` BEFORE the repair call and resumed from on the next
-   attempt (the retry buys the repair pass, not the draft again), and the put of
-   a validated output is retried in-step and then fails `output_persist_failed`
-   NON-retryably — a retry would find no stored output and re-buy the batch. The
-   window that stays open is an isolate death between the provider's reply and
-   the R2 put: nothing durable exists yet, so the retry pays again.
-   Return `{nn, rowCount, attempts, usage, costUsd}`. Error mapping: `invalid_key`,
+   verbatim), UPDATE `current_status` + `wf_status_json` (running), and RETURN
+   the validated output. It is then written by a second step per batch,
+   `batch-NN-persist` (`INFRA_RETRY`), which does nothing but put
+   `work/batch-NN-out.tsv`.
+
+   The split is the cost control, and it is the one place this design
+   deliberately does not keep a step return tiny. A provider call is money and
+   `batch-NN` is retryable, so an R2 failure after a billed call used to have
+   only bad options: retry the step and pay again, or fail the batch. Cloudflare
+   persists a step's return value before the next step runs, so returning the
+   output makes it durable in the engine's own storage the moment `batch-NN`
+   commits; `batch-NN-persist` then retries off that replayed value and never
+   off the provider. Sizes are documented, not assumed — Workflows "Limits" caps
+   a non-stream step result at 1 MiB and per-instance persisted state at 100 MB
+   (Free) / 1 GB (Paid), against ~8-70 KB per batch output and ~1.5 MB for a
+   22-batch run. Step count is 2N+3 (25 for OBA's 11 batches), against 1,024
+   (Free) / 10,000 (Paid). The decrypted key is still never in a step return.
+
+   The mid-loop write stays in `batch-NN` because it happens while that step is
+   running: a draft whose checks failed is persisted to `work/batch-NN-draft.tsv`
+   BEFORE the repair call, with its billed calls beside it in
+   `work/batch-NN-draft.json`, and resumed from on the next attempt — the retry
+   buys the repair pass, not the draft again, and the resumed batch still reports
+   the draft's tokens and cost, which the org was billed for whether or not the
+   isolate that spent them survived. That put keeps the in-step retry and the
+   non-retryable `output_persist_failed` failure.
+
+   The window that stays open — and no arrangement of steps closes it — is an
+   isolate dying after the provider's reply arrives and before `batch-NN`'s
+   return is committed. Nothing durable exists at that instant, so the retry
+   pays again.
+   Return `{nn, rowCount, attempts, usage, costUsd, outputText}`. Error mapping: `invalid_key`,
    `model_not_found`, `context_too_long`, `output_too_long`, `empty_output`,
    checks-still-failing → `NonRetryableError`; `rate_limited`,
    `provider_overloaded`, `timeout`, `network_error` → plain throw (step retries,
@@ -235,11 +257,14 @@ drifted), `checks.ok`, Quote byte-identical 153/153, all Notes Arabic, report
 7. tq (near-free), then tw/ta (`articleResolver`, article steps). ~1.5 d.
 
 Risks: (1) Workflow limits (step return/params size, step timeout, subrequests per
-step): content in R2, tiny returns, verify limits in `wrangler dev` before step 4.
+step): content in R2 and small returns, with the one measured exception of
+`batch-NN`'s output (§B step 3); verify limits in `wrangler dev` before step 4.
 (2) Wrong-tenant env: mandatory `params.workspace`, first-line re-point,
 slug-prefixed R2 keys, cloned test. (3) Key exposure: step-local decrypt, scrub on
 every throw, serialized-artifact test, never log params. (4) Double LLM spend on
 step retry: R2 output-reuse check at step start; `NonRetryableError` for
-deterministic failures. (5) Prompt/behavior drift from the bot: sync script +
+deterministic failures; the billed output leaves the paying step as its return
+value so the R2 write can retry without re-buying it. (5) Prompt/behavior drift
+from the bot: sync script +
 checksum test against the skills checkout; dry-run comparison in step 6. OpenAI/xAI
 and Gemini stay proxied until each adapter is smoke-tested.

@@ -10,7 +10,9 @@
 //                                        → buildBatches → R2 work/batch-NN.tsv
 //   2. context            [3 × 5s exp]   context pack + scripture → R2 batch-NN-pack.md/-task.json
 //   3. batch-NN × N       [2 × 30s exp,   cancel check → R2 output-reuse → decrypt key (step-local)
-//                          25 min timeout] → draft+repair (llm.runBatch) → R2 batch-NN-out.tsv
+//                          25 min timeout] → draft+repair (llm.runBatch) → RETURN the output
+//      batch-NN-persist × N [3 × 5s exp]   → R2 batch-NN-out.tsv, replaying the step above's
+//                                           persisted return, so its retry costs no provider call
 //   4. merge-report       [3 × 5s exp]   whole-range checks → merge into target book →
 //                                        R2 out/<file> + out/translate-report → wf_status done
 //   5. record-failure     (catch-all)    wf_status failed {errorKind, error}, scrubbed
@@ -28,7 +30,8 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "./index";
 import { workspaceEnv, primeWorkspaces } from "./workspaces.ts";
 import {
-  batchStep,
+  batchPersistStep,
+  batchTranslateStep,
   classifyStepError,
   contextStep,
   guardAndSourceStep,
@@ -151,9 +154,18 @@ export class TranslateWorkflow extends WorkflowEntrypoint<Env, TranslateWorkflow
 
       const ctx = await step.do("context", INFRA_RETRY, () => guarded(() => contextStep(deps, params, src.batchCount)));
 
+      // Two steps per batch, and the split is the cost control. The paying step
+      // RETURNS its output; Cloudflare persists a step's return before the next
+      // one runs, so the write that follows can retry off durable state instead
+      // of off the provider. Done inside one step, an R2 refusal after a billed
+      // call had only bad options: retry the step and pay again, or fail the
+      // batch. (What no split can save: an isolate death between the provider's
+      // reply and the commit of batch-NN's return — nothing is durable yet.)
       const results: BatchStepResult[] = [];
       for (let i = 0; i < src.batchCount; i++) {
-        results.push(await step.do(`batch-${batchNn(i)}`, BATCH_RETRY, () => guarded(() => batchStep(deps, params, i, src.batchCount))));
+        const nn = batchNn(i);
+        const translated = await step.do(`batch-${nn}`, BATCH_RETRY, () => guarded(() => batchTranslateStep(deps, params, i, src.batchCount)));
+        results.push(await step.do(`batch-${nn}-persist`, INFRA_RETRY, () => guarded(() => batchPersistStep(deps, params, translated))));
       }
 
       const merged = await step.do("merge-report", INFRA_RETRY, () => guarded(() => mergeReportStep(deps, params, src, ctx, results)));
