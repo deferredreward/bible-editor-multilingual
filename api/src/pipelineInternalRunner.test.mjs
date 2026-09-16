@@ -27,7 +27,8 @@ import { fileURLToPath } from "node:url";
 import { dispatchNext, pollAllNonTerminal } from "./pipelines.ts";
 import { encryptApiKey } from "./aiKeyCrypto.ts";
 import { clearProjectConfigCache } from "./projectConfig.ts";
-import { memoryBlobStore, outKey } from "./translate/storage.ts";
+import { outKey } from "./translate/storage.ts";
+import { memoryBlobStore } from "./translate/fixtures.mjs";
 
 const WRAPPING_KEY = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
 const API_KEY = "sk-ant-api03-PLAINTEXT-MUST-NEVER-LEAVE-DISPATCH";
