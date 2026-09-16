@@ -30,8 +30,10 @@ test("batchKeys mirrors the bot's work/ file names and core.buildBatchArtifacts'
     // The one key with no counterpart in the bot's work/ directory: a billed
     // draft whose checks failed, written before the repair call so a step
     // retry resumes instead of re-buying the draft (workflowSteps.batchStep).
-    draft: "pipeline-output/bsoj/job_01HZX/work/batch-03-draft.tsv",
-    draftMeta: "pipeline-output/bsoj/job_01HZX/work/batch-03-draft.json",
+    // JSON, not TSV, because the object carries the draft's price alongside its
+    // text — one atomic write, so a resume can never read a draft with no
+    // ledger and under-bill the org for a call it already made.
+    draft: "pipeline-output/bsoj/job_01HZX/work/batch-03-draft.json",
   });
   const art = core.buildBatchArtifacts(2, {
     batchRows: [], packMarkdown: "", targetLang: "ar", targetLangName: "Arabic", direction: "rtl", book: "OBA", resource: core.tsvResource("tn"),

@@ -79,19 +79,27 @@ export function batchFileNames(nn: string): BatchFileNames {
   };
 }
 
-export type BatchKeys = { source: string; pack: string; task: string; output: string; draft: string; draftMeta: string };
+export type BatchKeys = { source: string; pack: string; task: string; output: string; draft: string };
 
 /**
  * R2 keys of one batch's work/ artifacts.
  *
- * `draft` and `draftMeta` are the two keys with no counterpart in the bot's
- * work directory. `draft` holds a BILLED draft whose deterministic checks
- * failed, written before the repair call so a step retry resumes at the repair
- * pass instead of buying the draft again (workflowSteps.batchTranslateStep);
- * `draftMeta` holds that draft's own provider calls (tokens, cost, model), so
- * the resumed batch still bills the org for what the lost isolate spent instead
- * of reporting only the repair pass. Both are written only on that path, so a
- * clean run's work/ prefix still matches the bot's file for file.
+ * `draft` is the one key with no counterpart in the bot's work directory. It
+ * holds a BILLED draft whose deterministic checks failed, written before the
+ * repair call so a step retry resumes at the repair pass instead of buying the
+ * draft again (workflowSteps.batchTranslateStep) — and it holds, in the SAME
+ * object, the provider calls that bought it (tokens, cost, model), so the
+ * resumed batch bills the org for what the lost isolate spent instead of
+ * reporting only the repair pass.
+ *
+ * One object, not a `.tsv` plus a `.json` sidecar, because R2 is atomic per
+ * object and nothing is atomic across two. The sidecar shape could land the
+ * draft and lose its price, and a resume then read a draft with an empty
+ * ledger — under-reporting a call the org had already been charged for. Now a
+ * resume either has the whole ledger or has no draft to resume from.
+ *
+ * Written only on the failed-draft path, so a clean run's work/ prefix still
+ * matches the bot's file for file.
  */
 export function batchKeys(workspaceSlug: string, jobId: string, nn: string): BatchKeys {
   const names = batchFileNames(nn);
@@ -100,8 +108,7 @@ export function batchKeys(workspaceSlug: string, jobId: string, nn: string): Bat
     pack: workKey(workspaceSlug, jobId, names.packFile),
     task: workKey(workspaceSlug, jobId, names.taskFile),
     output: workKey(workspaceSlug, jobId, names.outputFile),
-    draft: workKey(workspaceSlug, jobId, `batch-${nn}-draft.tsv`),
-    draftMeta: workKey(workspaceSlug, jobId, `batch-${nn}-draft.json`),
+    draft: workKey(workspaceSlug, jobId, `batch-${nn}-draft.json`),
   };
 }
 

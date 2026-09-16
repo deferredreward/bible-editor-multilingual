@@ -231,10 +231,9 @@ test("full run: source → context → 11 batches → merge reproduces the recor
   assert.equal(s.wf().state, "running", "batch steps never write done");
 
   // §C parity, asserted as a SET and not just key by key: a clean run writes
-  // the recorded dry-run work directory and nothing besides. The draft and its
-  // call-metadata sidecar (batch-NN-draft.tsv/.json) exist only on the
-  // failed-checks path, and moving the output write into its own step must not
-  // add, drop or rename anything here.
+  // the recorded dry-run work directory and nothing besides. The stored draft
+  // (batch-NN-draft.json) exists only on the failed-checks path, and moving the
+  // output write into its own step must not add, drop or rename anything here.
   //
   // The one standing difference from the recording is batch-NN-task.json, which
   // this runner writes and the committed dry run does not carry. That predates
@@ -722,6 +721,73 @@ test("the billed output leaves the paying step as its RETURN value, and nothing 
   assert.equal(persisted.calls, 1);
 });
 
+// A padding unit for an oversized output: one space plus four Arabic letters.
+// Deliberately harmless to every deterministic check — no tab or newline, no
+// rc:// link, no digit, and never two spaces in a row — so the inflated output
+// VALIDATES. That is the point: batch size is bounded by rows and source
+// characters, and nothing bounds how far a translated column may expand.
+const PAD_UNIT = " كلمة";
+const MIB = 1024 * 1024;
+
+/** The recorded reply for this prompt, with every Note inflated by `units` pads. */
+function inflatedReply(user, units) {
+  const reply = replayReply(user);
+  const pad = PAD_UNIT.repeat(units);
+  const text = reply.text.split("\n").map((line) => {
+    if (!line.includes("\t") || line.startsWith("Reference\t")) return line;
+    const cells = line.split("\t");
+    cells[cells.length - 1] += pad;
+    return cells.join("\t");
+  }).join("\n");
+  return { ...reply, text };
+}
+
+test("an output too large to return from the step is persisted inside it, and is never bought twice", async () => {
+  // Finding: batch-NN returns `outputText`, and Cloudflare refuses to persist a
+  // non-stream step result over 1 MiB. An unbounded return is therefore a
+  // step that cannot commit — so the engine retries it, and the retry re-buys
+  // the batch. The exact failure the persist split was introduced to prevent.
+  let replyBytes = 0;
+  let calls = 0;
+  const s = await scenario({ transport: async (req) => {
+    calls += 1;
+    const reply = inflatedReply(req.user, 9000);
+    replyBytes = Buffer.byteLength(reply.text, "utf8");
+    return reply;
+  } });
+  const src = await steps.guardAndSourceStep(s.deps, PARAMS);
+  await steps.contextStep(s.deps, PARAMS, src.batchCount);
+  const keys = storage.batchKeys(WS, JOB, "01");
+
+  const translated = await steps.batchTranslateStep(s.deps, PARAMS, 0, src.batchCount);
+  assert.equal(calls, 1);
+  assert.ok(replyBytes > MIB, `the fixture must actually be oversized (was ${replyBytes} bytes)`);
+
+  // THE assertion: whatever the model produced, what the engine is asked to
+  // persist fits. Everything else here follows from how that is achieved.
+  const returned = Buffer.byteLength(JSON.stringify(translated), "utf8");
+  assert.ok(returned < MIB, `the step return must fit under Cloudflare's 1 MiB step-result cap (was ${returned} bytes)`);
+
+  // How: the paying step wrote it itself and returned the same marker a reused
+  // output returns, so batch-NN-persist has nothing to do.
+  assert.equal(translated.outputText, null, "an oversized output is not returned");
+  const stored = s.blobs.map.get(keys.output);
+  assert.ok(Buffer.byteLength(stored, "utf8") > MIB, "the oversized output is durable in R2 instead");
+  assert.equal(translated.calls, 1);
+
+  const persisted = await steps.batchPersistStep(s.deps, PARAMS, translated);
+  assert.equal(s.blobs.map.get(keys.output), stored, "the persist step neither rewrites nor clobbers it");
+  assert.equal(persisted.calls, 1);
+
+  // And the cost claim, which is the whole reason the size matters: re-running
+  // the paying step — what the engine does when a step return will not commit
+  // — finds a validated output and buys nothing.
+  const again = await batchStep(s.deps, PARAMS, 0, src.batchCount);
+  assert.equal(calls, 1, "an oversized batch must never cause a second paid call");
+  assert.equal(again.reused, true);
+  assert.equal(again.calls, 0);
+});
+
 test("an R2 refusal in the persist step is retryable, and its retry replays the output instead of re-buying it", async () => {
   const s = await scenario();
   const src = await steps.guardAndSourceStep(s.deps, PARAMS);
@@ -788,10 +854,15 @@ test("a billed draft survives the step: a transient failure after it resumes at 
   assert.equal(prompts.length, 2, "one draft, then a repair call that never landed");
   assert.ok(s.blobs.map.has(keys.draft), "the billed draft is durable BEFORE the repair call is made");
   assert.equal(s.blobs.map.has(keys.output), false, "and nothing validated, so there is no output yet");
-  // What it COST is durable too. Without this the resumed step below reports
-  // only the repair call, and the run's report bills the org for one call when
-  // it paid for two.
-  assert.deepEqual(JSON.parse(s.blobs.map.get(keys.draftMeta)).map((c) => c.usage), [{ inputTokens: 5000, outputTokens: 3000 }]);
+  // What it COST is durable too, and in the SAME object — one R2 put, so there
+  // is no interval in which the draft exists without its price. Without this
+  // the resumed step below reports only the repair call, and the run's report
+  // bills the org for one call when it paid for two.
+  const draft = JSON.parse(s.blobs.map.get(keys.draft));
+  assert.deepEqual(draft.calls?.map((c) => c.usage), [{ inputTokens: 5000, outputTokens: 3000 }],
+    "the draft object carries the calls that bought it");
+  assert.equal(typeof draft.output, "string");
+  assert.ok(draft.output.includes("\t"), "the draft TSV itself rides in the same object");
 
   // What the engine does next: re-run the same step.
   const again = await batchStep(s.deps, PARAMS, 0, src.batchCount);
@@ -817,9 +888,16 @@ test("a billed draft survives the step: a transient failure after it resumes at 
   assert.equal(report.llm.inputTokens, 5000 * (src.batchCount + 1), "every billed token is in the report");
 });
 
-test("a draft resumed with no stored call metadata still runs, and only under-reports", async () => {
-  // The metadata put is best-effort on purpose: it must never be the reason a
-  // paid batch fails. Losing it costs accuracy, not the run.
+test("one R2 hiccup while storing a billed draft cannot separate it from its price", async () => {
+  // This test used to assert the opposite — "a draft resumed with no stored
+  // call metadata still runs, and only under-reports", pinning `again.calls`
+  // at 1 — because the price was a best-effort sidecar written beside the
+  // draft. One refused put was enough to land the draft and lose the ledger,
+  // and the resumed batch then billed the org for the repair pass alone.
+  //
+  // The draft and its ledger are now ONE object, so a refusal either loses
+  // both (and there is nothing to resume from) or, as here, is absorbed by
+  // persistBilled's in-step retry and loses neither.
   const prompts = [];
   let phase = 1;
   const s = await scenario({ transport: async (req) => {
@@ -832,12 +910,39 @@ test("a draft resumed with no stored call metadata still runs, and only under-re
   await steps.contextStep(s.deps, PARAMS, src.batchCount);
   const keys = storage.batchKeys(WS, JOB, "01");
 
-  await kindOf(() => batchStep(s.deps, PARAMS, 0, src.batchCount));
-  s.blobs.map.delete(keys.draftMeta);
+  // Exactly one refusal, aimed at whichever put carries the draft. Under the
+  // sidecar shape it hit the metadata put, which had no retry.
+  let refusals = 1;
+  const flaky = {
+    ...s.deps,
+    blobs: {
+      ...s.blobs,
+      async put(key, value, opts) {
+        if (/-draft\./.test(key) && refusals > 0) {
+          refusals -= 1;
+          throw new Error("R2 PutObject: 500 internal error");
+        }
+        return s.blobs.put(key, value, opts);
+      },
+    },
+  };
 
-  const again = await batchStep(s.deps, PARAMS, 0, src.batchCount);
-  assert.equal(prompts.length, 3, "the resume still happens: the draft text is what gates it");
-  assert.equal(again.calls, 1, "with no record of the draft's price, the batch reports the repair pass alone");
+  const f = await kindOf(() => batchStep(flaky, PARAMS, 0, src.batchCount));
+  assert.equal(f.errorKind, "rate_limited");
+  assert.equal(refusals, 0, "the injected R2 refusal really fired");
+
+  const draftKeys = [...s.blobs.map.keys()].filter((k) => k.includes("-draft"));
+  assert.deepEqual(draftKeys, [keys.draft], "one object holds the draft; there is no second key to lose");
+  const stored = JSON.parse(s.blobs.map.get(keys.draft));
+  assert.deepEqual(stored.calls?.map((c) => c.usage), [{ inputTokens: 5000, outputTokens: 3000 }],
+    "the ledger survived the hiccup in the same object as the text it belongs to");
+
+  const again = await batchStep(flaky, PARAMS, 0, src.batchCount);
+  assert.equal(prompts.length, 3, "the resume still happens: one repair call, not a re-draft");
+  // THE assertion this test used to invert: 2, not 1.
+  assert.equal(again.calls, 2, "the resumed batch bills the draft the org paid for as well as the repair pass");
+  assert.equal(again.inputTokens, 10000);
+  assert.equal(again.outputTokens, 6000);
   assert.equal(s.blobs.map.get(keys.output), fixture(`${DRY}work/batch-01-out.tsv`));
 });
 
@@ -846,8 +951,10 @@ test("a stored draft that validates is promoted to the batch output, never re-bo
   const src = await steps.guardAndSourceStep(s.deps, PARAMS);
   await steps.contextStep(s.deps, PARAMS, src.batchCount);
   const keys = storage.batchKeys(WS, JOB, "01");
-  s.blobs.map.set(keys.draft, fixture(`${DRY}work/batch-01-out.tsv`));
-  s.blobs.map.set(keys.draftMeta, JSON.stringify([{ usage: { inputTokens: 5000, outputTokens: 3000 }, costUsd: 0.06, model: "claude-sonnet-5" }]));
+  s.blobs.map.set(keys.draft, JSON.stringify({
+    output: fixture(`${DRY}work/batch-01-out.tsv`),
+    calls: [{ usage: { inputTokens: 5000, outputTokens: 3000 }, costUsd: 0.06, model: "claude-sonnet-5" }],
+  }));
 
   const r = await batchStep(s.deps, PARAMS, 0, src.batchCount);
   assert.equal(r.reused, true);
