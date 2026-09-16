@@ -68,6 +68,17 @@ For the full corpus, see the memory index at
 `C:\Users\benja\.claude\projects\C--Users-benja-Documents-GitHub-bible-editor\memory\MEMORY.md`.
 Highlights that bite repeatedly:
 
+- **A Workflows step error reaches `run()`'s catch as `${name}: ${message}`, not as the object you
+  threw.** The engine runs a step across an isolate boundary and rebuilds its error on the far side,
+  so `new NonRetryableError("[merge_failed] …")` arrives with message
+  `"NonRetryableError: [merge_failed] …"`. Any convention that reads structure out of a step error's
+  message has to allow for that prefix: the translate runner's `[kind] ` tag did not, so every
+  failure its catch-all recorded was filed as a retryable `internal_error` instead of its real kind
+  (fixed by `ENGINE_NAME_PREFIX` in `api/src/translate/workflowSteps.ts`). **Only a real engine shows
+  this** — a hand-rolled `step` double hands the thrown object straight back, which is exactly why the
+  claim survived source review. Measured with the miniflare Workflows harness
+  (`api/src/translate/workflowHarness.mjs`), which can host any WorkflowEntrypoint in this repo.
+
 - **Marker chips are TEXT, and `smartEditVerse` rebuilds the verse's whole marker layout from the captured text
   alone — so a capture that loses the chips silently deletes every `\q` in the verse.** `reconcileMarkers`
   (`web/src/lib/replace.ts`) unconditionally drops every inert in-flow marker and re-inserts only the ones it

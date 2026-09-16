@@ -246,6 +246,34 @@ Port fixtures (`tn_OBA.tsv`, `tq_OBA.tsv`, `tw_kt_god.md`, `ta_figs-aside/*`) to
   branch (pattern: `pipelineDispatchTimeout.test.mjs`), "no key in params/status/
   error strings" test.
 
+- Engine-level: `translate/workflowEngine.test.mjs`, on the harness in
+  `translate/workflowHarness.mjs` + `translate/workflowHarnessWorker.ts`. Runs the REAL
+  `TranslateWorkflow` class under a real Workflows engine — workerd via miniflare, with
+  D1 (every migration applied) and R2 — and serves every outbound fetch in-process:
+  the DCS raw endpoints, and the Anthropic Messages API as SSE into the real
+  `@anthropic-ai/sdk` inside the Worker, so there is no network and no stubbed
+  adapter. Covers what no step-body test can reach: the whole recorded OBA run
+  through `step.do`; the workspace re-point with a second, differently-keyed tenant
+  present (which key reaches the provider identifies which D1 was read); a missing /
+  unknown slug refusing before either tenant is touched; `NonRetryableError` fatality
+  (one billed call for `invalid_key`, two for the in-step repair loop) against real
+  step retries for a transient; R2 output reuse costing zero calls; and the decrypted
+  key's absence from step returns, instance output/error, D1, R2 and the engine's own
+  on-disk state.
+
+  Two runtime facts it measured, both load-bearing:
+  (a) the engine honours retry `delay` in real time, so the suite spends ~45 s
+  sleeping inside the retry cases — the reason the transient proofs use one-batch
+  jobs and the batch-step case retries once rather than twice;
+  (b) a step's error reaches `run()`'s catch rebuilt as `${name}: ${message}`, which is
+  why `classifyStepError` strips an error-name prefix before reading the `[kind] ` tag.
+  Before that, every failure the catch-all recorded was filed as a retryable
+  `internal_error` instead of its real kind.
+
+  Still needs a deployed worker: Cloudflare's own limits (step return / params size,
+  step and instance timeouts, subrequests per step), instance `terminate()` on cancel,
+  and whether production's engine rebuilds step errors the same way miniflare does.
+
 Live dry run: dev worker, workspace `bsoj`, admin stores an Anthropic key via
 `/api/ai-provider`, `PIPELINE_MODE=internal` in `.dev.vars`, start OBA 1 tn from the
 UI. Compare `pipeline-output/bsoj/<jobId>/` to `dry-run-ar-OBA/`: 153 rows, 11

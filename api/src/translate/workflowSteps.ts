@@ -172,6 +172,21 @@ export type StepFailure = { errorKind: string; message: string; retryable: boole
 const KIND_TAG = /^\[([a-z][a-z0-9_]*)\]\s*/;
 
 /**
+ * The engine hands a step's error back to run() across an isolate boundary and
+ * rebuilds it there as a plain Error whose message is `${name}: ${message}` —
+ * so what run()'s catch actually sees is "NonRetryableError: [merge_failed] …",
+ * not "[merge_failed] …". Measured under a real Workflows runtime
+ * (translate/workflowEngine.test.mjs); without this, every failure recorded by
+ * the catch-all lost its kind and was filed as a retryable internal_error.
+ */
+const ENGINE_NAME_PREFIX = /^[A-Za-z][A-Za-z0-9_]*(?:Error|Exception):\s*/;
+
+/** The `[kind] ` tag, whether or not the engine prefixed the error's name. */
+function kindTag(message: string): RegExpExecArray | null {
+  return KIND_TAG.exec(message) ?? KIND_TAG.exec(message.replace(ENGINE_NAME_PREFIX, ""));
+}
+
+/**
  * Normalize anything a step threw. Workflows re-throws a step's final error
  * into run() after retries are exhausted, and only `message`/`name` reliably
  * survive that hop — so the kind is also carried as a `[kind] ` message prefix
@@ -189,14 +204,14 @@ export function classifyStepError(err: unknown): StepFailure {
   if (err instanceof TranslateStepError) {
     return { errorKind: err.errorKind, message: redactSecretPatterns(rawMessage.replace(KIND_TAG, "")), retryable: err.retryable };
   }
-  const tagged = KIND_TAG.exec(rawMessage);
+  const tagged = kindTag(rawMessage);
   if (tagged) {
     const kind = tagged[1];
     // internal_error is the untagged default's kind and IS retryable (see the
     // doc comment); a tagged one — written by retryableStepError below — must
     // classify the same way, or a re-classified retry would flip to fatal.
     const retryable = isRetryableCode(kind) || kind === "internal_error";
-    return { errorKind: kind, message: redactSecretPatterns(rawMessage.slice(tagged[0].length)), retryable };
+    return { errorKind: kind, message: redactSecretPatterns(rawMessage.replace(ENGINE_NAME_PREFIX, "").slice(tagged[0].length)), retryable };
   }
   if (typeof e.code === "string" && (isRetryableCode(e.code) || typeof e.retryable === "boolean")) {
     return { errorKind: e.code, message: redactSecretPatterns(rawMessage), retryable: e.retryable === true || isRetryableCode(e.code) };
