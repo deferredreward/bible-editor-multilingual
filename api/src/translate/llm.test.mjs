@@ -49,6 +49,30 @@ function stubTransport(impl) {
 const deps = (over = {}) => ({ provider: "claude", model: "claude-sonnet-5", apiKey: KEY, thinking: "medium", ...over });
 const ok = (body) => ({ text: wrapped(body), usage: { inputTokens: 10, outputTokens: 5 }, stopReason: "end_turn" });
 
+/**
+ * Every string reachable from a thrown value: own properties enumerable or not
+ * (so `message` and `stack` count), array entries, and the whole `cause` chain.
+ * A secret-hygiene assertion that reads only `err.message` cannot see a key
+ * parked on `err.cause.stack` or on a custom property of a provider error.
+ */
+function reachableStrings(value, seen = new Set(), out = []) {
+  if (value === null || value === undefined) return out;
+  const t = typeof value;
+  if (t === "string") { out.push(value); return out; }
+  if (t === "function" || t === "symbol") return out;
+  if (t !== "object") { out.push(String(value)); return out; }
+  if (seen.has(value)) return out;
+  seen.add(value);
+  for (const k of ["name", "message", "stack", "cause"]) reachableStrings(value[k], seen, out);
+  for (const k of Object.getOwnPropertyNames(value)) {
+    let v;
+    try { v = value[k]; } catch { continue; }
+    reachableStrings(v, seen, out);
+  }
+  return out;
+}
+const leakedStrings = (value, secret) => reachableStrings(value).filter((str) => str.includes(secret));
+
 // ---------------------------------------------------------------------------
 // Prompt
 // ---------------------------------------------------------------------------
@@ -249,7 +273,9 @@ for (const [code, retryable, shape] of THROWN) {
         assert.ok(err.message.startsWith(`claude ${code}: `), err.message);
         assert.ok(!err.message.includes(KEY), `key leaked: ${err.message}`);
         assert.ok(err.message.includes("[redacted]"), `scrubbed marker present: ${err.message}`);
-        assert.equal(err.cause, thrown, "the raw provider error is kept as cause (not persisted by the Workflow)");
+        assert.ok(err.cause instanceof Error, "a cause is still attached for debugging");
+        assert.notEqual(err.cause, thrown, "but never the raw provider error object");
+        assert.deepEqual(leakedStrings(err, KEY), [], "the key is reachable somewhere on the thrown error");
         assert.equal(err.status, shape.status ?? undefined);
         assert.equal(err.llmCalls, undefined, "no billed call to account for when the transport itself failed");
         if (code === "rate_limited") assert.equal(err.retryAfterSeconds, 9);
@@ -397,8 +423,86 @@ test("the API key never reaches a thrown message, even unpatterned", async () =>
     llm.runOne(deps({ transport, apiKey: key }), { skill: "translate-tn", taskJson: "{}", packMarkdown: "", sourceText: "" }),
     (err) => {
       assert.ok(!err.message.includes(key), `key leaked: ${err.message}`);
+      assert.deepEqual(leakedStrings(err, key), [], "the key is reachable somewhere on the thrown error");
       assert.ok(err.message.startsWith("claude provider_error: "), err.message);
       assert.ok(err.message.includes("[redacted]"));
+      return true;
+    },
+  );
+});
+
+// Removable ONLY by literal scrubbing: no sk-ant/sk- prefix, and no
+// credential-named `KEY=` separator in the surrounding text, so a passing
+// assertion proves the literal pass ran rather than a pattern happening to fire.
+const RAW_KEY = "zzz-unpatterned-key-0123456789abcdef";
+const hygieneInput = { skill: "translate-tn", taskJson: "{}", packMarkdown: "", sourceText: "" };
+
+test("secret hygiene: a provider that echoes the key in its message leaks it nowhere on the thrown error", async () => {
+  class ProviderTransportError extends Error {}
+  let thrown = null;
+  const { transport } = stubTransport(() => {
+    thrown = Object.assign(new ProviderTransportError(`401 authentication_error: invalid x-api-key ${RAW_KEY}`), { status: 401 });
+    throw thrown;
+  });
+  await assert.rejects(
+    llm.runOne(deps({ transport, apiKey: RAW_KEY }), hygieneInput),
+    (err) => {
+      assert.ok(leakedStrings(thrown, RAW_KEY).length > 0, "fixture sanity: the raw error really does carry the key");
+      assert.deepEqual(leakedStrings(err, RAW_KEY), [], "the key is reachable somewhere on the thrown error");
+      assert.equal(err.code, "invalid_key");
+      assert.equal(err.errorKind, "invalid_key");
+      assert.equal(err.retryable, false);
+      assert.equal(err.status, 401);
+      assert.notEqual(err.cause, thrown, "the raw provider error is never attached");
+      assert.equal(err.cause.name, "ProviderTransportError", "the class name survives for debugging");
+      assert.ok(err.cause.message.includes("[redacted]"), err.cause.message);
+      return true;
+    },
+  );
+});
+
+test("secret hygiene: a key buried in a nested cause never travels with the error", async () => {
+  let thrown = null;
+  const { transport } = stubTransport(() => {
+    const socket = Object.assign(new Error(`socket hang up while authenticating with ${RAW_KEY}`),
+      { code: "ECONNRESET", requestHeaders: { "x-api-key": RAW_KEY } });
+    thrown = new Error("fetch failed", { cause: socket });
+    throw thrown;
+  });
+  await assert.rejects(
+    llm.runOne(deps({ transport, apiKey: RAW_KEY }), hygieneInput),
+    (err) => {
+      assert.ok(leakedStrings(thrown, RAW_KEY).length > 0, "fixture sanity: the raw error really does carry the key");
+      assert.deepEqual(leakedStrings(err, RAW_KEY), [], "the key is reachable somewhere on the thrown error");
+      assert.equal(err.code, "network_error");
+      assert.equal(err.retryable, true);
+      assert.ok(err.cause instanceof Error);
+      assert.equal(err.cause.cause, undefined, "the foreign cause chain is dropped, not re-attached");
+      return true;
+    },
+  );
+});
+
+test("secret hygiene: a key on a custom property of the provider error never travels", async () => {
+  let thrown = null;
+  const { transport } = stubTransport(() => {
+    thrown = Object.assign(new Error("Overloaded"), {
+      status: 529,
+      headers: { "retry-after": "7" },
+      request: { headers: { authorization: `Bearer ${RAW_KEY}` }, url: `https://api.example/v1?k=${RAW_KEY}` },
+    });
+    throw thrown;
+  });
+  await assert.rejects(
+    llm.runOne(deps({ transport, apiKey: RAW_KEY }), hygieneInput),
+    (err) => {
+      assert.ok(leakedStrings(thrown, RAW_KEY).length > 0, "fixture sanity: the raw error really does carry the key");
+      assert.deepEqual(leakedStrings(err, RAW_KEY), [], "the key is reachable somewhere on the thrown error");
+      assert.equal(err.code, "provider_overloaded");
+      assert.equal(err.retryable, true);
+      assert.equal(err.status, 529);
+      assert.equal(err.retryAfterSeconds, 7);
+      assert.equal(err.cause.request, undefined, "no foreign property is copied onto the cause");
       return true;
     },
   );
@@ -531,7 +635,8 @@ test("SDK RateLimitError (429 + Retry-After) → rate_limited, retryable, retryA
     assert.equal(e.retryable, true);
     assert.equal(e.status, 429);
     assert.equal(e.retryAfterSeconds, 12);
-    assert.equal(e.cause, err);
+    assert.notEqual(e.cause, err, "the SDK error object itself is never attached");
+    assert.equal(e.cause.name, "RateLimitError", "its class name survives on the rebuilt cause");
     return true;
   });
 });

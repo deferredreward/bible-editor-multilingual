@@ -21,7 +21,11 @@
 //     network and production code has no hook to disable it.
 //   - The API key is a per-call argument. It is never read from env, never
 //     stored on a module-level object, and every thrown message passes
-//     through scrubSecrets(msg, [apiKey]).
+//     through scrubSecrets(msg, [apiKey]). A foreign error is never attached
+//     to a thrown TranslateProviderError as-is: sanitizeCause rebuilds it as
+//     a plain Error carrying only the class name and the scrubbed message,
+//     so nothing that walks a cause chain can reach an unscrubbed message,
+//     stack or property.
 //   - `redact()` is the bot's run-logs.js SECRET_PATTERNS pass only — the
 //     env-value pass has no meaning in a Worker.
 //   - Only the Anthropic adapter is implemented. openai/xai/gemini throw
@@ -91,7 +95,7 @@ export class TranslateProviderError extends Error {
       status?: number | null; retryAfterSeconds?: number | null; cause?: unknown; transportResults?: TransportResult[];
     } = {},
   ) {
-    super(message, cause !== undefined ? { cause } : undefined);
+    super(message, cause !== undefined ? { cause: sanitizeCause(cause) } : undefined);
     this.name = "TranslateProviderError";
     this.code = code;
     this.errorKind = code;
@@ -350,6 +354,33 @@ export function classifyProviderError(err: unknown): Classification {
   return { code: "provider_error", status };
 }
 
+/**
+ * Rebuild a foreign error into a plain, scrubbed one before it is attached as
+ * a `cause`. The raw object must never travel: its `message`, its `stack` and
+ * its own properties can each carry the API key verbatim (a provider that
+ * echoes the key back is exactly what the secret-hygiene tests simulate), so
+ * anything that walks a cause chain — a recursive logger, a serializer,
+ * persisted Workflow state — would surface the credential even though the
+ * outer message was scrubbed. Rebuild rather than scrub in place, following
+ * sanitizeBatchError: a scrubbed `message` on the original object still leaves
+ * the original `stack` and every other own property behind. What survives is
+ * the class name and the scrubbed message text — enough to debug, nothing
+ * carrying unscrubbed text and no inherited stack.
+ */
+function sanitizeCause(err: unknown, extraSecrets: readonly (string | null | undefined)[] = []): Error | undefined {
+  if (err === null || err === undefined) return undefined;
+  const isObj = typeof err === "object" || typeof err === "function";
+  const own = isObj ? String((err as Record<string, any>).name || "") : "";
+  const ctor = isObj ? String((err as Record<string, any>).constructor?.name || "") : "";
+  // `name` is inherited as "Error" by subclasses that do not set it, so the
+  // constructor name is the more specific one in that case — and the reverse
+  // for `Object.assign(new Error(…), { name: "AbortError" })`.
+  const name = (own && own !== "Error" ? own : ctor || own) || (isObj ? "Error" : typeof err);
+  const safe = new Error(scrubSecrets(errorText(err as AnyErr) || String(err), extraSecrets).slice(0, 200));
+  safe.name = scrubSecrets(name, extraSecrets).slice(0, 80);
+  return safe;
+}
+
 function providerError(
   provider: string,
   code: ProviderErrorCode,
@@ -357,8 +388,12 @@ function providerError(
   apiKey: string | null | undefined,
   extra: { status?: number | null; retryAfterSeconds?: number | null; cause?: unknown; transportResults?: TransportResult[] } = {},
 ): TranslateProviderError {
-  const scrubbed = scrubSecrets(String(message == null ? "" : message), apiKey ? [apiKey] : []);
-  return new TranslateProviderError(code, provider, `${provider} ${code}: ${scrubbed.slice(0, 200)}`, extra);
+  const secrets = apiKey ? [apiKey] : [];
+  const scrubbed = scrubSecrets(String(message == null ? "" : message), secrets);
+  // The literal key is only known here, so the cause is sanitised here too —
+  // the constructor's own pass can strip patterns but not the org's key.
+  const cause = sanitizeCause(extra.cause, secrets);
+  return new TranslateProviderError(code, provider, `${provider} ${code}: ${scrubbed.slice(0, 200)}`, { ...extra, cause });
 }
 
 // ---------------------------------------------------------------------------
