@@ -120,18 +120,6 @@ export async function putText(store: BlobStore, key: string, text: string): Prom
   await store.put(key, text, { httpMetadata: { contentType: `${contentTypeFor(key)}; charset=utf-8` } });
 }
 
-/** In-memory BlobStore for tests and dry runs. */
-export function memoryBlobStore(seed: Record<string, string> = {}): BlobStore & { map: Map<string, string> } {
-  const map = new Map<string, string>(Object.entries(seed));
-  return {
-    map,
-    async get(key) {
-      if (!map.has(key)) return null;
-      const text = map.get(key)!;
-      return { text: async () => text };
-    },
-    async put(key, value) {
-      map.set(key, value);
-    },
-  };
-}
+// NOTE: the in-memory BlobStore the suites drive these keys with lives in the
+// test helper (translate/fixtures.mjs memoryBlobStore), not here — a test double
+// has no business in the Worker bundle.

@@ -153,6 +153,29 @@ export function renderPackPreamble({ pack, targetLang, targetLangName, direction
   return parts;
 }
 
+/**
+ * Reject a short read against the declared Content-Length — the same guard
+ * dcsSources.fetchText applies to the editor's own DCS reads, here for the
+ * translate runner's. A truncated 200 treated as content is the twl_PSA
+ * data-loss signature: the merge base looks small, so the merged book silently
+ * drops every row the truncated tail carried. No declared length means
+ * completeness is unverifiable at this layer (the HAB blind spot); the caller's
+ * shrink guard is the backstop for that case.
+ */
+function assertCompleteBody(
+  url: string,
+  text: string,
+  res: { headers?: { get(name: string): string | null } | null },
+): void {
+  const raw = typeof res.headers?.get === "function" ? res.headers.get("content-length") : null;
+  const expected = raw == null ? null : Number(raw);
+  if (expected == null || !Number.isFinite(expected) || expected < 0) return;
+  const got = new TextEncoder().encode(text).length;
+  if (got < expected) {
+    throw new Error(`fetch ${url} → truncated body (${got} of ${expected} declared bytes)`);
+  }
+}
+
 /** Fetch a file from DCS at a pinned ref ("org/repo@ref"); null on 404. */
 export async function fetchResourceFile(
   sourceRef: string,
@@ -167,7 +190,9 @@ export async function fetchResourceFile(
   const res = await (fetchImpl || (fetch as unknown as FetchLike))(url);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`fetch ${url} → HTTP ${res.status}`);
-  return await res.text();
+  const text = await res.text();
+  assertCompleteBody(url, text, res);
+  return text;
 }
 
 /** Fetch a whole tN book TSV from DCS at a pinned ref (back-compat wrapper). */

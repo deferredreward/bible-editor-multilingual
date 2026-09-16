@@ -34,7 +34,7 @@ import * as storage from "./storage.ts";
 import { parseWfStatus } from "./status.ts";
 import { BEGIN_OUTPUT, END_OUTPUT, TranslateProviderError } from "./llm.ts";
 import { encryptApiKey } from "../aiKeyCrypto.ts";
-import { fixture, fixturePackFiles } from "./fixtures.mjs";
+import { fixture, fixturePackFiles, memoryBlobStore } from "./fixtures.mjs";
 
 const KEY = "sk-ant-api03-TESTKEYTESTKEYTESTKEYTESTKEY0001";
 const WRAP = Buffer.alloc(32, 7).toString("base64");
@@ -95,8 +95,8 @@ function dcsFetch(files) {
   return { calls, impl };
 }
 
-function dcsFiles({ withTarget = null } = {}) {
-  const files = { "unfoldingWord/en_tn/tn_OBA.tsv": fixture("tn_OBA.tsv") };
+function dcsFiles({ withTarget = null, source = null } = {}) {
+  const files = { "unfoldingWord/en_tn/tn_OBA.tsv": source ?? fixture("tn_OBA.tsv") };
   for (const [p, body] of Object.entries(fixturePackFiles())) files[`ar_gl/translation-context/${p}`] = body;
   if (withTarget != null) files["ar_gl/ar_tn/tn_OBA.tsv"] = withTarget;
   return files;
@@ -139,7 +139,7 @@ function replayTransport() {
 
 async function scenario(opts = {}) {
   const sqlite = await freshSqlite(opts);
-  const blobs = storage.memoryBlobStore();
+  const blobs = memoryBlobStore();
   const fetchFake = dcsFetch(dcsFiles(opts));
   const replay = replayTransport();
   const deps = {
@@ -180,7 +180,7 @@ test("full run: source → context → 11 batches → merge reproduces the recor
   const { deps } = s;
 
   const src = await steps.guardAndSourceStep(deps, PARAMS);
-  assert.deepEqual(src, { batchCount: 11, rowCount: 153 });
+  assert.deepEqual(src, { batchCount: 11, rowCount: 153, coversWholeBook: true });
   for (let i = 0; i < 11; i++) {
     const nn = storage.batchNn(i);
     assert.equal(s.blobs.map.get(`pipeline-output/bsoj/job-1/work/batch-${nn}.tsv`), fixture(`${DRY}work/batch-${nn}.tsv`), `work/batch-${nn}.tsv byte-identical to the bot's`);
@@ -219,7 +219,7 @@ test("full run: source → context → 11 batches → merge reproduces the recor
   assert.equal(results.reduce((n, r) => n + r.rowCount, 0), 153);
   assert.equal(s.wf().state, "running", "batch steps never write done");
 
-  const merged = await steps.mergeReportStep(deps, PARAMS, src.batchCount, ctx, results);
+  const merged = await steps.mergeReportStep(deps, PARAMS, src, ctx, results);
   assert.equal(merged.rowCount, 153);
   assert.equal(merged.bookFile, "tn_OBA.tsv");
   assert.equal(merged.reportFile, "translate-report-1-1.json");
@@ -368,13 +368,13 @@ test("by-id subset merges into an existing target book; range merge with an exis
   const rowIds = ["jdr1", "gn3t"]; // 1:1 (recorded batch 01) and 1:8 (recorded batch 05)
   const params = { ...PARAMS, rowIds };
   const src = await steps.guardAndSourceStep(s.deps, params);
-  assert.deepEqual(src, { batchCount: 1, rowCount: 2 });
+  assert.deepEqual(src, { batchCount: 1, rowCount: 2, coversWholeBook: false });
   const sourceIds = s.blobs.map.get("pipeline-output/bsoj/job-1/work/batch-01.tsv");
   assert.deepEqual(sourceIds.split("\n").slice(1).filter(Boolean).map((l) => l.split("\t")[1]), rowIds, "the single batch holds exactly the selected rows, in source order");
   const ctx = await steps.contextStep(s.deps, params, 1);
   const r = await steps.batchStep(s.deps, params, 0, 1);
   assert.equal(r.rowCount, 2);
-  const merged = await steps.mergeReportStep(s.deps, params, 1, ctx, [r]);
+  const merged = await steps.mergeReportStep(s.deps, params, src, ctx, [r]);
   assert.equal(merged.rowCount, src.rowCount);
   assert.equal(s.blobs.map.get("pipeline-output/bsoj/job-1/out/tn_OBA.tsv"), finished, "by-id update of identical rows leaves the book byte-identical");
   const report = JSON.parse(s.blobs.map.get("pipeline-output/bsoj/job-1/out/translate-report-1-1.json"));
@@ -389,7 +389,7 @@ test("by-id with no existing target book fails merge_failed (non-retryable), as 
   const ctx = await steps.contextStep(s.deps, params, src.batchCount);
   const results = [];
   for (let i = 0; i < src.batchCount; i++) results.push(await steps.batchStep(s.deps, params, i, src.batchCount));
-  const f = await kindOf(() => steps.mergeReportStep(s.deps, params, src.batchCount, ctx, results));
+  const f = await kindOf(() => steps.mergeReportStep(s.deps, params, src, ctx, results));
   assert.equal(f.errorKind, "merge_failed");
   assert.equal(f.retryable, false);
   assert.match(f.message, /requires an existing target book/);
@@ -468,4 +468,187 @@ test("resolveWorkflowWorkspace: missing and unknown slugs are non-retryable, nev
   }
   const unknown = (() => { try { steps.resolveWorkflowWorkspace(env, { workspace: "retired-org" }); } catch (e) { return e; } })();
   assert.equal(steps.classifyStepError(unknown).errorKind, "workspace_unknown");
+});
+
+/** Every string reachable from a value: own enumerable props, nested, cycle-safe. */
+function deepStrings(value, seen = new Set(), out = []) {
+  if (value == null) return out;
+  if (typeof value === "string") { out.push(value); return out; }
+  if (typeof value !== "object" && typeof value !== "function") return out;
+  if (seen.has(value)) return out;
+  seen.add(value);
+  if (value instanceof Error) {
+    // name/message/stack/cause are not enumerable on an Error — walk them explicitly.
+    for (const k of ["name", "message", "stack"]) deepStrings(value[k], seen, out);
+    deepStrings(value.cause, seen, out);
+  }
+  for (const v of Object.values(value)) deepStrings(v, seen, out);
+  if (Array.isArray(value)) for (const v of value) deepStrings(v, seen, out);
+  return out;
+}
+
+test("error hygiene: nothing leaving batchStep carries the key — not .stack, not a cause chain, not transportResults/llmCalls", async () => {
+  const s = await scenario();
+  const src = await steps.guardAndSourceStep(s.deps, PARAMS);
+  await steps.contextStep(s.deps, PARAMS, src.batchCount);
+
+  // A provider failure that echoes the key in every place the old in-place
+  // scrub missed: the message (so .stack's header carries it at construction),
+  // a nested cause, and the non-message properties the engine persists.
+  const leaky = {
+    ...s.deps,
+    transport: async () => {
+      const inner = new Error(`inner: Authorization: Bearer ${KEY}`);
+      const e = new Error(`bad request: key ${KEY} rejected`, { cause: inner });
+      e.status = 400;
+      e.transportResults = [{ text: `echo ${KEY}`, usage: { inputTokens: 1, outputTokens: 1 } }];
+      throw e;
+    },
+  };
+  let err;
+  try { await steps.batchStep(leaky, PARAMS, 0, src.batchCount); } catch (e) { err = e; }
+
+  assert.ok(err instanceof TranslateProviderError, "still classified as a provider error");
+  assert.equal(err.code, "provider_error");
+  assert.ok(typeof err.stack === "string" && err.stack.length > 0);
+  assert.ok(!err.stack.includes(KEY), "the stack (materialized at construction) must not carry the key");
+  assert.equal(err.cause, undefined, "the original cause chain is dropped, not scrubbed in place");
+  assert.equal(err.transportResults, undefined, "raw transport records never leave the key's scope");
+  assert.equal(err.llmCalls, undefined, "priced-call records never leave the key's scope either");
+  for (const str of deepStrings(err)) {
+    assert.ok(!str.includes(KEY), `a reachable string leaked the key: ${str.slice(0, 120)}`);
+  }
+  // Only our own primitive fields carry a value. (The class's declared optional
+  // fields still exist as own keys — class fields are defined, not just typed —
+  // but they must be undefined, which is what the asserts above pin.)
+  const carried = Object.entries(err).filter(([, v]) => v !== undefined).map(([k]) => k).sort();
+  assert.deepEqual(carried, ["code", "errorKind", "name", "provider", "retryable", "status"], "no unexpected data rides along");
+
+  // …and the same holds for what record-failure then persists.
+  await steps.recordFailure(s.deps, PARAMS, err);
+  assert.ok(!s.row().wf_status_json.includes(KEY));
+});
+
+test("sanitizeBatchError: rebuilds the error, and an unclassified throw after a billed call is non-retryable", () => {
+  // Provider errors keep their kind and retryability; everything else is dropped.
+  const provider = new TranslateProviderError("rate_limited", "claude", `claude rate_limited: ${KEY}`, { status: 429, retryAfterSeconds: 30 });
+  provider.transportResults = [{ text: KEY }];
+  provider.llmCalls = [{ costUsd: 1, model: "claude-sonnet-5" }];
+  const clean = steps.sanitizeBatchError(provider, KEY);
+  assert.notEqual(clean, provider, "a NEW error, never the mutated original");
+  assert.equal(steps.classifyStepError(clean).errorKind, "rate_limited");
+  assert.equal(steps.classifyStepError(clean).retryable, true);
+  assert.equal(clean.status, 429);
+  assert.equal(clean.retryAfterSeconds, 30);
+  assert.equal(clean.transportResults, undefined);
+  assert.equal(clean.llmCalls, undefined);
+  assert.ok(!clean.stack.includes(KEY));
+  assert.ok(provider.message.includes(KEY), "the original is left untouched (we no longer mutate it)");
+
+  // A step error keeps its own kind and flag.
+  const stepErr = steps.sanitizeBatchError(new steps.TranslateStepError("cancelled", "job x was cancelled", { retryable: false }), KEY);
+  assert.deepEqual(steps.classifyStepError(stepErr), { errorKind: "cancelled", message: "job x was cancelled", retryable: false });
+
+  // An unclassified error came out of the LLM path — a bug in our adapter,
+  // possibly after the model answered and the org was billed. Retrying buys two
+  // more billed calls for the same crash.
+  for (const raw of [new TypeError(`cannot read x of ${KEY}`), `string failure ${KEY}`]) {
+    const c = steps.classifyStepError(steps.sanitizeBatchError(raw, KEY));
+    assert.equal(c.errorKind, "internal_error_after_call");
+    assert.equal(c.retryable, false, "unknown errors after a billed call must NOT be retried");
+    assert.ok(!c.message.includes(KEY));
+  }
+});
+
+test("retryableStepError: a retryable failure keeps its kind through the engine's rethrow", () => {
+  // The engine rethrows a step's final error into run() with message/name only,
+  // so a rate_limited failure that exhausted its retries used to record
+  // internal_error. classifyStepError must round-trip the tag.
+  for (const kind of ["rate_limited", "timeout", "provider_overloaded", "network_error", "internal_error"]) {
+    const tagged = steps.retryableStepError({ errorKind: kind, message: "upstream said no", retryable: true });
+    assert.ok(!(tagged instanceof TranslateProviderError), "a freshly built plain Error — no provider object reaches the engine");
+    const c = steps.classifyStepError(new Error(tagged.message)); // what survives the hop
+    assert.equal(c.errorKind, kind);
+    assert.equal(c.retryable, true, `${kind} must stay retryable after the round trip`);
+  }
+});
+
+test("merge-report re-checks cancel before writing out/ and a done manifest", async () => {
+  const s = await scenario({ withTarget: fixture(`${DRY}tn_OBA.tsv`) });
+  const src = await steps.guardAndSourceStep(s.deps, PARAMS);
+  const ctx = await steps.contextStep(s.deps, PARAMS, src.batchCount);
+  const results = [];
+  for (let i = 0; i < src.batchCount; i++) results.push(await steps.batchStep(s.deps, PARAMS, i, src.batchCount));
+
+  s.sqlite.prepare(`UPDATE pipeline_jobs SET state = 'cancelled' WHERE job_id = ?`).run(JOB);
+  const f = await kindOf(() => steps.mergeReportStep(s.deps, PARAMS, src, ctx, results));
+  assert.equal(f.errorKind, "cancelled");
+  assert.equal(f.retryable, false);
+  assert.ok(!s.blobs.map.has("pipeline-output/bsoj/job-1/out/tn_OBA.tsv"), "no out/ file for a cancelled job");
+  assert.notEqual(s.wf().state, "done", "no done manifest either");
+});
+
+test("merge base guards: an absent target refuses a partial book, and a shrinking merge is refused", async () => {
+  // 1. Base absent + the run covered the whole source book → allowed (the first
+  //    translation of a new language; that is the full OBA run above). Base
+  //    absent + a partial run → refused: a wrongly defaulted targetOrg/repoName
+  //    404s exactly like a genuine bootstrap, and the out/ file would then hold
+  //    only the translated range, which step 5 imports as the whole book.
+  const s = await scenario();
+  const src = await steps.guardAndSourceStep(s.deps, PARAMS);
+  const ctx = await steps.contextStep(s.deps, PARAMS, src.batchCount);
+  const results = [];
+  for (let i = 0; i < src.batchCount; i++) results.push(await steps.batchStep(s.deps, PARAMS, i, src.batchCount));
+
+  const partial = { ...src, coversWholeBook: false };
+  const f = await kindOf(() => steps.mergeReportStep(s.deps, PARAMS, partial, ctx, results));
+  assert.equal(f.errorKind, "target_book_absent");
+  assert.equal(f.retryable, false);
+  assert.match(f.message, /ar_gl\/ar_tn@master/);
+  assert.ok(!s.blobs.map.has("pipeline-output/bsoj/job-1/out/tn_OBA.tsv"), "nothing written on refusal");
+
+  // …unless the job explicitly asked to create the file.
+  const created = await steps.mergeReportStep(s.deps, { ...PARAMS, createIfAbsent: true }, partial, ctx, results);
+  assert.equal(created.rowCount, 153);
+
+  // 2. Shrink guard: the target holds the finished 153-row book, but this run's
+  //    source fetch returned only two rows (a truncated or stale source).
+  //    Merging the range would replace 153 rows with 2 — the export's
+  //    shrink-refusal policy, applied to the merge base.
+  const finished = fixture(`${DRY}tn_OBA.tsv`);
+  const sourceLines = fixture("tn_OBA.tsv").split("\n");
+  const truncatedSource = [sourceLines[0], sourceLines[1], sourceLines[2], ""].join("\n");
+  const t = await scenario({ withTarget: finished, source: truncatedSource });
+  const tsrc = await steps.guardAndSourceStep(t.deps, PARAMS);
+  assert.equal(tsrc.coversWholeBook, true, "a truncated source looks complete to step 1 — only the base reveals it");
+  const tctx = await steps.contextStep(t.deps, PARAMS, tsrc.batchCount);
+  const tres = [await steps.batchStep(t.deps, PARAMS, 0, tsrc.batchCount)];
+  const g = await kindOf(() => steps.mergeReportStep(t.deps, PARAMS, tsrc, tctx, tres));
+  assert.equal(g.errorKind, "merge_shrink_refused");
+  assert.equal(g.retryable, false);
+  assert.match(g.message, /would leave 2 rows where the fetched base has 153/);
+  assert.ok(!t.blobs.map.has("pipeline-output/bsoj/job-1/out/tn_OBA.tsv"), "the shrunken book is never written");
+});
+
+test("context step: a DCS transport failure on the scripture pack retries instead of persisting a context-free pack", async () => {
+  const s = await scenario();
+  const src = await steps.guardAndSourceStep(s.deps, PARAMS);
+
+  // The context pack itself resolves; the four USFM fetches 5xx.
+  const flaky = {
+    ...s.deps,
+    fetchImpl: async (url) => (/\.usfm$/.test(url)
+      ? { status: 503, ok: false, headers: null, text: async () => "upstream" }
+      : s.deps.fetchImpl(url)),
+  };
+  const f = await kindOf(() => steps.contextStep(flaky, PARAMS, src.batchCount));
+  assert.equal(f.errorKind, "scripture_fetch_failed");
+  assert.equal(f.retryable, true, "a transient DCS failure keeps the step's retry budget");
+  assert.match(f.message, /HTTP 503/);
+  assert.ok(!s.blobs.map.has("pipeline-output/bsoj/job-1/work/batch-01-pack.md"), "no context-free pack persisted");
+
+  // A target Bible that simply does not exist yet still degrades to "absent".
+  const ctx = await steps.contextStep(s.deps, PARAMS, src.batchCount);
+  assert.equal(ctx.hasContent, true);
+  assert.ok(s.blobs.map.get("pipeline-output/bsoj/job-1/work/batch-01-pack.md").length > 0);
 });

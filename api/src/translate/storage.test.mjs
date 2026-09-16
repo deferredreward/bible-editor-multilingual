@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as storage from "./storage.ts";
 import * as core from "./core.ts";
+import { memoryBlobStore } from "./fixtures.mjs";
 
 const WS = "bsoj";
 const JOB = "job_01HZX";
@@ -81,7 +82,7 @@ test("getText/putText round-trip through a BlobStore with a charset-tagged conte
 });
 
 test("memoryBlobStore behaves like the R2 subset the steps use", async () => {
-  const store = storage.memoryBlobStore({ "a/b": "x" });
+  const store = memoryBlobStore({ "a/b": "x" });
   assert.equal(await storage.getText(store, "a/b"), "x");
   assert.equal(await storage.getText(store, "a/c"), null);
   await storage.putText(store, "a/c", "y");
