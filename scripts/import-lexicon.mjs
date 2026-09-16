@@ -10,7 +10,7 @@
 // Run:
 //   node scripts/import-lexicon.mjs
 // Then apply:
-//   (cd api && npx wrangler d1 execute bible_editor --local --file=../scripts/out/import-lexicon.sql)
+//   (cd api && npx wrangler d1 execute bptranslate --local --file=../scripts/out/import-lexicon.sql)
 //
 // Each entry stores: strong (e.g. "H2320"), resource ("uhal" / "ugl"),
 // lemma (Hebrew/Greek wordform), part_of_speech, gloss (terse, shown in

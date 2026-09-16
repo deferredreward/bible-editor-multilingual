@@ -13,9 +13,9 @@
 //   node scripts/import-twl-filters.mjs
 //   node scripts/import-twl-filters.mjs <unlinked.csv> <deleted.csv>
 // Then apply (local dev):
-//   (cd api && npx wrangler d1 execute bible_editor_dev --local --file=../scripts/out/import-twl-filters.sql)
+//   (cd api && npx wrangler d1 execute bptranslate_dev --local --file=../scripts/out/import-twl-filters.sql)
 // Or prod:
-//   (cd api && npx wrangler d1 execute bible_editor --remote --env production --file=../scripts/out/import-twl-filters.sql)
+//   (cd api && npx wrangler d1 execute bptranslate --remote --env production --file=../scripts/out/import-twl-filters.sql)
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { gunzipSync } from "node:zlib";

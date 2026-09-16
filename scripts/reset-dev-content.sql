@@ -11,11 +11,11 @@
 -- "no project configured" onboarding entry point.
 --
 -- Usage (from api/):
---   Local:  npx wrangler d1 execute bible_editor_dev --local  --file ../scripts/reset-dev-content.sql
---   Remote: npx wrangler d1 execute bible_editor_dev --remote --file ../scripts/reset-dev-content.sql
+--   Local:  npx wrangler d1 execute bptranslate_dev --local  --file ../scripts/reset-dev-content.sql
+--   Remote: npx wrangler d1 execute bptranslate_dev --remote --file ../scripts/reset-dev-content.sql
 --
--- SAFETY: bible_editor_dev is the DEV database only. Never point this at prod
--- (bible_editor / --env production).
+-- SAFETY: bptranslate_dev is the DEV database only. Never point this at prod
+-- (bptranslate / --env production).
 
 -- Children before parents (FK-safe).
 DELETE FROM scripture_lane_replacement_books;

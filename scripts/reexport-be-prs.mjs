@@ -58,7 +58,7 @@ function d1(sql) {
   // --command (not --file: --file's --json returns exec stats, not rows). Run as
   // one shell string so the SQL stays a single double-quoted arg. SQL is fixed
   // (no user input) and contains no double quotes, so cmd quoting is safe.
-  const cmd = `npx wrangler d1 execute bible_editor --remote --env production --json --command "${sql}"`;
+  const cmd = `npx wrangler d1 execute bptranslate --remote --env production --json --command "${sql}"`;
   const out = execSync(cmd, { cwd: resolve(__dirname, "../api"), encoding: "utf8", maxBuffer: 1024 * 1024 * 512 });
   const start = out.indexOf("[");
   const parsed = JSON.parse(out.slice(start));

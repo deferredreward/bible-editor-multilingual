@@ -31,11 +31,11 @@ throws on a bad read — see PR-1.
 
 1. Create an empty D1 database and note its id:
    ```sh
-   cd api && npx wrangler d1 create bible_editor_pool1_dev
+   cd api && npx wrangler d1 create bptranslate_pool1_dev
    ```
 2. Migrate it (brings it to the current schema so a claimed org starts clean):
    ```sh
-   npx wrangler d1 migrations apply bible_editor_pool1_dev --remote
+   npx wrangler d1 migrations apply bptranslate_pool1_dev --remote
    ```
 3. Declare the native binding in `api/wrangler.toml` (uncomment the `DB_POOL1`
    template under the `DB_MLTEST` block) with the real `database_id`. Name it

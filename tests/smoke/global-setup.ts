@@ -26,7 +26,7 @@ export default async function globalSetup() {
   console.log("[smoke-setup] verifying migrations are current (dev-smoke.mjs already wiped + migrated)…");
   const apply = spawnSync(
     "npx",
-    ["wrangler", "d1", "migrations", "apply", "bible_editor_dev", "--local", "--persist-to", persistTo],
+    ["wrangler", "d1", "migrations", "apply", "bptranslate_dev", "--local", "--persist-to", persistTo],
     {
       cwd: resolve(repoRoot, "api"),
       stdio: "inherit",

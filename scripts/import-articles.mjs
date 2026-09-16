@@ -10,9 +10,9 @@
 // Run:
 //   node scripts/import-articles.mjs
 // Then apply (local dev):
-//   (cd api && npx wrangler d1 execute bible_editor_dev --local --file=../scripts/out/import-articles.sql)
+//   (cd api && npx wrangler d1 execute bptranslate_dev --local --file=../scripts/out/import-articles.sql)
 // Prod:
-//   (cd api && npx wrangler d1 execute bible_editor --remote --env production --file=../scripts/out/import-articles.sql)
+//   (cd api && npx wrangler d1 execute bptranslate --remote --env production --file=../scripts/out/import-articles.sql)
 //
 // path / article_id / part conventions match the bot's deriveArticleId:
 //   tW: bible/kt/god.md            → article_id 'kt/god',              part 'body'

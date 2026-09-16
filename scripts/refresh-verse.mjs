@@ -7,7 +7,7 @@
 // Run:
 //   node scripts/refresh-verse.mjs ZEC 1 10 ULT
 // Then apply:
-//   (cd api && npx wrangler d1 execute bible_editor --local --file=../scripts/out/refresh-ZEC-1-10-ULT.sql)
+//   (cd api && npx wrangler d1 execute bptranslate --local --file=../scripts/out/refresh-ZEC-1-10-ULT.sql)
 //
 // version is bumped so optimistic-concurrency clients pick up the change
 // on their next outbox round-trip. plain_text is recomputed from the
@@ -142,5 +142,5 @@ const lines = [
 writeFileSync(outPath, lines.join("\n") + "\n", "utf8");
 console.log(`wrote ${outPath}`);
 console.log(
-  `apply: (cd api && npx wrangler d1 execute bible_editor --local --file=../scripts/out/refresh-${book}-${chapter}-${verse}-${bibleVersion}.sql)`,
+  `apply: (cd api && npx wrangler d1 execute bptranslate --local --file=../scripts/out/refresh-${book}-${chapter}-${verse}-${bibleVersion}.sql)`,
 );

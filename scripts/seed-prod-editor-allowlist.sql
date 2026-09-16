@@ -1,5 +1,5 @@
 -- Restore the production editor allowlist. Run this ONLY when rebuilding or
--- re-provisioning the production database (bible_editor) from the migration set.
+-- re-provisioning the production database (bptranslate) from the migration set.
 --
 -- Why this is a script and not part of migration 0016: 0016 used to seed these
 -- 10 editors, which meant every database created from the migration set got
@@ -21,7 +21,7 @@
 -- Usage -- production only, and only on a rebuild:
 --   cd api
 --   CLOUDFLARE_ACCOUNT_ID=5a3ffd86280d3ed086be76d955829242 \
---     npx wrangler d1 execute bible_editor --remote --env production \
+--     npx wrangler d1 execute bptranslate --remote --env production \
 --     --file=../scripts/seed-prod-editor-allowlist.sql
 
 INSERT OR IGNORE INTO user_roles (dcs_username, role) VALUES

@@ -11,11 +11,11 @@
 //
 // Usage (run from repo root; --experimental-strip-types lets this .mjs import
 // the .ts transforms directly, same as the *.test.mjs runners):
-//   cd api && npx wrangler d1 execute bible_editor --local \
+//   cd api && npx wrangler d1 execute bptranslate --local \
 //     --command="SELECT book, chapter, verse, bible_version, content_json FROM verses" \
 //     --json > ../scripts/out/verses-dump.json
 //   node --experimental-strip-types --no-warnings scripts/normalize-verse-punctuation.mjs scripts/out/verses-dump.json
-//   cd api && npx wrangler d1 execute bible_editor --local \
+//   cd api && npx wrangler d1 execute bptranslate --local \
 //     --file=../scripts/out/normalize-punctuation.sql
 //
 // Pass --remote (and --env production) on both wrangler calls when cleaning up
@@ -124,5 +124,5 @@ console.log(`  rows changed: ${changed}`);
 if (changed === 0) {
   console.log("\nNo cleanup needed — every verse is already normalized.");
 } else {
-  console.log("\nApply:  cd api && npx wrangler d1 execute bible_editor --local --file=../scripts/out/normalize-punctuation.sql");
+  console.log("\nApply:  cd api && npx wrangler d1 execute bptranslate --local --file=../scripts/out/normalize-punctuation.sql");
 }

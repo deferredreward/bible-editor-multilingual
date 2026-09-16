@@ -13,10 +13,10 @@
 //
 // Workflow:
 //   1. Dump verses to JSON (run from api/):
-//        npx wrangler d1 execute bible_editor_dev --local \
+//        npx wrangler d1 execute bptranslate_dev --local \
 //          --command "SELECT book,chapter,verse,bible_version,content_json,version FROM verses" \
 //          --json > ../scripts/out/verses-dump.json
-//      (prod: bible_editor --remote --env production)
+//      (prod: bptranslate --remote --env production)
 //   2. Scan (report only):
 //        node --experimental-strip-types --no-warnings scripts/scan-align-order.mjs scripts/out/verses-dump.json
 //   3. Emit repair SQL for flagged verses:

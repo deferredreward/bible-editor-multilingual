@@ -8,7 +8,7 @@
 //   node scripts/reimport-ust-from-dcs.mjs --all ISA NUM      # ULT + UST + UHB/UGNT (local-dev convenience)
 //
 // Then apply each generated SQL file:
-//   (cd api && npx wrangler d1 execute bible_editor --remote --env production --file=../scripts/out/reimport-{ust,ult,uhb}-<BOOK>-NN.sql)
+//   (cd api && npx wrangler d1 execute bptranslate --remote --env production --file=../scripts/out/reimport-{ust,ult,uhb}-<BOOK>-NN.sql)
 //   Drop `--remote --env production` for local.
 //
 // Only UST has multi-verse markers (\v 6-9) in the unfoldingWord corpus

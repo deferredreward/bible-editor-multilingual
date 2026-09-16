@@ -500,7 +500,7 @@ async function main() {
       "-- The audit edit_log row is INSERT ... SELECT ... WHERE EXISTS on the post-update version,",
       "-- so a skipped (no-op) UPDATE leaves no orphan audit row. updated_by/user_id 2 = known-good user.",
       "-- A skipped row must be re-read and re-evaluated, NOT force-applied.",
-      "-- Apply (after approval) from api/:  npx wrangler d1 execute bible_editor --remote --env production --file=../scripts/out/heal-1ch-num-apply.sql",
+      "-- Apply (after approval) from api/:  npx wrangler d1 execute bptranslate --remote --env production --file=../scripts/out/heal-1ch-num-apply.sql",
       "",
     ].join("\n");
     fs.writeFileSync(sqlPath, header + sqlBlocks.join("\n\n") + "\n", "utf8");

@@ -5,14 +5,14 @@
 --
 -- Background: 0016 seeded 1 admin + 10 editors. The migration set runs against
 -- EVERY D1 in this project, including each new per-org database (e.g.
--- bible_editor_mltest_dev via DB_MLTEST), so a brand-new org started life with
+-- bptranslate_mltest_dev via DB_MLTEST), so a brand-new org started life with
 -- 11 allowlisted accounts it never asked for. 0016 has since been trimmed to
 -- seed only the admin, which fixes every database created from here on; this
 -- file cleans up the databases that already exist.
 --
 -- Why not a migration: user_roles is a real access gate — callbackDcsAuth checks
 -- it BEFORE upserting into users, so deleting a row revokes that account's
--- ability to mint a JWT and write. PRODUCTION (bible_editor) still depends on
+-- ability to mint a JWT and write. PRODUCTION (bptranslate) still depends on
 -- this allowlist as its access control, because prod does not yet have the
 -- Door43 org-roles adjustment that supersedes it. A migration runs everywhere
 -- by definition and would therefore lock those editors out of prod. Once prod
@@ -24,7 +24,7 @@
 -- Usage (dev databases only — a plain --remote targets dev):
 --   cd api
 --   CLOUDFLARE_ACCOUNT_ID=5a3ffd86280d3ed086be76d955829242 \
---     npx wrangler d1 execute bible_editor_mltest_dev --remote \
+--     npx wrangler d1 execute bptranslate_mltest_dev --remote \
 --     --file=../scripts/prune-seeded-editors.sql
 
 DELETE FROM user_roles WHERE role = 'editor' AND dcs_username IN (

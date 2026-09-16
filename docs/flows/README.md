@@ -118,11 +118,11 @@ printf 'JWT_SIGNING_KEY=dev-local-preview-key-not-a-secret\n' > api/.dev.vars
 **2. Migrate and seed the local database** (`--local` only — never `--env production`):
 
 ```bash
-cd api && npx wrangler d1 migrations apply bible_editor_dev --local
+cd api && npx wrangler d1 migrations apply bptranslate_dev --local
 ```
 
 ```bash
-node scripts/import-book.mjs ZEC && cd api && npx wrangler d1 execute bible_editor_dev --local --file=../scripts/out/import-ZEC.sql
+node scripts/import-book.mjs ZEC && cd api && npx wrangler d1 execute bptranslate_dev --local --file=../scripts/out/import-ZEC.sql
 ```
 
 **3. Make the scripture lanes visible *and* writable.** The dev database ships
@@ -151,11 +151,11 @@ The stable fix is to make the lane state *agree* with the preset — point the
 active source at the repo the preset wants, then clear the pending target:
 
 ```bash
-cd api && npx wrangler d1 execute bible_editor_dev --local --command "UPDATE scripture_lane_state SET replacement_required=0, exports_blocked=0, pending_target_json=NULL, active_config_json='{\"label\":\"AVD\",\"source\":{\"owner\":\"BSOJ\",\"repo\":\"ar_avd\",\"ref\":\"master\"},\"export\":{\"owner\":\"BSOJ\",\"repo\":\"ar_avd\",\"baseRef\":\"master\",\"branchPolicy\":\"contributor_book_branch\"},\"textReadOnly\":false,\"alignmentWritable\":true}' WHERE lane='lit';"
+cd api && npx wrangler d1 execute bptranslate_dev --local --command "UPDATE scripture_lane_state SET replacement_required=0, exports_blocked=0, pending_target_json=NULL, active_config_json='{\"label\":\"AVD\",\"source\":{\"owner\":\"BSOJ\",\"repo\":\"ar_avd\",\"ref\":\"master\"},\"export\":{\"owner\":\"BSOJ\",\"repo\":\"ar_avd\",\"baseRef\":\"master\",\"branchPolicy\":\"contributor_book_branch\"},\"textReadOnly\":false,\"alignmentWritable\":true}' WHERE lane='lit';"
 ```
 
 ```bash
-cd api && npx wrangler d1 execute bible_editor_dev --local --command "UPDATE scripture_lane_state SET replacement_required=0, exports_blocked=0, pending_target_json=NULL, active_config_json='{\"label\":\"NAV\",\"source\":{\"owner\":\"BSOJ\",\"repo\":\"ar_nav\",\"ref\":\"master\"},\"export\":{\"owner\":\"BSOJ\",\"repo\":\"ar_nav\",\"baseRef\":\"master\",\"branchPolicy\":\"contributor_book_branch\"},\"textReadOnly\":false,\"alignmentWritable\":true}' WHERE lane='sim';"
+cd api && npx wrangler d1 execute bptranslate_dev --local --command "UPDATE scripture_lane_state SET replacement_required=0, exports_blocked=0, pending_target_json=NULL, active_config_json='{\"label\":\"NAV\",\"source\":{\"owner\":\"BSOJ\",\"repo\":\"ar_nav\",\"ref\":\"master\"},\"export\":{\"owner\":\"BSOJ\",\"repo\":\"ar_nav\",\"baseRef\":\"master\",\"branchPolicy\":\"contributor_book_branch\"},\"textReadOnly\":false,\"alignmentWritable\":true}' WHERE lane='sim';"
 ```
 
 Verified: after this, three consecutive `GET /api/project-config` calls leave

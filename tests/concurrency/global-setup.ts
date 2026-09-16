@@ -57,10 +57,10 @@ export default async function globalSetup() {
       "wrangler",
       "d1",
       "execute",
-      // The default (non-production) env's D1 is `bible_editor_dev` since the
+      // The default (non-production) env's D1 is `bptranslate_dev` since the
       // dev/prod database split — the local SQLite store wrangler dev uses.
-      // Seeding `bible_editor` (the prod name) would target the wrong/no DB.
-      "bible_editor_dev",
+      // Seeding `bptranslate` (the prod name) would target the wrong/no DB.
+      "bptranslate_dev",
       "--local",
       `--file=${sqlPath}`,
     ],
@@ -109,7 +109,7 @@ export default async function globalSetup() {
   );
   const seed = spawnSync(
     "npx",
-    ["wrangler", "d1", "execute", "bible_editor_dev", "--local", `--file=${seedSqlPath}`],
+    ["wrangler", "d1", "execute", "bptranslate_dev", "--local", `--file=${seedSqlPath}`],
     { cwd: resolve(repoRoot, "api"), stdio: "inherit", shell: true },
   );
   if (seed.status !== 0) {

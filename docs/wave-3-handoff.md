@@ -189,13 +189,13 @@ Per [CLAUDE.md](../CLAUDE.md) "Browser-driven verification". Wave-3-specific smo
 
 1. Work on a feature branch in a worktree.
 2. `npm run typecheck` + `npm run build` clean.
-3. `(cd api && npx wrangler d1 migrations apply bible_editor_dev --local)` for new migrations.
+3. `(cd api && npx wrangler d1 migrations apply bptranslate_dev --local)` for new migrations.
 4. Drive Chrome MCP to smoke-test.
 5. Commit: `git -c user.email=ju-cldai724@abidinginhesed.com -c user.name=Benjamin commit -m "$(cat <<'EOF' ...)"`.
 6. `git push origin <branch>:main`.
 7. `cd C:\Users\benja\Documents\GitHub\bible-editor && git pull --ff-only origin main`.
 8. **For 3.1 specifically: rotate `JWT_SIGNING_KEY` in prod secrets AFTER the cookie cutover** — invalidates any lingering localStorage tokens, forcing clean re-auth on the cookie path.
-9. `(cd api && npx wrangler d1 migrations apply bible_editor --remote --env production) && npm run deploy`.
+9. `(cd api && npx wrangler d1 migrations apply bptranslate --remote --env production) && npm run deploy`.
 
 ## Post-Wave-3 cleanup
 
