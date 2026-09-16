@@ -1,20 +1,24 @@
 ---
-description: Always target PRs to the fork repository, not upstream
+description: Always target PRs to this repo (unfoldingWord-box3/BPtranslate), never upstream
 alwaysApply: true
 ---
 
 # GitHub PR Target
 
-This checkout has:
+This checkout has exactly one git remote:
 
-- `origin` = `deferredreward/bible-editor-multilingual`
-- `upstream` = `unfoldingWord/bible-editor`
+- `origin` = `unfoldingWord-box3/BPtranslate`
 
-The GitHub CLI may resolve bare `gh pr create` / `gh repo view` to upstream because an `upstream` remote exists. For this folder, always pass the repository explicitly when opening or inspecting PRs:
+(The repo moved there from `deferredreward/bible-editor-multilingual` on 2026-09-16. Old URLs redirect, but don't write new ones.)
+
+It is still a GitHub **fork** of `unfoldingWord/bible-editor`, deliberately — detaching the fork network would drop every issue and PR. Upstream is a **read-only source we cherry-pick from; it must never receive a PR from this repo.** There is no `upstream` git remote; upstream syncs fetch the URL directly (`git fetch https://github.com/unfoldingWord/bible-editor main`) and are recorded in `docs/upstream-sync-*.md`.
+
+Because the fork relationship still exists, the GitHub CLI may resolve a bare `gh pr create` / `gh pr view` / `gh issue ...` to the parent repo. Always pass the repository explicitly:
 
 ```powershell
-gh pr create --repo deferredreward/bible-editor-multilingual --base main
-gh pr view --repo deferredreward/bible-editor-multilingual
+gh pr create --repo unfoldingWord-box3/BPtranslate --base main
+gh pr view --repo unfoldingWord-box3/BPtranslate
+gh issue list --repo unfoldingWord-box3/BPtranslate
 ```
 
 Never accept a PR URL under `github.com/unfoldingWord/bible-editor` for this workspace unless the user explicitly asks to target upstream.

@@ -4,7 +4,7 @@ You are picking this up mid-flight. Read this end-to-end, then [`docs/plan.md`](
 
 ## Where things live
 
-- **Repo (private)**: <https://github.com/deferredreward/bible-editor>
+- **Repo**: <https://github.com/unfoldingWord-box3/BPtranslate> (moved here 2026-09-16 from `deferredreward/bible-editor-multilingual`; still a GitHub fork of `unfoldingWord/bible-editor`, which is a read-only cherry-pick source — never open a PR against it)
 - **Local clone**: `C:\Users\benja\Documents\GitHub\bible-editor`
 - **HEAD when this was written**: `f635ff0d` + a follow-up alignment-parser session (Hebrew Unicode NFC normalization across the parse/display/highlight paths, compound-overlap strip in the dialog, occurrence fallback for over-numbered ULT/UST tagging). Check `git log` for the exact landing commit. **Fully pushed to `origin/main`**
 - **Plan**: [`docs/plan.md`](./plan.md) — the canonical spec
