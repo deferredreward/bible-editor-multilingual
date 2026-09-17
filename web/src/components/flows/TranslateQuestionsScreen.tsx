@@ -1569,14 +1569,15 @@ export default function TranslateQuestionsScreen({
             </Typography>
             {/* Verse view entry point (#447): jump to the alignment-joined
                 verse fidelity surface for the active card's verse. Disabled in
-                the done state, on an empty chapter, or on an intro question
-                (verse 0 has no single verse to open there). */}
+                the done state or on an empty chapter; on an intro question
+                (chapter or verse 0) it clamps to verse 1 of that chapter rather
+                than no-opping (#453). */}
             <IconButton
               size="small"
               aria-label={t("flowQuestions.openVerseView")}
-              disabled={!row || row.verse < 1}
+              disabled={!row}
               onClick={() => {
-                if (row && row.verse >= 1) location.hash = `#/verse/${book}/${row.chapter}/${row.verse}`;
+                if (row) location.hash = `#/verse/${book}/${Math.max(1, row.chapter)}/${Math.max(1, row.verse)}`;
               }}
               sx={{ flex: "none" }}
             >
