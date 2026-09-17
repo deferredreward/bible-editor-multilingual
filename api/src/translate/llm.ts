@@ -274,7 +274,7 @@ function networkCodeOf(err: AnyErr): string {
 // lost."), undici says "fetch failed" / "terminated", and the SDK's stream
 // reader says "stream ended without producing a Message" when the connection
 // drops mid-stream. All status-less, all worth a retry.
-const NETWORK_TEXT_RE = /network connection lost|\bterminated\b|fetch failed|stream ended|request ended without sending/i;
+const NETWORK_TEXT_RE = /network connection lost|\bterminated\b|fetch failed|stream ended|request ended without sending|unparseable reply/i;
 
 function errorType(err: AnyErr): string {
   return String(err?.error?.error?.type || err?.error?.type || err?.code || err?.error?.code || "");
@@ -500,8 +500,25 @@ export type GeminiRequestBody = {
 };
 export type GeminiResponseBody = {
   candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+  // thoughtsTokenCount is billed as output but reported separately from
+  // candidatesTokenCount, so a thinking run that reads only the latter
+  // under-reports its own cost. The bot has that bug (translate-llm.js:445-448);
+  // this does not, because these numbers become the org's translate bill.
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
+  promptFeedback?: { blockReason?: string; blockReasonMessage?: string };
 };
+
+/**
+ * finishReasons that mean "the model refused", as opposed to "the model
+ * finished". Without this an empty blocked reply reaches runOne as
+ * empty_output — "no output between the sentinel markers" — which is true and
+ * useless: it reads as a prompt bug when the real cause is a content filter.
+ * Scripture and translation notes carry violence and sexual content, so this
+ * is a live failure mode for this workload, not a hypothetical.
+ */
+const GEMINI_BLOCKED_FINISH_REASONS = new Set([
+  "SAFETY", "PROHIBITED_CONTENT", "RECITATION", "BLOCKLIST", "SPII", "IMAGE_SAFETY",
+]);
 /** The one fetch the adapter makes; tests inject a fake. */
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -591,16 +608,37 @@ export function makeGeminiTransport(fetchImpl: FetchLike = fetch): Transport {
     try {
       body = JSON.parse(raw) as GeminiResponseBody;
     } catch {
-      throw Object.assign(new Error(`unparseable reply: ${raw.slice(0, 200)}`), { status });
+      // Deliberately status-less: a 2xx carrying a non-JSON body is a mangled
+      // or truncated response, not a decision the provider made, so it belongs
+      // in the retryable network_error bucket. Attaching the 2xx would classify
+      // it as provider_error and burn the batch permanently on a gateway blip.
+      throw new Error(`unparseable reply: ${raw.slice(0, 200)}`);
     }
 
     const candidate = body.candidates?.[0];
     const text = (candidate?.content?.parts || []).map((part) => part.text).filter(Boolean).join("");
+
+    // A refusal must say so. Both shapes exist: blocked before generation
+    // (promptFeedback, no candidate at all) and blocked during it (a candidate
+    // carrying only a finishReason).
+    if (!text) {
+      const blocked = body.promptFeedback?.blockReason
+        || (candidate?.finishReason && GEMINI_BLOCKED_FINISH_REASONS.has(candidate.finishReason)
+          ? candidate.finishReason
+          : null);
+      if (blocked) {
+        const detail = body.promptFeedback?.blockReasonMessage;
+        throw new Error(`blocked by Gemini content filters: ${blocked}${detail ? ` (${detail})` : ""}`);
+      }
+    }
+
+    const usage = body.usageMetadata;
     return {
       text,
       usage: {
-        inputTokens: body.usageMetadata?.promptTokenCount || 0,
-        outputTokens: body.usageMetadata?.candidatesTokenCount || 0,
+        inputTokens: usage?.promptTokenCount || 0,
+        // Thinking tokens are billed as output; see GeminiResponseBody.
+        outputTokens: (usage?.candidatesTokenCount || 0) + (usage?.thoughtsTokenCount || 0),
       },
       stopReason: candidate?.finishReason || "unknown",
     };

@@ -188,9 +188,13 @@ PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"
 # listed below. Flip this to "internal" in api/.dev.vars for a local dry run
 # rather than here, so a dev deploy can't turn it on for everyone.
 PIPELINE_MODE = "proxy"
-# Providers with an in-Worker adapter. OpenAI / xAI stay proxied until each
-# adapter is smoke-tested; blanking this var disables the internal runner on
-# its own. Listing a provider here is inert while PIPELINE_MODE is "proxy".
+# Providers with an in-Worker adapter. OpenAI / xAI have none and stay proxied.
+# Blanking this var disables the internal runner on its own, and listing a
+# provider here is inert while PIPELINE_MODE is "proxy" — which is what makes it
+# safe to list gemini BEFORE its first live call. Claude has been exercised
+# against the real API; gemini has NOT (issue #445). Do not flip PIPELINE_MODE
+# to "internal" on a deployment that can pick gemini until that live run has
+# happened.
 PIPELINE_INTERNAL_PROVIDERS = "claude,gemini"
 # Dev has two workspaces: the existing dev database (BSOJ, and also the
 # SHARED_DB holding accounts/sessions/lexicon) plus an empty database for the
@@ -298,9 +302,13 @@ PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"
 # listed below. Flip this to "internal" in api/.dev.vars for a local dry run
 # rather than here, so a dev deploy can't turn it on for everyone.
 PIPELINE_MODE = "proxy"
-# Providers with an in-Worker adapter. OpenAI / xAI stay proxied until each
-# adapter is smoke-tested; blanking this var disables the internal runner on
-# its own. Listing a provider here is inert while PIPELINE_MODE is "proxy".
+# Providers with an in-Worker adapter. OpenAI / xAI have none and stay proxied.
+# Blanking this var disables the internal runner on its own, and listing a
+# provider here is inert while PIPELINE_MODE is "proxy" — which is what makes it
+# safe to list gemini BEFORE its first live call. Claude has been exercised
+# against the real API; gemini has NOT (issue #445). Do not flip PIPELINE_MODE
+# to "internal" on a deployment that can pick gemini until that live run has
+# happened.
 PIPELINE_INTERNAL_PROVIDERS = "claude,gemini"
 WORKSPACES = ""
 SUPER_ADMINS = ""

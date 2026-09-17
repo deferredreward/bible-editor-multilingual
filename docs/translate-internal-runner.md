@@ -315,4 +315,11 @@ one non-streaming POST, and bundling for workerd is not evidence of running
 there. Its cost as fetch is +0.68 KiB. The one REST-vs-SDK trap —
 `thinkingConfig` nests inside `generationConfig` on the wire, and Gemini
 ignores it silently at the top level — is pinned by a test on the serialized
-body.
+body. Two places where the port deliberately does NOT follow the bot: Gemini
+bills thinking tokens as output but reports them in a separate
+thoughtsTokenCount, which the bot never reads, so a thinking run there
+under-reports its own cost; and a content-filter block is surfaced with its
+blockReason rather than reaching runOne as a bare empty_output. Still open: the
+adapter has never made a live call, so the accepted thinkingLevel values for
+Gemini 3 are unconfirmed — a rejected level fails a batch non-retryably, which
+is the first thing the live dry run settles.
