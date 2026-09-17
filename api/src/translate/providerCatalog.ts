@@ -61,6 +61,10 @@ export const PROVIDER_CATALOG: Record<CatalogProvider, ProviderConfig> = {
     models: {
       "gemini-3.1-pro-preview": { label: "Gemini 3.1 Pro (preview)", inputPer1M: 1.25, outputPer1M: 10.0 },
       "gemini-3.6-flash": { label: "Gemini 3.6 Flash", inputPer1M: 1.5, outputPer1M: 7.5 },
+      // Promotional pricing through 2026-12-31 (Google's model page); both
+      // 3.7 and 3.8 Flash are $0.75 in / $3.75 out at every context length.
+      "gemini-3.7-flash": { label: "Gemini 3.7 Flash", inputPer1M: 0.75, outputPer1M: 3.75 },
+      "gemini-3.8-flash": { label: "Gemini 3.8 Flash", inputPer1M: 0.75, outputPer1M: 3.75 },
     },
   },
   xai: {

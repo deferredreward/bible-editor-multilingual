@@ -49,6 +49,7 @@ import { loadContextPack, type FetchLike } from "./contextPack.ts";
 import { buildScripturePack } from "./scripture.ts";
 import { runChecks, type CheckResult } from "./checks.ts";
 import type { TsvRow } from "./tsvCodec.ts";
+import { normalizeSourceRows } from "./tsvCodec.ts";
 import {
   TranslateProviderError,
   addLlmCall,
@@ -367,7 +368,11 @@ export async function guardAndSourceStep(deps: StepDeps, params: TranslateWorkfl
 
   const sourceText = await fetchResourceFile(p.sourceRef, resource.file(book), { fetchImpl: deps.fetchImpl });
   if (!sourceText) throw new TranslateStepError("source_not_found", `source not found: ${p.sourceRef} ${resource.file(book)}`);
-  const allRows = resource.codec.parse(sourceText);
+  // Normalize BEFORE slicing and batching: buildBatches writes the source
+  // snapshot to R2 and every later step (context, batch prompt, runChecks)
+  // reads it back, so normalizing here is what keeps prompt and checks on one
+  // value. See normalizeSourceRows (#472).
+  const allRows = normalizeSourceRows(resource.codec.parse(sourceText));
   let rows = sliceChapterRows(allRows, p.startChapter!, p.endChapter!);
   rows = selectRows(rows, { rowIds: p.rowIds, verseStart: p.verseStart, verseEnd: p.verseEnd });
   if (!rows.length) {

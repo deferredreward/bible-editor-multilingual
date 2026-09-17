@@ -7,7 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { makeTsvCodec, parseTnTsv, serializeTnTsv, refVerseRange, refChapter } from "./tsvCodec.ts";
+import { makeTsvCodec, parseTnTsv, serializeTnTsv, refVerseRange, refChapter, normalizeSourceRows } from "./tsvCodec.ts";
 import { RESOURCE_TYPES, getResourceType, getTsvResourceType, isTsvResource, isArticleResource } from "./resourceTypes.ts";
 import { fixture } from "./fixtures.mjs";
 
@@ -73,4 +73,31 @@ test("refVerseRange parses verse and range, null for intro; refChapter handles f
   assert.equal(refChapter("front:intro"), "front");
   assert.equal(refChapter("12:3"), 12);
   assert.equal(refChapter("x:1"), null);
+});
+
+// ---------------------------------------------------------------------------
+// Source normalization (#472)
+// ---------------------------------------------------------------------------
+
+test("normalizeSourceRows fills an empty Occurrence with 0 and leaves everything else alone", () => {
+  const intro = { Reference: "6:intro", ID: "tfbm", Tags: "", SupportReference: "", Quote: "", Occurrence: "", Note: "# Intro" };
+  const real = { Reference: "6:1", ID: "ab12", Tags: "", SupportReference: "", Quote: "word", Occurrence: "1", Note: "n" };
+  const negative = { ...real, ID: "cd34", Occurrence: "-1" };
+  const [a, b, c] = normalizeSourceRows([intro, real, negative]);
+
+  assert.equal(a.Occurrence, "0", "the intro row is what occurrence-int used to reject");
+  assert.equal(a.Note, "# Intro", "no other column is touched");
+  assert.equal(b.Occurrence, "1");
+  assert.equal(c.Occurrence, "-1", "-1 is a legal Occurrence and must survive");
+
+  assert.equal(intro.Occurrence, "", "the input row is not mutated");
+  assert.equal(b, real, "a row needing no change is returned by identity, not copied");
+});
+
+test("normalizeSourceRows ignores a resource with no Occurrence column", () => {
+  const row = { Reference: "1:1", ID: "ab12", Note: "n" };
+  const [out] = normalizeSourceRows([row]);
+  assert.equal(out, row, "identity — nothing to normalize");
+  assert.ok(!("Occurrence" in out), "a column the resource does not have is never invented");
+  assert.deepEqual(normalizeSourceRows([]), []);
 });

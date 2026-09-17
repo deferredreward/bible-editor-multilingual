@@ -964,3 +964,23 @@ test("a stored draft that validates is promoted to the batch output, never re-bo
   assert.equal(r.inputTokens, 5000);
   assert.equal(r.costUsd, 0.06);
 });
+
+test("guardAndSourceStep normalizes an empty Occurrence to 0 before the source snapshot is written (#472)", async () => {
+  // Every chapter has an N:intro row and upstream leaves its Occurrence empty
+  // (verified against unfoldingWord/en_tn tn_ZEC.tsv, row 6:intro / tfbm).
+  // occurrence-int asserts /^-?\\d+$/ unconditionally, so before this
+  // normalization no tN chapter could pass checks: gemini-3.6-flash and
+  // gemini-3.1-pro-preview both failed byte-identically on that row.
+  const source = "Reference\tID\tTags\tSupportReference\tQuote\tOccurrence\tNote\n1:intro\ttfbm\t\t\t\t\t# Obadiah 1 Introduction\n1:1\tab12\t\t\tword\t1\tA real note\n";
+  const s = await scenario({ source });
+
+  const src = await steps.guardAndSourceStep(s.deps, PARAMS);
+  assert.equal(src.rowCount, 2);
+
+  const written = s.blobs.map.get(`pipeline-output/bsoj/job-1/work/batch-${storage.batchNn(0)}.tsv`);
+  const rows = written.split("\n").filter(Boolean).slice(1).map((line) => line.split("\t"));
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0][1], "tfbm");
+  assert.equal(rows[0][5], "0", "the intro row's empty Occurrence is normalized BEFORE the snapshot the prompt and checks both read");
+  assert.equal(rows[1][5], "1", "a genuine Occurrence is passed through untouched");
+});
