@@ -474,6 +474,82 @@ console.log("\n[NULL-safety: an ambiguous-marked row is still excluded from the 
   );
 }
 
+// ─── #456: terminate an orphaned translate Workflow instance on force-fail ──
+// A Worker that died in dispatchNext's create()→'running' UPDATE window leaves
+// a translate row 'dispatching' while its TranslateWorkflow instance keeps
+// making paid calls. The stuck-dispatch sweep must terminate that instance,
+// rebuilt from the deterministic translateInstanceId(workspace, jobId).
+function seedStuckDispatch(sqlite, { jobId, pipelineType, updatedAt }) {
+  sqlite
+    .prepare(`INSERT INTO users (id, dcs_user_id, dcs_username) VALUES (1, 1, 'translator') ON CONFLICT(id) DO NOTHING`)
+    .run();
+  sqlite
+    .prepare(
+      `INSERT INTO pipeline_jobs
+         (job_id, user_id, pipeline_type, book, start_chapter, end_chapter, session_key, state, updated_at)
+       VALUES (?, 1, ?, 'OBA', 1, 1, 'sess', 'dispatching', ?)`,
+    )
+    .run(jobId, pipelineType, updatedAt);
+}
+
+console.log("\n[#456: the stuck-dispatch sweep terminates the orphaned translate Workflow instance, and only translate jobs]");
+{
+  const { sqlite, env } = freshEnv();
+  const realNow = sqlite.prepare("SELECT unixepoch() AS n").get().n;
+  // Both died 200s ago (past the 120s threshold), no ambiguous marker, runner
+  // never stamped — exactly the create()→UPDATE crash window.
+  seedStuckDispatch(sqlite, { jobId: "job-orphan-wf", pipelineType: "translate", updatedAt: realNow - 200 });
+  seedStuckDispatch(sqlite, { jobId: "job-notes-dead", pipelineType: "notes", updatedAt: realNow - 200 });
+
+  const terminated = [];
+  env.WORKSPACE_SLUG = "bsoj";
+  env.TRANSLATE_WORKFLOW = {
+    async get(id) {
+      return { id, terminate: async () => { terminated.push(id); } };
+    },
+    async create() {
+      throw new Error("the sweep must never create an instance");
+    },
+  };
+
+  await pollAllNonTerminal(env);
+
+  const orphan = sqlite.prepare("SELECT state FROM pipeline_jobs WHERE job_id = ?").get("job-orphan-wf");
+  assert(orphan.state === "failed", `the orphaned translate dispatch is still force-failed (got ${orphan.state})`);
+  assert(
+    terminated.length === 1 && terminated[0] === "translate-bsoj-job-orphan-wf",
+    `its Workflow instance is terminated by deterministic id, and the non-translate dead dispatch is left alone (got ${JSON.stringify(terminated)})`,
+  );
+  const notes = sqlite.prepare("SELECT state FROM pipeline_jobs WHERE job_id = ?").get("job-notes-dead");
+  assert(notes.state === "failed", `the non-translate dead dispatch is still failed too (got ${notes.state})`);
+}
+
+console.log("\n[#456: a translate job whose create() never landed force-fails without error (terminate throws → swallowed)]");
+{
+  const { sqlite, env } = freshEnv();
+  const realNow = sqlite.prepare("SELECT unixepoch() AS n").get().n;
+  seedStuckDispatch(sqlite, { jobId: "job-no-instance", pipelineType: "translate", updatedAt: realNow - 200 });
+
+  let terminateAttempts = 0;
+  env.WORKSPACE_SLUG = "bsoj";
+  env.TRANSLATE_WORKFLOW = {
+    // get() throwing models "no such instance": create() never landed.
+    async get() { terminateAttempts++; throw new Error("instance not found"); },
+    async create() { throw new Error("the sweep must never create an instance"); },
+  };
+
+  let threw = false;
+  try {
+    await pollAllNonTerminal(env);
+  } catch {
+    threw = true;
+  }
+  assert(!threw, "pollAllNonTerminal does not throw when an instance cannot be found");
+  assert(terminateAttempts === 1, `it still attempts the terminate for the translate job (got ${terminateAttempts})`);
+  const row = sqlite.prepare("SELECT state FROM pipeline_jobs WHERE job_id = ?").get("job-no-instance");
+  assert(row.state === "failed", `the row force-fails regardless of the terminate outcome (got ${row.state})`);
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);
   process.exit(1);
