@@ -188,10 +188,10 @@ PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"
 # listed below. Flip this to "internal" in api/.dev.vars for a local dry run
 # rather than here, so a dev deploy can't turn it on for everyone.
 PIPELINE_MODE = "proxy"
-# Providers with an in-Worker adapter. OpenAI / Gemini / xAI stay proxied until
-# each adapter is smoke-tested; blanking this var disables the internal runner
-# on its own.
-PIPELINE_INTERNAL_PROVIDERS = "claude"
+# Providers with an in-Worker adapter. OpenAI / xAI stay proxied until each
+# adapter is smoke-tested; blanking this var disables the internal runner on
+# its own. Listing a provider here is inert while PIPELINE_MODE is "proxy".
+PIPELINE_INTERNAL_PROVIDERS = "claude,gemini"
 # Dev has two workspaces: the existing dev database (BSOJ, and also the
 # SHARED_DB holding accounts/sessions/lexicon) plus an empty database for the
 # test org. The FIRST entry is the fallback when no be_ws cookie is present,
@@ -298,9 +298,9 @@ PIPELINE_API_BASE = "https://uw-bt-bot.fly.dev"
 # listed below. Flip this to "internal" in api/.dev.vars for a local dry run
 # rather than here, so a dev deploy can't turn it on for everyone.
 PIPELINE_MODE = "proxy"
-# Providers with an in-Worker adapter. OpenAI / Gemini / xAI stay proxied until
-# each adapter is smoke-tested; blanking this var disables the internal runner
-# on its own.
-PIPELINE_INTERNAL_PROVIDERS = "claude"
+# Providers with an in-Worker adapter. OpenAI / xAI stay proxied until each
+# adapter is smoke-tested; blanking this var disables the internal runner on
+# its own. Listing a provider here is inert while PIPELINE_MODE is "proxy".
+PIPELINE_INTERNAL_PROVIDERS = "claude,gemini"
 WORKSPACES = ""
 SUPER_ADMINS = ""

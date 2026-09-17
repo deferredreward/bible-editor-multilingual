@@ -28,7 +28,7 @@
 //     stack or property.
 //   - `redact()` is the bot's run-logs.js SECRET_PATTERNS pass only — the
 //     env-value pass has no meaning in a Worker.
-//   - Only the Anthropic adapter is implemented. openai/xai/gemini throw
+//   - Anthropic and Gemini have in-Worker adapters. openai/xai throw
 //     provider_not_supported_internal so the dispatcher keeps proxying them.
 //
 // Anthropic request shape follows the claude-api skill (2026-09-15):
@@ -481,8 +481,135 @@ export function makeClaudeTransport(clientFactory: ClaudeClientFactory = default
   };
 }
 
+// Gemini 2.5 takes a thinking TOKEN BUDGET and rejects zero; 3.x takes a
+// thinkingLevel instead (translate-llm.js:310, :435). Indexed by the raw
+// level, not effort(), so xhigh/max keep their own budgets.
+const GEMINI_25_BUDGET: Record<string, number> = {
+  low: 1024, medium: 4096, high: 8192, xhigh: 32768, max: 32768,
+};
+
+export const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+
+export type GeminiThinkingConfig = { thinkingLevel: string } | { thinkingBudget: number };
+export type GeminiGenerationConfig = { maxOutputTokens: number; thinkingConfig?: GeminiThinkingConfig };
+/** The exact JSON POSTed to :generateContent. Pinned by a test. */
+export type GeminiRequestBody = {
+  systemInstruction: { parts: { text: string }[] };
+  contents: { role: string; parts: { text: string }[] }[];
+  generationConfig: GeminiGenerationConfig;
+};
+export type GeminiResponseBody = {
+  candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+};
+/** The one fetch the adapter makes; tests inject a fake. */
+export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
+
+/**
+ * The request body, split out because ONE nesting detail decides whether the
+ * thinking setting is honoured. The @google/genai SDK takes a FLAT `config`
+ * holding both maxOutputTokens and thinkingConfig; on the wire, thinkingConfig
+ * is nested INSIDE generationConfig. Send it at the top level and Gemini
+ * silently ignores it rather than erroring — a paid-for wrong answer, not a
+ * failure, and nothing downstream would notice. Hence a test pinning the exact
+ * serialized shape.
+ */
+export function buildGeminiRequest(
+  { model, system, user, thinking }: Pick<TransportRequest, "model" | "system" | "user" | "thinking">,
+): GeminiRequestBody {
+  const generationConfig: GeminiGenerationConfig = { maxOutputTokens: MAX_OUTPUT_TOKENS };
+  if (thinking && thinking !== "none") {
+    generationConfig.thinkingConfig = model.startsWith("gemini-3")
+      ? { thinkingLevel: effort(thinking) ?? "medium" }
+      : { thinkingBudget: GEMINI_25_BUDGET[thinking] ?? 4096 };
+  }
+  return {
+    systemInstruction: { parts: [{ text: system }] },
+    contents: [{ role: "user", parts: [{ text: user }] }],
+    generationConfig,
+  };
+}
+
+/**
+ * Google Gemini adapter (translate-llm.js callGemini), over plain fetch rather
+ * than @google/genai. Measured on this Worker the SDK costs ~112 KiB gzip
+ * (+26% of the bundle) and 94 transitive packages for ONE non-streaming POST —
+ * and it bundling for workerd is not the same as it running there, whereas
+ * fetch is native. Non-streaming is fine where the Anthropic adapter needs a
+ * stream: generateContent accepts a 32k maxOutputTokens directly, so the
+ * whole-batch TSV arrives in one reply.
+ *
+ * Two deliberate divergences from the bot:
+ *   - The bot never passes timeoutMs for Gemini (translate-llm.js:426-428), so
+ *     a hung call runs until the Workflow step's own limit. Here it aborts on
+ *     the same clock as the Anthropic adapter.
+ *   - A non-2xx reply is thrown as an Error carrying `status`, the response
+ *     headers, and the RAW body as its message — exactly what
+ *     classifyProviderError and parseRetryAfter already read (the recorded
+ *     Gemini error rows in llm.test.mjs are that shape).
+ *
+ * The key rides the x-goog-api-key header, never the URL, so it cannot leak
+ * through a logged request line.
+ */
+export function makeGeminiTransport(fetchImpl: FetchLike = fetch): Transport {
+  return async ({ model, system, user, thinking, apiKey, timeoutMs, signal }) => {
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort((signal as AbortSignal).reason);
+    if (signal?.aborted) controller.abort(signal.reason);
+    else signal?.addEventListener("abort", abortFromCaller, { once: true });
+    const timer = setTimeout(
+      () => controller.abort(new DOMException(`gemini request timed out after ${timeoutMs}ms`, "TimeoutError")),
+      timeoutMs,
+    );
+
+    let status = 0;
+    let headers: Headers | undefined;
+    let raw = "";
+    try {
+      const res = await fetchImpl(
+        `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify(buildGeminiRequest({ model, system, user, thinking })),
+          signal: controller.signal,
+        },
+      );
+      status = res.status;
+      headers = res.headers;
+      raw = await res.text();
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abortFromCaller);
+    }
+
+    if (status < 200 || status >= 300) {
+      throw Object.assign(new Error(raw || `HTTP ${status}`), { status, headers });
+    }
+
+    let body: GeminiResponseBody;
+    try {
+      body = JSON.parse(raw) as GeminiResponseBody;
+    } catch {
+      throw Object.assign(new Error(`unparseable reply: ${raw.slice(0, 200)}`), { status });
+    }
+
+    const candidate = body.candidates?.[0];
+    const text = (candidate?.content?.parts || []).map((part) => part.text).filter(Boolean).join("");
+    return {
+      text,
+      usage: {
+        inputTokens: body.usageMetadata?.promptTokenCount || 0,
+        outputTokens: body.usageMetadata?.candidatesTokenCount || 0,
+      },
+      stopReason: candidate?.finishReason || "unknown",
+    };
+  };
+}
+
 const ADAPTERS: Record<string, () => Transport> = {
   claude: () => makeClaudeTransport(),
+  gemini: () => makeGeminiTransport(),
 };
 
 /** In-Worker adapters. Everything not listed stays on the Fly proxy path. */
