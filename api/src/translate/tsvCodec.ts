@@ -76,6 +76,36 @@ export function makeTsvCodec(columns: readonly string[]): TsvCodec {
  * Chapter key of a row's Reference: 'front', or the integer chapter.
  * References look like "front:intro", "1:1", "1:intro", "12:3-4".
  */
+/**
+ * Post-parse shaping of SOURCE rows (issue #472).
+ *
+ * Upstream tN/tQ carry an EMPTY Occurrence wherever a row has no Quote — every
+ * chapter's `N:intro` row is one, and it exists in every chapter of every
+ * book. Occurrence is a pass-through column, so a model copies that empty cell
+ * faithfully and `occurrence-int` (checks.ts) then fails a row nobody
+ * mistranslated: it asserts /^-?\d+$/ unconditionally. Both Gemini Flash and
+ * Pro failed byte-identically on ZEC 6:intro for exactly this reason.
+ *
+ * Normalizing the SOURCE to "0" — rather than loosening the check — is the
+ * deliberate choice (see the issue): it keeps one value across the prompt, the
+ * R2 batch snapshot and the check comparison, and it matches what tn_rows
+ * already stores for these rows (integer 0). Because this runs BEFORE
+ * buildBatches writes the source snapshot, every downstream reader sees the
+ * normalized value, so the pass-through comparison still demands
+ * source-to-target byte equality and cannot be satisfied by a model blanking a
+ * genuine integer.
+ *
+ * Rows without an Occurrence column, and rows whose Occurrence is already
+ * non-empty, are returned untouched (identity, not a copy).
+ */
+export function normalizeSourceRows<T extends TsvRow>(rows: readonly T[]): T[] {
+  return rows.map((row) => {
+    if (!Object.prototype.hasOwnProperty.call(row, "Occurrence")) return row;
+    if (row.Occurrence !== "") return row;
+    return { ...row, Occurrence: "0" };
+  });
+}
+
 export function refChapter(reference: string): "front" | number | null {
   const head = String(reference).split(":")[0];
   if (head === "front") return "front";
