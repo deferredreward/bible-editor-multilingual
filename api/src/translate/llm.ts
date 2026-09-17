@@ -28,7 +28,7 @@
 //     stack or property.
 //   - `redact()` is the bot's run-logs.js SECRET_PATTERNS pass only — the
 //     env-value pass has no meaning in a Worker.
-//   - Only the Anthropic adapter is implemented. openai/xai/gemini throw
+//   - Anthropic and Gemini have in-Worker adapters. openai/xai throw
 //     provider_not_supported_internal so the dispatcher keeps proxying them.
 //
 // Anthropic request shape follows the claude-api skill (2026-09-15):
@@ -274,7 +274,7 @@ function networkCodeOf(err: AnyErr): string {
 // lost."), undici says "fetch failed" / "terminated", and the SDK's stream
 // reader says "stream ended without producing a Message" when the connection
 // drops mid-stream. All status-less, all worth a retry.
-const NETWORK_TEXT_RE = /network connection lost|\bterminated\b|fetch failed|stream ended|request ended without sending/i;
+const NETWORK_TEXT_RE = /network connection lost|\bterminated\b|fetch failed|stream ended|request ended without sending|unparseable reply/i;
 
 function errorType(err: AnyErr): string {
   return String(err?.error?.error?.type || err?.error?.type || err?.code || err?.error?.code || "");
@@ -481,8 +481,173 @@ export function makeClaudeTransport(clientFactory: ClaudeClientFactory = default
   };
 }
 
+// Gemini 2.5 takes a thinking TOKEN BUDGET and rejects zero; 3.x takes a
+// thinkingLevel instead (translate-llm.js:310, :435). Indexed by the raw
+// level, not effort(), so xhigh/max keep their own budgets.
+const GEMINI_25_BUDGET: Record<string, number> = {
+  low: 1024, medium: 4096, high: 8192, xhigh: 32768, max: 32768,
+};
+
+export const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+
+export type GeminiThinkingConfig = { thinkingLevel: string } | { thinkingBudget: number };
+export type GeminiGenerationConfig = { maxOutputTokens: number; thinkingConfig?: GeminiThinkingConfig };
+/** The exact JSON POSTed to :generateContent. Pinned by a test. */
+export type GeminiRequestBody = {
+  systemInstruction: { parts: { text: string }[] };
+  contents: { role: string; parts: { text: string }[] }[];
+  generationConfig: GeminiGenerationConfig;
+};
+export type GeminiResponseBody = {
+  candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+  // thoughtsTokenCount is billed as output but reported separately from
+  // candidatesTokenCount, so a thinking run that reads only the latter
+  // under-reports its own cost. The bot has that bug (translate-llm.js:445-448);
+  // this does not, because these numbers become the org's translate bill.
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
+  promptFeedback?: { blockReason?: string; blockReasonMessage?: string };
+};
+
+/**
+ * finishReasons that mean "the model refused", as opposed to "the model
+ * finished". Without this an empty blocked reply reaches runOne as
+ * empty_output — "no output between the sentinel markers" — which is true and
+ * useless: it reads as a prompt bug when the real cause is a content filter.
+ * Scripture and translation notes carry violence and sexual content, so this
+ * is a live failure mode for this workload, not a hypothetical.
+ */
+const GEMINI_BLOCKED_FINISH_REASONS = new Set([
+  "SAFETY", "PROHIBITED_CONTENT", "RECITATION", "BLOCKLIST", "SPII", "IMAGE_SAFETY",
+]);
+/** The one fetch the adapter makes; tests inject a fake. */
+export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
+
+/**
+ * The request body, split out because ONE nesting detail decides whether the
+ * thinking setting is honoured. The @google/genai SDK takes a FLAT `config`
+ * holding both maxOutputTokens and thinkingConfig; on the wire, thinkingConfig
+ * is nested INSIDE generationConfig. Send it at the top level and Gemini
+ * silently ignores it rather than erroring — a paid-for wrong answer, not a
+ * failure, and nothing downstream would notice. Hence a test pinning the exact
+ * serialized shape.
+ */
+export function buildGeminiRequest(
+  { model, system, user, thinking }: Pick<TransportRequest, "model" | "system" | "user" | "thinking">,
+): GeminiRequestBody {
+  const generationConfig: GeminiGenerationConfig = { maxOutputTokens: MAX_OUTPUT_TOKENS };
+  if (thinking && thinking !== "none") {
+    generationConfig.thinkingConfig = model.startsWith("gemini-3")
+      ? { thinkingLevel: effort(thinking) ?? "medium" }
+      : { thinkingBudget: GEMINI_25_BUDGET[thinking] ?? 4096 };
+  }
+  return {
+    systemInstruction: { parts: [{ text: system }] },
+    contents: [{ role: "user", parts: [{ text: user }] }],
+    generationConfig,
+  };
+}
+
+/**
+ * Google Gemini adapter (translate-llm.js callGemini), over plain fetch rather
+ * than @google/genai. Measured on this Worker the SDK costs ~112 KiB gzip
+ * (+26% of the bundle) and 94 transitive packages for ONE non-streaming POST —
+ * and it bundling for workerd is not the same as it running there, whereas
+ * fetch is native. Non-streaming is fine where the Anthropic adapter needs a
+ * stream: generateContent accepts a 32k maxOutputTokens directly, so the
+ * whole-batch TSV arrives in one reply.
+ *
+ * Two deliberate divergences from the bot:
+ *   - The bot never passes timeoutMs for Gemini (translate-llm.js:426-428), so
+ *     a hung call runs until the Workflow step's own limit. Here it aborts on
+ *     the same clock as the Anthropic adapter.
+ *   - A non-2xx reply is thrown as an Error carrying `status`, the response
+ *     headers, and the RAW body as its message — exactly what
+ *     classifyProviderError and parseRetryAfter already read (the recorded
+ *     Gemini error rows in llm.test.mjs are that shape).
+ *
+ * The key rides the x-goog-api-key header, never the URL, so it cannot leak
+ * through a logged request line.
+ */
+export function makeGeminiTransport(fetchImpl: FetchLike = fetch): Transport {
+  return async ({ model, system, user, thinking, apiKey, timeoutMs, signal }) => {
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort((signal as AbortSignal).reason);
+    if (signal?.aborted) controller.abort(signal.reason);
+    else signal?.addEventListener("abort", abortFromCaller, { once: true });
+    const timer = setTimeout(
+      () => controller.abort(new DOMException(`gemini request timed out after ${timeoutMs}ms`, "TimeoutError")),
+      timeoutMs,
+    );
+
+    let status = 0;
+    let headers: Headers | undefined;
+    let raw = "";
+    try {
+      const res = await fetchImpl(
+        `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify(buildGeminiRequest({ model, system, user, thinking })),
+          signal: controller.signal,
+        },
+      );
+      status = res.status;
+      headers = res.headers;
+      raw = await res.text();
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abortFromCaller);
+    }
+
+    if (status < 200 || status >= 300) {
+      throw Object.assign(new Error(raw || `HTTP ${status}`), { status, headers });
+    }
+
+    let body: GeminiResponseBody;
+    try {
+      body = JSON.parse(raw) as GeminiResponseBody;
+    } catch {
+      // Deliberately status-less: a 2xx carrying a non-JSON body is a mangled
+      // or truncated response, not a decision the provider made, so it belongs
+      // in the retryable network_error bucket. Attaching the 2xx would classify
+      // it as provider_error and burn the batch permanently on a gateway blip.
+      throw new Error(`unparseable reply: ${raw.slice(0, 200)}`);
+    }
+
+    const candidate = body.candidates?.[0];
+    const text = (candidate?.content?.parts || []).map((part) => part.text).filter(Boolean).join("");
+
+    // A refusal must say so. Both shapes exist: blocked before generation
+    // (promptFeedback, no candidate at all) and blocked during it (a candidate
+    // carrying only a finishReason).
+    if (!text) {
+      const blocked = body.promptFeedback?.blockReason
+        || (candidate?.finishReason && GEMINI_BLOCKED_FINISH_REASONS.has(candidate.finishReason)
+          ? candidate.finishReason
+          : null);
+      if (blocked) {
+        const detail = body.promptFeedback?.blockReasonMessage;
+        throw new Error(`blocked by Gemini content filters: ${blocked}${detail ? ` (${detail})` : ""}`);
+      }
+    }
+
+    const usage = body.usageMetadata;
+    return {
+      text,
+      usage: {
+        inputTokens: usage?.promptTokenCount || 0,
+        // Thinking tokens are billed as output; see GeminiResponseBody.
+        outputTokens: (usage?.candidatesTokenCount || 0) + (usage?.thoughtsTokenCount || 0),
+      },
+      stopReason: candidate?.finishReason || "unknown",
+    };
+  };
+}
+
 const ADAPTERS: Record<string, () => Transport> = {
   claude: () => makeClaudeTransport(),
+  gemini: () => makeGeminiTransport(),
 };
 
 /** In-Worker adapters. Everything not listed stays on the Fly proxy path. */

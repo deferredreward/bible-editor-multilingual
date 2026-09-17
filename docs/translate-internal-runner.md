@@ -307,5 +307,19 @@ step retry: R2 output-reuse check at step start; `NonRetryableError` for
 deterministic failures; the billed output leaves the paying step as its return
 value so the R2 write can retry without re-buying it. (5) Prompt/behavior drift
 from the bot: sync script +
-checksum test against the skills checkout; dry-run comparison in step 6. OpenAI/xAI
-and Gemini stay proxied until each adapter is smoke-tested.
+checksum test against the skills checkout; dry-run comparison in step 6. Claude and
+Gemini have in-Worker adapters; OpenAI/xAI stay proxied until each adapter is
+smoke-tested. The Gemini adapter is plain fetch rather than @google/genai: the
+SDK measured +112 KiB gzip (+26% of the Worker) and 94 transitive packages for
+one non-streaming POST, and bundling for workerd is not evidence of running
+there. Its cost as fetch is +0.68 KiB. The one REST-vs-SDK trap —
+`thinkingConfig` nests inside `generationConfig` on the wire, and Gemini
+ignores it silently at the top level — is pinned by a test on the serialized
+body. Two places where the port deliberately does NOT follow the bot: Gemini
+bills thinking tokens as output but reports them in a separate
+thoughtsTokenCount, which the bot never reads, so a thinking run there
+under-reports its own cost; and a content-filter block is surfaced with its
+blockReason rather than reaching runOne as a bare empty_output. Still open: the
+adapter has never made a live call, so the accepted thinkingLevel values for
+Gemini 3 are unconfirmed — a rejected level fails a batch non-retryably, which
+is the first thing the live dry run settles.

@@ -537,9 +537,10 @@ test("redactSecretPatterns covers the run-logs.js shapes: github, google, jwt, a
 // Adapter map
 // ---------------------------------------------------------------------------
 
-test("only claude has an in-Worker adapter; other providers fail closed, non-retryable, before any call", async () => {
+test("claude and gemini have in-Worker adapters; other providers fail closed, non-retryable, before any call", async () => {
   assert.equal(llm.hasInternalAdapter("claude"), true);
-  for (const p of ["openai", "xai", "gemini", "default", "constructor"]) {
+  assert.equal(llm.hasInternalAdapter("gemini"), true);
+  for (const p of ["openai", "xai", "default", "constructor"]) {
     assert.equal(llm.hasInternalAdapter(p), false, p);
     assert.throws(() => llm.transportFor(p), (err) => err.code === "provider_not_supported_internal" && err.retryable === false && err.provider === p);
   }
@@ -896,4 +897,237 @@ test("runBatch replays all 11 recorded OBA batches: attempts=1, pass-through byt
   assert.ok(Math.abs(usage.estimatedCostUsd - (11 * (5000 / 1e6 * 3 + 3000 / 1e6 * 15))) < 1e-9, String(usage.estimatedCostUsd));
   const book = core.mergeChapterIntoBook(null, merged, { startChapter: 1, endChapter: 1, parse: resource.codec.parse, serialize: resource.codec.serialize });
   assert.equal(book, fixture(`${DRY}tn_OBA.tsv`), "merged book byte-identical to the recorded run");
+});
+
+// ---------------------------------------------------------------------------
+// Gemini adapter (plain fetch)
+// ---------------------------------------------------------------------------
+
+const GKEY = "AIzaSyTESTKEYTESTKEYTESTKEYTESTKEY01";
+const GURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent";
+
+const geminiReply = (over = {}) => JSON.stringify({
+  candidates: [{ content: { parts: over.parts ?? [{ text: "OUT" }] }, finishReason: over.finishReason ?? "STOP" }],
+  usageMetadata: over.usage ?? { promptTokenCount: 7, candidatesTokenCount: 3 },
+});
+
+/** Records the one fetch and replies with the given body (default: a clean 200). */
+function geminiSpy(reply = {}) {
+  const seen = { url: null, init: null };
+  const transport = llm.makeGeminiTransport(async (url, init) => {
+    seen.url = url;
+    seen.init = init;
+    return new Response(reply.body ?? geminiReply(reply), {
+      status: reply.status ?? 200,
+      headers: { "content-type": "application/json", ...(reply.headers || {}) },
+    });
+  });
+  return { seen, transport };
+}
+
+const greq = (over = {}) => ({
+  provider: "gemini", model: "gemini-3.6-flash", system: "SYS", user: "USER",
+  thinking: "high", apiKey: GKEY, timeoutMs: 5000, ...over,
+});
+
+test("gemini adapter: POSTs to :generateContent with the key in the header, never the URL", async () => {
+  const { seen, transport } = geminiSpy();
+  const out = await transport(greq());
+
+  assert.equal(seen.url, GURL);
+  assert.ok(!seen.url.includes(GKEY), "the key must never ride the URL — request lines get logged");
+  assert.equal(seen.init.method, "POST");
+  assert.equal(seen.init.headers["x-goog-api-key"], GKEY);
+  assert.equal(seen.init.headers["content-type"], "application/json");
+  assert.ok(seen.init.signal instanceof AbortSignal, "every call is abortable");
+
+  assert.deepEqual(out, { text: "OUT", usage: { inputTokens: 7, outputTokens: 3 }, stopReason: "STOP" });
+});
+
+test("gemini request body: thinkingConfig is nested INSIDE generationConfig, not beside it", () => {
+  // The whole point of this assertion: the SDK takes a flat config, the wire
+  // format does not. At the top level Gemini ignores the thinking setting
+  // silently — a wrong answer we still pay for, with nothing to notice.
+  assert.deepEqual(llm.buildGeminiRequest({ model: "gemini-3.6-flash", system: "SYS", user: "USER", thinking: "high" }), {
+    systemInstruction: { parts: [{ text: "SYS" }] },
+    contents: [{ role: "user", parts: [{ text: "USER" }] }],
+    generationConfig: { maxOutputTokens: 32000, thinkingConfig: { thinkingLevel: "high" } },
+  });
+});
+
+test("gemini request body: 3.x takes thinkingLevel, 2.5 takes a token budget, 'none' takes neither", () => {
+  const gen = (over) => llm.buildGeminiRequest({ model: "gemini-3.6-flash", system: "S", user: "U", thinking: "high", ...over }).generationConfig;
+
+  assert.deepEqual(gen({ thinking: "high" }).thinkingConfig, { thinkingLevel: "high" });
+  assert.deepEqual(gen({ thinking: "max" }).thinkingConfig, { thinkingLevel: "high" },
+    "xhigh/max collapse to high like every other provider");
+  assert.deepEqual(gen({ thinking: "bogus" }).thinkingConfig, { thinkingLevel: "medium" },
+    "unknown level falls back to medium like the bot");
+
+  // 2.5 is budget-shaped and indexed by the RAW level, so xhigh keeps its own
+  // budget rather than collapsing onto high's.
+  assert.deepEqual(gen({ model: "gemini-2.5-pro", thinking: "medium" }).thinkingConfig, { thinkingBudget: 4096 });
+  assert.deepEqual(gen({ model: "gemini-2.5-pro", thinking: "xhigh" }).thinkingConfig, { thinkingBudget: 32768 });
+  assert.deepEqual(gen({ model: "gemini-2.5-pro", thinking: "bogus" }).thinkingConfig, { thinkingBudget: 4096 });
+
+  assert.ok(!("thinkingConfig" in gen({ thinking: "none" })), "'none' sends no thinking config at all");
+  assert.ok(!("thinkingConfig" in gen({ thinking: null })));
+  assert.equal(gen({ thinking: "none" }).maxOutputTokens, 32000, "the output cap is unconditional");
+});
+
+test("gemini adapter: joins multi-part text, drops empty parts, and survives a reply with nothing in it", async () => {
+  const many = geminiSpy({ parts: [{ text: "A" }, { thought: true }, { text: "" }, { text: "B" }] });
+  assert.equal((await many.transport(greq())).text, "AB");
+
+  const bare = geminiSpy({ body: "{}" });
+  assert.deepEqual(await bare.transport(greq()), { text: "", usage: { inputTokens: 0, outputTokens: 0 }, stopReason: "unknown" });
+});
+
+test("gemini adapter: a MAX_TOKENS finish reason is the one the truncation guard looks for", async () => {
+  const { transport } = geminiSpy({ finishReason: "MAX_TOKENS" });
+  const out = await transport(greq());
+  assert.ok(llm.TRUNCATED_STOP_REASONS.gemini.includes(out.stopReason),
+    "stopReason must match TRUNCATED_STOP_REASONS.gemini or output_too_long never fires");
+});
+
+test("gemini adapter: a non-2xx reply throws the shape classifyProviderError already reads", async () => {
+  const denied = geminiSpy({ status: 403, body: '{"error":{"code":403,"status":"PERMISSION_DENIED","message":"API key not valid"}}' });
+  const err = await denied.transport(greq()).then(() => null, (e) => e);
+  assert.equal(err.status, 403);
+  assert.ok(err.message.includes("PERMISSION_DENIED"), "the raw body is the message");
+  assert.equal(llm.classifyProviderError(err).code, "invalid_key");
+
+  const limited = geminiSpy({ status: 429, body: '{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"retryDelay":"17s"}]}}' });
+  const rate = await limited.transport(greq()).then(() => null, (e) => e);
+  assert.deepEqual(llm.classifyProviderError(rate), { code: "rate_limited", status: 429, retryAfterSeconds: 17 });
+
+  const busy = geminiSpy({ status: 503, body: '{"error":{"status":"UNAVAILABLE"}}' });
+  assert.equal(llm.classifyProviderError(await busy.transport(greq()).then(() => null, (e) => e)).code, "provider_overloaded");
+
+});
+
+test("gemini adapter: a 2xx carrying a non-JSON body is retryable, not a permanently failed batch", async () => {
+  // An intermediary returning an HTML error page under a 200, or a truncated
+  // body that still read as complete, is transport corruption — not a decision
+  // the provider made. Classifying it provider_error would burn a paid batch on
+  // a gateway blip, so the throw carries NO status and lands in network_error.
+  const junk = geminiSpy({ body: "<html>502 Bad Gateway</html>" });
+  const bad = await junk.transport(greq()).then(() => null, (e) => e);
+  assert.ok(bad.message.includes("unparseable reply"), bad.message);
+  assert.equal(bad.status, undefined, "attaching the 2xx would misclassify it as a provider decision");
+
+  const { code } = llm.classifyProviderError(bad);
+  assert.equal(code, "network_error");
+  assert.equal(llm.isRetryableCode(code), true, "the Workflow step must get to retry this");
+});
+
+test("gemini adapter: a rate limit reports Retry-After from the header, not just the body", async () => {
+  // The adapter attaches the live Headers to the thrown error precisely so
+  // parseRetryAfter can read this branch; the body-regex branch was already
+  // covered by the Anthropic-era rows.
+  const limited = geminiSpy({ status: 429, body: '{"error":{"status":"RESOURCE_EXHAUSTED"}}', headers: { "retry-after": "30" } });
+  const err = await limited.transport(greq()).then(() => null, (e) => e);
+  assert.deepEqual(llm.classifyProviderError(err), { code: "rate_limited", status: 429, retryAfterSeconds: 30 });
+});
+
+test("gemini adapter: a hung request aborts on timeoutMs and classifies as a retryable timeout", async () => {
+  const transport = llm.makeGeminiTransport((_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+  }));
+  const err = await transport(greq({ timeoutMs: 20 })).then(() => null, (e) => e);
+  assert.equal(err.name, "TimeoutError");
+  assert.equal(llm.classifyProviderError(err).code, "timeout");
+});
+
+test("gemini adapter: the caller's own abort signal cancels the request, before and during the call", async () => {
+  const seen = [];
+  // A fake that behaves like real fetch on an already-aborted signal: reject
+  // now rather than wait for an "abort" event that has already fired.
+  const transport = llm.makeGeminiTransport((_url, init) => {
+    seen.push(init.signal);
+    return new Promise((_resolve, reject) => {
+      if (init.signal.aborted) return reject(init.signal.reason);
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    });
+  });
+
+  const mid = new AbortController();
+  const inflight = transport(greq({ signal: mid.signal, timeoutMs: 60_000 }));
+  mid.abort(new DOMException("caller went away", "AbortError"));
+  const err = await inflight.then(() => null, (e) => e);
+  assert.equal(err.name, "AbortError");
+  assert.equal(llm.classifyProviderError(err).code, "timeout");
+
+  assert.equal(seen.length, 1);
+  const already = AbortSignal.abort(new DOMException("gone", "AbortError"));
+  await transport(greq({ signal: already })).then(() => null, () => {});
+  assert.equal(seen[1].aborted, true, "a signal already aborted is honoured before the fetch is awaited");
+});
+
+test("gemini adapter runs end to end through runOne", async () => {
+  const { seen, transport } = geminiSpy({ parts: [{ text: wrapped("ROW") }], usage: { promptTokenCount: 11, candidatesTokenCount: 22 } });
+  const { output, call } = await llm.runOne(
+    deps({ provider: "gemini", model: "gemini-3.6-flash", apiKey: GKEY, transport, thinking: "medium" }),
+    { skill: "translate-tn", taskJson: "{}", packMarkdown: "p", sourceText: "s" },
+  );
+  assert.equal(output, "ROW\n");
+  assert.deepEqual(call.usage, { inputTokens: 11, outputTokens: 22 });
+
+  const sent = JSON.parse(seen.init.body);
+  assert.ok(sent.systemInstruction.parts[0].text.includes("API mode override"));
+  assert.ok(sent.contents[0].parts[0].text.includes("# Task JSON"));
+  assert.ok(!JSON.stringify(sent).includes(GKEY), "the key is never in the request body");
+});
+
+test("gemini adapter: thinking tokens are counted as output, not silently dropped", async () => {
+  // Gemini reports thinking separately from the visible answer, but bills both
+  // as output. Reading candidatesTokenCount alone under-reports the org's cost
+  // on every thinking run — the bot's bug, deliberately not reproduced here.
+  const { transport } = geminiSpy({
+    usage: { promptTokenCount: 10, candidatesTokenCount: 5, thoughtsTokenCount: 20000, totalTokenCount: 20015 },
+  });
+  assert.deepEqual((await transport(greq())).usage, { inputTokens: 10, outputTokens: 20005 });
+
+  const noThinking = geminiSpy({ usage: { promptTokenCount: 10, candidatesTokenCount: 5 } });
+  assert.deepEqual((await noThinking.transport(greq())).usage, { inputTokens: 10, outputTokens: 5 },
+    "a reply with no thinking block is unaffected");
+});
+
+test("gemini adapter: a content-filter block says so, instead of surfacing as empty_output", async () => {
+  // Both shapes: blocked before generation (promptFeedback, no candidate) and
+  // blocked during it (a candidate carrying only a finishReason). Either way
+  // the old behaviour was "no output between the sentinel markers", which reads
+  // as a prompt bug and sends the operator to the wrong place.
+  const upfront = geminiSpy({ body: JSON.stringify({
+    promptFeedback: { blockReason: "SAFETY", blockReasonMessage: "violence" },
+    usageMetadata: { promptTokenCount: 900 },
+  }) });
+  const a = await upfront.transport(greq()).then(() => null, (e) => e);
+  assert.match(a.message, /blocked by Gemini content filters: SAFETY \(violence\)/);
+
+  const midway = geminiSpy({ parts: [], finishReason: "PROHIBITED_CONTENT" });
+  const b = await midway.transport(greq()).then(() => null, (e) => e);
+  assert.match(b.message, /blocked by Gemini content filters: PROHIBITED_CONTENT/);
+
+  // A plain empty reply is NOT a block and must keep flowing to empty_output.
+  const bare = geminiSpy({ body: "{}" });
+  assert.deepEqual(await bare.transport(greq()), { text: "", usage: { inputTokens: 0, outputTokens: 0 }, stopReason: "unknown" });
+
+  // Nor is a truncated reply: MAX_TOKENS has its own retry path.
+  const cut = geminiSpy({ parts: [], finishReason: "MAX_TOKENS" });
+  assert.equal((await cut.transport(greq())).stopReason, "MAX_TOKENS");
+});
+
+test("gemini adapter: an API key echoed back in an error body never survives callProvider", async () => {
+  // makeGeminiTransport throws the RAW body as the message by design, so the
+  // scrubbing that protects it lives one layer up. This asserts the seam: a
+  // provider that echoes the key back must not leave it anywhere reachable on
+  // the error that escapes.
+  const echoed = geminiSpy({ status: 400, body: JSON.stringify({ error: { message: `bad key ${GKEY}` } }) });
+  const err = await llm.callProvider(echoed.transport, {
+    provider: "gemini", model: "gemini-3.6-flash", system: "S", user: "U", thinking: "medium", apiKey: GKEY,
+  }).then(() => null, (e) => e);
+
+  assert.ok(err instanceof llm.TranslateProviderError);
+  assert.deepEqual(leakedStrings(err, GKEY), [], "the key is reachable somewhere on the thrown error");
 });
