@@ -32,6 +32,7 @@ import { getAiProviderConfig, resolveDispatchAi, scrubSecret, type DispatchAi } 
 import { decryptApiKey } from "./aiKeyCrypto.ts";
 import {
   buildTranslateWorkflowParams,
+  internalProviders,
   readInternalStatus,
   translateInstanceId,
   translateRunner,
@@ -507,6 +508,32 @@ async function queueSnapshot(env: Env): Promise<{
   };
 }
 
+// True when this deployment can run a translate job entirely in-Worker
+// (docs/translate-internal-runner.md) — PIPELINE_MODE=internal, a non-empty
+// internal-provider set, and a decryptable BYO key whose provider is in that
+// set. This is the "no bot token needed" capability the three legacy
+// BT_API_TOKEN gates were never taught about (#467): a deployment with this
+// capability must be able to start, dispatch and poll internal jobs even when
+// BT_API_TOKEN is unset, because those jobs never touch the Fly bot.
+async function hasInternalAiCapability(env: Env): Promise<boolean> {
+  if ((env.PIPELINE_MODE ?? "").trim().toLowerCase() !== "internal") return false;
+  const providers = internalProviders(env);
+  if (providers.size === 0) return false;
+  const row = await getAiProviderConfig(env.DB);
+  const ai = resolveDispatchAi(row, env.AI_KEY_WRAPPING_KEY);
+  return ai.kind === "configured" && providers.has(ai.provider.trim().toLowerCase());
+}
+
+// Whether AI pipelines are available on this deployment at all: either the Fly
+// proxy is configured (BT_API_TOKEN) or the internal runner is (BYO key +
+// PIPELINE_MODE=internal). Only when NEITHER holds do the capability-probe and
+// status routes report `pipeline_api_disabled` (#467). The token check
+// short-circuits so a normal proxy deployment never pays the D1 read.
+async function deploymentAiConfigured(env: Env): Promise<boolean> {
+  if (env.BT_API_TOKEN) return true;
+  return hasInternalAiCapability(env);
+}
+
 // Atomically claim the single bot slot for the highest-priority oldest queued
 // job, then send it upstream. Safe under concurrent invocation: the claim is
 // one UPDATE...WHERE NOT EXISTS(active) statement, which D1 serializes — only
@@ -514,8 +541,12 @@ async function queueSnapshot(env: Env): Promise<{
 // No-op when the queue is empty or the slot is busy. On upstream failure the
 // job is marked 'failed' (freeing the slot) rather than retried, so we never
 // auto-launch a second concurrent run.
+//
+// NOT gated on BT_API_TOKEN (#467): an internal-runner job dispatches with no
+// bot token, so the per-job fork at translateRunner() below decides. A job that
+// resolves to the proxy path on a token-less deployment is failed cleanly there
+// rather than POSTing a `Bearer undefined`.
 export async function dispatchNext(env: Env): Promise<void> {
-  if (!env.BT_API_TOKEN) return;
 
   // Claim: promote the head queued row to 'dispatching' iff nothing is active.
   const claim = await env.DB.prepare(
@@ -718,6 +749,19 @@ export async function dispatchNext(env: Env): Promise<void> {
     )
       .bind(job.job_id, instanceId)
       .run();
+    return;
+  }
+
+  // Past the internal fork: this job routes to the Fly proxy. That path is the
+  // ONLY one that needs the bot token (#467). Without it we cannot reach Fly, so
+  // fail the job cleanly — freeing the slot — rather than POST a `Bearer
+  // undefined` upstream. dispatchNext is no longer gated on the token up top, so
+  // this is where a token-less proxy job stops.
+  if (!env.BT_API_TOKEN) {
+    await fail(
+      "pipeline_api_disabled",
+      "no BT_API_TOKEN: this job routes to the Fly proxy, which is not configured on this deployment",
+    );
     return;
   }
 
@@ -1162,7 +1206,12 @@ const AMBIGUOUS_DISPATCH_GRACE_SECONDS = 300;
 // handler — runs in parallel with per-job error isolation so one stuck
 // upstream call doesn't drag the batch down.
 export async function pollAllNonTerminal(env: Env): Promise<void> {
-  if (!env.BT_API_TOKEN) return;
+  // NOT gated on BT_API_TOKEN (#467): internal jobs poll from
+  // pipeline_jobs.wf_status_json inside pollPipelineJob without touching Fly, so
+  // a token-less internal deployment must still advance them on the cron. The
+  // proxy branch of pollPipelineJob keeps its own token dependency; a proxy job
+  // cannot exist on a token-less deployment (dispatchNext fails it before it
+  // ever reaches 'running'), so nothing here spins a bot fetch without a token.
   await env.DB.prepare(
     `UPDATE pipeline_jobs
         SET state = 'failed',
@@ -1283,9 +1332,10 @@ export async function pollAllNonTerminal(env: Env): Promise<void> {
 
 // POST /api/pipelines/start
 pipelines.post("/start", requireEditor, async (c) => {
-  if (!c.env.BT_API_TOKEN) {
-    return c.json({ error: "pipeline_api_disabled" }, 503);
-  }
+  // The BT_API_TOKEN gate moved below the body parse + provider resolve (#467):
+  // it must fire only for a job that would actually route to the Fly proxy, so
+  // an internal-runner translate job can start on a token-less deployment. See
+  // the gate just before the source-stamp resolve.
   const userId = currentUserId(c);
   if (!userId) return c.json({ error: "unauthorized" }, 401);
 
@@ -1566,6 +1616,25 @@ pipelines.post("/start", requireEditor, async (c) => {
     }
   }
 
+  // Bot-token gate (#467), now scoped to jobs that need the bot. A translate
+  // job that resolves to the internal runner (BYO key, PIPELINE_MODE=internal,
+  // a TSV resource on a ported provider) never touches Fly, so it may start with
+  // no BT_API_TOKEN. Everything else — generate/notes/tqs, a shared-subscription
+  // translate, an un-ported provider, an article resource — still routes to the
+  // proxy and fails closed here, before the job is ever enqueued. mergedOptions
+  // carries the server-resolved resourceType translateRunner reads.
+  if (!c.env.BT_API_TOKEN) {
+    let runner: "proxy" | "internal" = "proxy";
+    if (parsed.data.pipelineType === "translate") {
+      const aiRow = await getAiProviderConfig(c.env.DB);
+      const ai = resolveDispatchAi(aiRow, c.env.AI_KEY_WRAPPING_KEY);
+      runner = translateRunner(c.env, { pipeline_type: "translate" }, ai, mergedOptions);
+    }
+    if (runner !== "internal") {
+      return c.json({ error: "pipeline_api_disabled" }, 503);
+    }
+  }
+
   // Stamp lane generation + source identity at create so a mid-run replacement
   // cannot silently land applies onto a new generation.
   let sourceStamp: ResolvedPipelineStamp = EMPTY_RESOLVED;
@@ -1663,7 +1732,13 @@ pipelines.post("/start", requireEditor, async (c) => {
 
 // GET /api/pipelines/:jobId
 pipelines.get("/:jobId", requireEditor, async (c) => {
-  if (!c.env.BT_API_TOKEN) {
+  // Doubles as the AiScreen "is AI configured?" probe (a bogus id 503s here
+  // before any existence check). Report disabled only when NEITHER the proxy
+  // NOR the internal runner is available (#467) — otherwise a token-less
+  // internal deployment could neither poll a running internal job nor clear the
+  // "set BT_API_TOKEN" banner. An internal job's status is read from D1 below
+  // with no token, so a capable deployment is safe to let through.
+  if (!(await deploymentAiConfigured(c.env))) {
     return c.json({ error: "pipeline_api_disabled" }, 503);
   }
   const userId = currentUserId(c);

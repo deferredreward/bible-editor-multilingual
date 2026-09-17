@@ -336,6 +336,49 @@ test("dispatchNext (internal): a create() failure fails the job and frees the sl
   assert.equal(row.upstream_job_id, null, "no run id is recorded for a run that never started");
 });
 
+test("dispatchNext (internal, no BT_API_TOKEN): still creates the instance — the bot token is no longer a prerequisite (#467)", async () => {
+  const sqlite = freshSqlite();
+  seedQueuedTranslateJob(sqlite);
+  await seedByoKey(sqlite);
+  // The whole point of the port: a deployment with a BYO key and
+  // PIPELINE_MODE=internal but NO bot token must run internal jobs. Before #467
+  // the BT_API_TOKEN gate at the top of dispatchNext returned before the fork.
+  const env = freshEnv(sqlite, { PIPELINE_MODE: "internal", BT_API_TOKEN: undefined });
+
+  const fetchCount = await withNoFetch(async (count) => {
+    await dispatchNext(env);
+    return count();
+  });
+
+  assert.equal(fetchCount, 0, "no upstream POST was attempted");
+  assert.equal(env.created.length, 1, "the internal runner dispatched with no bot token present");
+  const row = jobRow(sqlite);
+  assert.equal(row.state, "running");
+  assert.equal(row.runner, "internal");
+  assert.equal(row.error_kind, null);
+});
+
+test("dispatchNext (proxy, no BT_API_TOKEN): fails the job cleanly instead of POSTing `Bearer undefined` (#467)", async () => {
+  const sqlite = freshSqlite();
+  seedQueuedTranslateJob(sqlite);
+  // No BYO key → this translate job routes to the Fly proxy. With no bot token
+  // there is nothing to POST to, so it must fail closed rather than send a bogus
+  // bearer. (Removing the top-of-function early return means the row now gets
+  // claimed and then failed here, freeing the single slot.)
+  const env = freshEnv(sqlite, { PIPELINE_MODE: "internal", BT_API_TOKEN: undefined });
+
+  const fetchCount = await withNoFetch(async (count) => {
+    await dispatchNext(env);
+    return count();
+  });
+
+  assert.equal(fetchCount, 0, "no `Bearer undefined` request was ever sent upstream");
+  assert.equal(env.created.length, 0, "no Workflow instance — this was a proxy job");
+  const row = jobRow(sqlite);
+  assert.equal(row.state, "failed", "the slot is freed, not held on a job that can never run");
+  assert.equal(row.error_kind, "pipeline_api_disabled");
+});
+
 // ---------------------------------------------------------------------------
 // pollPipelineJob (driven through pollAllNonTerminal, the cron's entry point)
 // ---------------------------------------------------------------------------
@@ -410,6 +453,25 @@ test("pollPipelineJob (internal): done with no output finalizes without an impor
   const env = freshEnv(sqlite);
   await withNoFetch(async () => pollAllNonTerminal(env));
   assert.equal(jobRow(sqlite).state, "done");
+});
+
+test("pollAllNonTerminal (no BT_API_TOKEN): still advances an internal job — the cron is not gated on the bot (#467)", async () => {
+  const sqlite = freshSqlite();
+  seedRunningInternalJob(sqlite, wf("failed", { status: "failed", errorKind: "invalid_key", error: "provider rejected the key" }));
+  // Before #467 the token gate at the top of pollAllNonTerminal returned early,
+  // so on a token-less internal deployment the 5-minute cron never advanced a
+  // running internal job past 'running'.
+  const env = freshEnv(sqlite, { BT_API_TOKEN: undefined });
+
+  const calls = await withNoFetch(async (count) => {
+    await pollAllNonTerminal(env);
+    return count();
+  });
+
+  assert.equal(calls, 0, "the status came from wf_status_json, never the bot");
+  const row = jobRow(sqlite);
+  assert.equal(row.state, "failed", "the internal job reached its terminal state with no bot token present");
+  assert.equal(row.error_kind, "invalid_key");
 });
 
 // ---------------------------------------------------------------------------
